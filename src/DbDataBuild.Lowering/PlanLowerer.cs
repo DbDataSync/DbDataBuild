@@ -233,7 +233,12 @@ public sealed class PlanLowerer
             }
             case "VARCHAR": return "'" + x.GetString()!.Replace("'", "''") + "'";
             case "BOOLEAN": return x.ValueKind == JsonValueKind.True || (x.ValueKind == JsonValueKind.String && x.GetString() is "t" or "true") ? "TRUE" : "FALSE";
-            case "DATE": return x.ValueKind == JsonValueKind.String ? $"DATE '{x.GetString()}'" : $"CAST({x.GetRawText()} AS DATE)";
+            case "DATE":
+                if (x.ValueKind == JsonValueKind.String) return $"DATE '{x.GetString()}'";
+                // a DATE that DuckDB folded early (the default of a macro parameter, for one) is serialized as days since 1970-01-01. `CAST(19904 AS DATE)` is an error in DuckDB and PostgreSQL and 1954-... on SQL Server.
+                var days = IntegerValue(x);
+                if (days < -719162 || days > 2932896) throw new LoweringException($"a DATE literal outside the years 0001 to 9999 ({days} days from 1970-01-01)");
+                return $"DATE '{DateOnly.FromDayNumber(719162 + (int)days).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}'";
             case "DOUBLE" or "FLOAT":
             {
                 var d = double.Parse(x.GetRawText(), System.Globalization.CultureInfo.InvariantCulture).ToString("R", System.Globalization.CultureInfo.InvariantCulture);
@@ -395,6 +400,8 @@ public sealed class PlanLowerer
     {
         var child = e.GetProperty("child");
         var to = TypeId(e)!;
+        // An enum has no counterpart on an engine and its check on the value (an error for a value outside the list) cannot be reproduced by a cast: refused, not left as the word ENUM for the engine to fail on.
+        if (to == "ENUM" || TypeId(child) == "ENUM") throw new LoweringException("a cast to or from an enum type (a CREATE TYPE ... AS ENUM; an engine has no such type, so keep the value as text and check it in a test, or give the type an alias such as CREATE TYPE money AS DECIMAL(12, 2))");
         // constants the binder widened to the context type read better as plain literals; the engine types them by context
         if (child.GetProperty("type").GetString() == "VALUE_CONSTANT" && !(child.GetProperty("value").TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True))
         {

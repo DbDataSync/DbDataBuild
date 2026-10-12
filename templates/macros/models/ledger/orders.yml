@@ -1,0 +1,11 @@
+# The live orders: one row per order, in the state it is in now.
+name: ledger.orders
+kind:
+  type: mapped
+grain: [order_id]
+columns:
+  - {name: order_id, type: INTEGER, nullable: false}
+  - {name: customer_id, type: INTEGER, nullable: false}
+  - {name: status, type: "VARCHAR(20)", nullable: false}
+  - {name: amount_cents, type: BIGINT, nullable: false}
+  - {name: ordered_on, type: DATE, nullable: false}

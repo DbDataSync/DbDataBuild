@@ -1,0 +1,8 @@
+name: marts.status_totals_live
+kind: {type: full}
+grain: [as_of_date, status]
+columns:
+  - {name: as_of_date, type: DATE, nullable: false}
+  - {name: status, type: "VARCHAR(20)", nullable: false}
+  - {name: orders, type: BIGINT, nullable: false}
+  - {name: total, type: "DECIMAL(38, 2)"}

@@ -1,0 +1,15 @@
+# description: marts.orders turns cents into dollars, bands the amount and groups the status, all by macros
+# tags: marts, macros
+cases:
+  - name: cents become dollars and dollars become a band at 25 and 100
+    given:
+      ledger.orders:
+        - {order_id: 1, customer_id: 1, status: placed, amount_cents: 2499, ordered_on: 2024-02-01}
+        - {order_id: 2, customer_id: 1, status: shipped, amount_cents: 2500, ordered_on: 2024-02-01}
+        - {order_id: 3, customer_id: 2, status: completed, amount_cents: 9999, ordered_on: 2024-02-02}
+        - {order_id: 4, customer_id: 2, status: returned, amount_cents: 10000, ordered_on: 2024-02-02}
+    expect:
+      - {order_id: 1, customer_id: 1, status: placed, status_group: open, amount: 24.99, size_band: small, ordered_on: 2024-02-01}
+      - {order_id: 2, customer_id: 1, status: shipped, status_group: fulfilled, amount: 25.00, size_band: medium, ordered_on: 2024-02-01}
+      - {order_id: 3, customer_id: 2, status: completed, status_group: fulfilled, amount: 99.99, size_band: medium, ordered_on: 2024-02-02}
+      - {order_id: 4, customer_id: 2, status: returned, status_group: returned, amount: 100.00, size_band: large, ordered_on: 2024-02-02}

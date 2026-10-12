@@ -1,0 +1,12 @@
+# description: a live table is totalled as of the day the macro names (2024-06-30 unless a call says another)
+# tags: marts, macros
+cases:
+  - name: every row is as of the macro's day
+    given:
+      ledger.orders:
+        - {order_id: 1, customer_id: 1, status: completed, amount_cents: 1000, ordered_on: 2024-01-15}
+        - {order_id: 2, customer_id: 2, status: completed, amount_cents: 250, ordered_on: 2024-02-10}
+        - {order_id: 3, customer_id: 2, status: returned, amount_cents: 350, ordered_on: 2024-02-11}
+    expect:
+      - {as_of_date: 2024-06-30, status: completed, orders: 2, total: 12.50}
+      - {as_of_date: 2024-06-30, status: returned, orders: 1, total: 3.50}

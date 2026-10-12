@@ -1,0 +1,1 @@
+A small order ledger that shows macros: a scalar macro, a table macro, a type, one macro serving a live table and its history, and a table name given as a parameter. DuckDB expands them; no engine ever runs one.

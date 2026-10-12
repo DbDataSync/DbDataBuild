@@ -1,0 +1,35 @@
+# Where the models are built, and how text behaves there (docs/operations.md, DESIGN.md 7.4).
+#
+# SQL Server ignores trailing spaces when it compares text and PostgreSQL does not, so one project profile cannot
+# be exact on both: the engine the profile does not fit is reported (DDB-310) when you validate. This template is set
+# up for SQL Server. For PostgreSQL, replace the next lines with:
+#   defaults: {connections: [postgres]}
+#   tracking: { connection: postgres }
+#   string_semantics: { case: sensitive, trailing_space: significant, collations: { default: { duckdb: NFC, postgres: C } } }
+defaults: {connections: [sqlserver]}
+# where the records of what the tool builds are kept (drift, history, acknowledgements): nothing is tracked without it
+tracking: { connection: sqlserver }
+
+# How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
+#   plans:
+#     deploy:  { keep: committed, audit: full }
+#     refresh: { keep: committed, audit: standard }
+#   refresh: { check: objects, on_fail: block }
+#   retention: { statement_logs_days: 30 }
+string_semantics:
+  case: sensitive
+  trailing_space: ignored
+  collations:
+    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS }
+
+# A table or a column given to a macro by name. A parameter of type NAME is not a value to bind: before DuckDB binds a query,
+# ${project.history_table} becomes the text 'ledger.orders_history', which is what `query_table` and `COLUMNS` take. Only dotted
+# names are accepted. Rename the history table here and every model that uses the parameter follows (and `compile` finds a name
+# that does not exist). A name may also differ per connection: `connections.<name>.parameters` (docs/operations.md).
+parameters:
+  history_table: { type: NAME, value: ledger.orders_history }
+  snapshot_column: { type: NAME, value: snap_date }
+
+policy:
+  severity:
+    approximated: note

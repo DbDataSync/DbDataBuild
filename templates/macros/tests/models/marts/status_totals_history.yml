@@ -1,0 +1,14 @@
+# description: the same table macro totals a history by its day column, and a live table as of the macro's day
+# tags: marts, macros
+cases:
+  - name: totals per snapshot day and status
+    given:
+      ledger.orders_history:
+        - {snap_date: 2024-01-31, order_id: 1, customer_id: 1, status: placed, amount_cents: 1000, ordered_on: 2024-01-15}
+        - {snap_date: 2024-02-29, order_id: 1, customer_id: 1, status: shipped, amount_cents: 1000, ordered_on: 2024-01-15}
+        - {snap_date: 2024-02-29, order_id: 2, customer_id: 2, status: placed, amount_cents: 250, ordered_on: 2024-02-10}
+        - {snap_date: 2024-02-29, order_id: 3, customer_id: 2, status: placed, amount_cents: 350, ordered_on: 2024-02-11}
+    expect:
+      - {as_of_date: 2024-01-31, status: placed, orders: 1, total: 10.00}
+      - {as_of_date: 2024-02-29, status: shipped, orders: 1, total: 10.00}
+      - {as_of_date: 2024-02-29, status: placed, orders: 2, total: 6.00}

@@ -163,6 +163,24 @@ public class MacroTests
     }
 
     [Fact]
+    public void A_cast_to_an_enum_type_is_refused_and_a_type_alias_lowers_to_the_type_it_stands_for()
+    {
+        var enumDir = Project(Snapshots + "\nCREATE TYPE mood AS ENUM ('sad', 'happy');\nCREATE MACRO feeling(x) AS CAST(x AS mood);");
+        Write(enumDir, "models/marts/snap_totals.sql", "SELECT feeling(status) AS status, as_of_date, sum(amount) AS total FROM snapshot_at('src.orders_snap', 'snap_date') GROUP BY ALL\n");
+        var refused = Cli("project", "compile", "--project", enumDir);
+        Assert.Contains("DDB-324", refused.Err);
+        Assert.Contains("a cast to or from an enum type", refused.Err);                       // not a warning about a type `custom` and a script that says ENUM
+
+        var aliasDir = Project(Snapshots + "\nCREATE TYPE money AS DECIMAL(12, 2);\nCREATE MACRO as_money(x) AS CAST(x AS money);");
+        Write(aliasDir, "models/marts/snap_totals.sql", "SELECT status, snap_date AS as_of_date, as_money(sum(amount)) AS total FROM src.orders_snap GROUP BY ALL\n");
+        var ok = Cli("project", "compile", "--project", aliasDir);
+        Assert.True(ok.Exit == 0, ok.Out + ok.Err);
+        var script = File.ReadAllText(Path.Combine(aliasDir, "rendered", "sqlserver", "marts.snap_totals", "load.default.sql"));
+        Assert.Contains("NUMERIC(12, 2)", script);
+        Assert.DoesNotContain("money", script);
+    }
+
+    [Fact]
     public void A_macro_call_with_lowering_switched_off_is_refused_and_a_wrong_column_name_is_a_bind_error()
     {
         var off = Project(config: "defaults: {connections: [sqlserver]}\ntracking: none\nlowering: { enabled: false }\n");
@@ -299,6 +317,20 @@ public class MacroTests
         Write(dir, "models/marts/live_totals.sql", "SELECT * FROM totals('src.orders')\n");       // the project's other model reads the new macros too
         Write(dir, "models/marts/snap_totals.sql", sql + "\n");
         return dir;
+    }
+
+    [Fact]
+    public void A_date_default_of_a_macro_is_written_as_a_date_literal_not_as_a_number_of_days()
+    {
+        // DuckDB folds the default into a DATE constant that the plan carries as days since 1970-01-01 (19904 is 2024-06-30); `CAST(19904 AS DATE)` fails in DuckDB and PostgreSQL and means 1954 on SQL Server
+        var dir = Project(WithDefaults.Replace("lag_days := 0", "lag_days := 0, live_as_of := DATE '2024-06-30'").Replace("current_date - lag_days", "live_as_of - lag_days"));
+        Write(dir, "models/marts/live_totals.sql", "SELECT * FROM totals('src.orders')\n");
+        Write(dir, "models/marts/snap_totals.sql", "SELECT * FROM totals('src.orders_snap', 'snap_date')\n");
+        var render = Cli("project", "compile", "--project", dir);
+        Assert.True(render.Exit == 0, render.Out + render.Err);
+        Assert.Contains("DATE '2024-06-30'", Lowered(dir, "marts.live_totals"));
+        Assert.DoesNotContain("19904", Lowered(dir, "marts.live_totals"));
+        Assert.Contains("'2024-06-30'", File.ReadAllText(Path.Combine(dir, "rendered", "sqlserver", "marts.live_totals", "load.default.sql")));
     }
 
     [Theory]
