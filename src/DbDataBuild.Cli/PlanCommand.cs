@@ -222,6 +222,9 @@ internal static class PlanCommand
 
     public static int Check(CommandSpec spec, string root, string? targetArg, string[] models, TextWriter output, TextWriter error, Func<string, string?> env)
     {
+        // the first argument is a refresh plan when it names one compiled for the connection
+        string? onlyPlan = null;
+        if (models.Length > 0 && RefreshViews.PlanNames(root, targetArg ?? ProjectConfigLoader.LoadFromProject(root, []).DefaultConnections.FirstOrDefault() ?? "").Contains(models[0])) { onlyPlan = models[0]; models = models[1..]; }
         var (session, exit) = PlanningSession.Prepare(spec, root, targetArg, models, output, error, env);
         if (session == null) return exit;
         var result = Planner.Plan(session.Input, []);
@@ -272,6 +275,8 @@ internal static class PlanCommand
         output.WriteLine($"Deploy     {EventText(lastDeploy, noEvents ?? "none recorded")}");
         output.WriteLine($"Refresh    {EventText(lastRefresh, noEvents ?? "none recorded")}{(lastRefresh is { Status: "failed" } ? "  (the next refresh starts over)" : "")}");
         output.WriteLine($"Policy     {policy.Describe()}");
+        var planLines = RefreshViews.PlanLines(session.Context.Config, session.Target, root, onlyPlan, env, out var planWhy);
+        if (planLines is not { Count: 0 }) RefreshViews.PrintPlanLines(output, planLines, planWhy);
         output.WriteLine();
         object? Event(AuditLog.EventRow? e) => e == null ? null : new { id = e.Id, status = e.Status, utc = e.LastUtc.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) };
         output.Payload("summary", new { structure, steps = structureSteps.Count, loads = loadSteps, risky, destructive, blocked = result.Blocks.Count, changed_outside_the_tool = drifted, last_deploy = Event(lastDeploy), last_refresh = Event(lastRefresh), policy = policy.Describe() });

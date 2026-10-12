@@ -1,0 +1,4 @@
+# Written here once, inherited by every model in this folder: every mart is in the refresh plan `daily` (a model's own `refresh:` adds its plans to this one;
+# `refresh=:` replaces it, `refresh-: [daily]` removes it).
+defaults:
+  refresh: { daily: default }

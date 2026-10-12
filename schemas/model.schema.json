@@ -949,6 +949,113 @@
               }
             ]
           }
+        },
+        "refresh": {
+          "description": "The refresh plans the model's loads are in: plan name to a membership or a list of them. It layers like `tags` (a list appends, `refresh=` replaces what a folder gave). A model with a default load and no `refresh:` anywhere is in the plan `default`. A plan the project does not declare is an error when the project declares any (`refresh.plans` in dbdatabuild.yml).",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "description": "One place a load is in a plan: the load's name, or a mapping. `as` names the membership inside the plan (the load's name by default; unique for the model within the plan), `inputs` gives values for the load's inputs for this plan, `on_failure` overrides the plan's.",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "load"
+                    ],
+                    "properties": {
+                      "load": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "as": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "inputs": {
+                        "type": "object",
+                        "propertyNames": {
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        },
+                        "additionalProperties": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "on_failure": {
+                        "enum": [
+                          "stop",
+                          "continue",
+                          "ignore"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "description": "One place a load is in a plan: the load's name, or a mapping. `as` names the membership inside the plan (the load's name by default; unique for the model within the plan), `inputs` gives values for the load's inputs for this plan, `on_failure` overrides the plan's.",
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "load"
+                      ],
+                      "properties": {
+                        "load": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        },
+                        "as": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        },
+                        "inputs": {
+                          "type": "object",
+                          "propertyNames": {
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                          },
+                          "additionalProperties": {
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          }
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "stop",
+                            "continue",
+                            "ignore"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
         }
       },
       "allOf": [

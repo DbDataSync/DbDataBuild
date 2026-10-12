@@ -15,7 +15,7 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class ReportCommand
 {
-    public static int Run(CommandSpec spec, string root, string? targetArg, int last, string? lane, string? eventId, bool attentionOnly, TextWriter output, TextWriter error, Func<string, string?> env)
+    public static int Run(CommandSpec spec, string root, string? targetArg, int last, string? lane, string? eventId, bool attentionOnly, string? plan, TextWriter output, TextWriter error, Func<string, string?> env)
     {
         var config = ProjectConfigLoader.LoadFromProject(root, new List<Diagnostic>());
         var connection = CommandTargets.Resolve(config, targetArg, error);
@@ -45,6 +45,8 @@ internal static class ReportCommand
             var trackRead = ownTrackingReader ?? read;
             var status = await TrackingStore.StatusAsync(trackRead, scope.Engine, schema);
             if (status.AsDiagnostic(schema) is { } notReady) { error.Diag(notReady); return CliApp.ExitFindings; }
+
+            if (plan != null) return await RefreshViews.MonitorPlanAsync(trackRead, scope, plan, last, root, target, output, error);
 
             // one event in detail: every state it went through, the DDL it ran, the loads it did
             async Task<int> EventDetailAsync()

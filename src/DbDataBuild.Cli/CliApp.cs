@@ -221,7 +221,7 @@ public static class CliApp
                         o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection status":
-                    var checkModels = new Argument<string[]>("models") { Description = "Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
+                    var checkModels = new Argument<string[]>("models") { Description = "A refresh plan first, to see only that plan's line (named as `connection refresh` names it), then model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
                     GuardOptionLike(checkModels, spec.Name);
                     var checkProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var checkTarget = ConnectionArgument("Connection to check", spec.Name);
@@ -253,10 +253,12 @@ public static class CliApp
                     var reportLast = new Option<int>("--last") { Description = "How many recent rows of each history to show", DefaultValueFactory = _ => 10 };
                     var reportLane = new Option<string?>("--lane") { Description = "Only the events of this lane (and their DDL and loads): deploy or refresh" };
                     reportLane.AcceptOnlyFromAmong("deploy", "refresh");
+                    var reportPlan = new Argument<string?>("plan") { Description = "A refresh plan: show its runs (complete and partial apart) and each member's last success and failure, instead of the tables", Arity = ArgumentArity.ZeroOrOne };
+                    GuardOptionLike(reportPlan, spec.Name);
                     var reportEvent = new Option<string?>("--event") { Description = "One event in detail, by its id (as the first table shows it): its states, its DDL and its loads" };
                     var reportAttention = new Option<bool>("--attention") { Description = "Only what needs attention (the other tables are left out of the text; the document still has them)" };
-                    cmd.Arguments.Add(reportTarget); cmd.Options.Add(reportProject); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => ReportCommand.Run(spec, pr.GetValue(reportProject)!.FullName, pr.GetValue(reportTarget), pr.GetValue(reportLast), pr.GetValue(reportLane), pr.GetValue(reportEvent), pr.GetValue(reportAttention), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    cmd.Arguments.Add(reportTarget); cmd.Arguments.Add(reportPlan); cmd.Options.Add(reportProject); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
+                    cmd.SetAction(pr => { var (reportConn, reportRest) = SplitConnection(pr.GetValue(reportProject)!.FullName, pr.GetValue(reportTarget), pr.GetValue(reportPlan) is { } rpn ? [rpn] : []); return Reported(pr, spec, (o, e) => ReportCommand.Run(spec, pr.GetValue(reportProject)!.FullName, reportConn, pr.GetValue(reportLast), pr.GetValue(reportLane), pr.GetValue(reportEvent), pr.GetValue(reportAttention), reportRest.FirstOrDefault(), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection compare":
                     var diffTable = new Argument<string?>("table") { Description = "The table or view to compare, as schema_name.table_name (a model's table, for example). Required; the connection comes before it", Arity = ArgumentArity.ZeroOrOne };
@@ -325,6 +327,13 @@ public static class CliApp
                     var pubTarget = ConnectionArgument("Connection", spec.Name);
                     cmd.Arguments.Add(pubTarget); cmd.Arguments.Add(pubModels); cmd.Options.Add(pubProject);
                     cmd.SetAction(pr => { var (pubConn, pubRest) = SplitConnection(pr.GetValue(pubProject)!.FullName, pr.GetValue(pubTarget), pr.GetValue(pubModels) ?? []); return Reported(pr, spec, (o, e) => PublishMetadataCommand.Run(spec, pr.GetValue(pubProject)!.FullName, pubConn, pubRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    break;
+                case "project show refresh":
+                    var showRefreshPlan = new Argument<string?>("plan") { Description = "A refresh plan by name; omit to list the plans of every connection", Arity = ArgumentArity.ZeroOrOne };
+                    var showRefreshProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
+                    var showRefreshConnection = new Option<string?>("--connection") { Description = "Only the plans of this connection" };
+                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e)));
                     break;
                 case "project show plan":
                     var reviewPlan = new Argument<string?>("plan") { Description = "A plan file (plans/<connection>/<id>.plan.yml); omit to list the project's plans", Arity = ArgumentArity.ZeroOrOne };

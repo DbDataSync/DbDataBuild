@@ -10,6 +10,13 @@ defaults: {connections: [sqlserver]}
 # where the records of what the tool builds are kept (drift, history, acknowledgements): nothing is tracked without it
 tracking: { connection: sqlserver }
 
+# The refresh plans (docs/concepts.md): `daily` is every mart (the folder file models/marts/_dbdatabuild.yml puts them in it) and
+# `hourly` only the sales lines, which a model adds to its own file. `connection refresh sqlserver hourly` runs one; `project show refresh` reads them.
+refresh:
+  plans:
+    hourly: { title: Sales lines, description: "New order lines, appended as they arrive.", expected_every: 1h }
+    daily:  { title: All marts, description: "Every mart, rebuilt overnight.", expected_every: 1d, on_failure: continue }
+
 # How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
 # Retail refreshes every night, so the example asks for the database to be compared before it runs and for the history to be kept in full.
 #   plans:

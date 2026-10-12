@@ -20,16 +20,16 @@ internal static class RefreshCommand
     private static readonly JsonSerializerOptions Json = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>One load to run: the load plan, the membership it runs as (null when a person named the load directly), and the inputs given by the person running it.</summary>
-    private sealed record RunItem(LoadPlanEntry Entry, RefreshMember? Member, int Position)
+    internal sealed record RunItem(LoadPlanEntry Entry, RefreshMember? Member, int Position)
     {
         public string Membership => Member?.Name ?? Entry.Load;
         public string Display => Member?.FullName ?? Entry.FullName;
     }
 
     /// <summary>An input as it will run: its value (null for one a resolver finds when the load runs) and where the value came from.</summary>
-    private sealed record EffectiveInput(string Name, string Type, string Source, string? Value);
+    internal sealed record EffectiveInput(string Name, string Type, string Source, string? Value);
 
-    private sealed record InputFlag(string? Target, string Name, string Value, string Text);
+    internal sealed record InputFlag(string? Target, string Name, string Value, string Text);
 
     public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, TextWriter output, TextWriter error, Func<string, string?> env)
     {
@@ -276,7 +276,7 @@ internal static class RefreshCommand
     }
 
     /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
-    private static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error)
+    internal static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error)
     {
         var all = plan.Members.Select(m => m.FullName).ToHashSet(StringComparer.Ordinal);
         if (selectors.Count == 0) return all;
@@ -323,7 +323,7 @@ internal static class RefreshCommand
     /// The value each input of each load runs with, and its source, strongest first: a `--input` flag, the membership's value, the project's parameter, and (found when the load runs) the resolver, then `initial`. An override
     /// replaces the default, so a resolver it replaces is never run. An input nobody gives a value for stops the run: a scheduled refresh has no one to ask.
     /// </summary>
-    private static bool ResolveInputs(List<RunItem> items, List<InputFlag> flags, string connection, Dictionary<RunItem, List<EffectiveInput>> result, TextWriter error)
+    internal static bool ResolveInputs(List<RunItem> items, List<InputFlag> flags, string connection, Dictionary<RunItem, List<EffectiveInput>> result, TextWriter error)
     {
         var ok = true;
         foreach (var item in items) result[item] = [];

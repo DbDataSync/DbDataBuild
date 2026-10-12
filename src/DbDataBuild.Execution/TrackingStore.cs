@@ -112,7 +112,7 @@ public sealed record RefreshStepRecord(string Membership, string LoadPlanHash, s
 public sealed record PlanProgress(IReadOnlyList<string> MigrationStatuses, IReadOnlySet<string> CompletedDdlHashes, IReadOnlySet<string> CompletedRunSteps, IReadOnlyList<(string Object, string ShapeHash)> RecordedShapes);
 
 /// <summary>Writers and readers for the audit tables (DESIGN.md 12): migration, DDL and run logs. Writes go through the gate as tracking statements.</summary>
-public static class AuditLog
+public static partial class AuditLog
 {
     private static string C(string engine, string n) => TrackingDdl.For(engine).Quote(n);
     private static string T(TrackingScope scope, string table) => $"{C(scope.Engine, scope.SchemaName)}.{C(scope.Engine, table)}";

@@ -21,6 +21,14 @@ defaults: {connections: [sqlserver]}
 # the records of everything the tool builds, on every connection, are kept on the warehouse (central tracking)
 tracking: { connection: sqlserver }
 
+# The refresh plans (docs/concepts.md): named sets of loads that run on a schedule. A model says which plans its loads are in
+# (`refresh:` in its file); `connection refresh sqlserver hourly` runs one. The copy `warehouse.orders` is in `daily` and is left
+# out of the compiled plan with its reason: a refresh does not move rows between connections (a deploy does).
+refresh:
+  plans:
+    hourly: { title: Sales report, description: "The report over the orders the warehouse holds.", expected_every: 1h, on_failure: continue }
+    daily:  { title: Orders and report, description: "The copy of the shops' orders, then the report.", expected_every: 1d, on_failure: continue }
+
 # How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
 #   plans:
 #     deploy:  { keep: committed, audit: full }

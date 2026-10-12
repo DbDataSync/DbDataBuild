@@ -16,6 +16,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`project show loads`](#project-show-loads) | `P→` | Offline only | Print the model x connection x operation pairing table |
 | [`project show graph`](#project-show-graph) | `P→` | Offline only | Show the dependency graph (which table each model reads), column lineage, or a diagram of it; selectors pick the part to show |
 | [`project show metadata`](#project-show-metadata) | `P→` | Offline only | Print everything the tool knows about the project and its models (use --format json) |
+| [`project show refresh`](#project-show-refresh) | `P→` | Offline only | Read the compiled refresh plans (offline): the plans of each connection, or one plan with its members in the order they run, the inputs each load takes and where each default comes from, what was left out and the hashes |
 | [`project show plan`](#project-show-plan) | `P→` | Offline only | Read plan files (offline, nothing applied): list a project's plans, or show one with its steps, risk, exact statements, report and what applying it would need to be allowed |
 | [`project agent-kit`](#project-agent-kit) | `P⇒P` | Repo files only (no target connection) | Install the skill and JSON Schemas an AI coding agent needs to work in a project (lists them unless --write) |
 | [`connection inspect`](#connection-inspect) | `C→` | Target read-only | Can the tool use this connection, and if not, why: whether each login is set, connects and as whom, what it may do, whether the tracking tables are ready, which schema names the models use exist |
@@ -240,6 +241,23 @@ Usage: `dbdatabuild project show metadata [models]... [options]`
 |---|---|
 | `--project` `<path>` | Project root |
 
+## project show refresh
+
+Read the compiled refresh plans (offline): the plans of each connection, or one plan with its members in the order they run, the inputs each load takes and where each default comes from, what was left out and the hashes.
+
+Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project show refresh [plan] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `plan` | A refresh plan by name; omit to list the plans of every connection |
+
+| Option | Meaning |
+|---|---|
+| `--connection` `<text>` | Only the plans of this connection |
+| `--project` `<path>` | Project root |
+
 ## project show plan
 
 Read plan files (offline, nothing applied): list a project's plans, or show one with its steps, risk, exact statements, report and what applying it would need to be allowed.
@@ -318,7 +336,7 @@ Usage: `dbdatabuild connection status [connection] [models]... [options]`
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection to check (default: the project's only default connection) |
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
+| `models` (several) | A refresh plan first, to see only that plan's line (named as `connection refresh` names it), then model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
 
 | Option | Meaning |
 |---|---|
@@ -386,11 +404,12 @@ The events (deploys and refreshes), DDL and load history, recorded shapes, and w
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
-Usage: `dbdatabuild connection monitor [connection] [options]`
+Usage: `dbdatabuild connection monitor [connection] [plan] [options]`
 
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection (default: the project's only default connection) |
+| `plan` | A refresh plan: show its runs (complete and partial apart) and each member's last success and failure, instead of the tables |
 
 | Option | Meaning |
 |---|---|
