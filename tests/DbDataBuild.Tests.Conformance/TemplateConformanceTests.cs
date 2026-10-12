@@ -17,7 +17,7 @@ public class TemplateConformanceTests
     {
         var data = new TheoryData<string, string>();
         foreach (var engine in new[] { "sqlserver", "postgres" })
-            foreach (var template in new[] { "starter", "retail", "chinook", "adventureworks", "macros" })
+            foreach (var template in new[] { "starter", "retail", "chinook", "adventureworks", "macro_examples" })
                 data.Add(engine, template);
         return data;
     }

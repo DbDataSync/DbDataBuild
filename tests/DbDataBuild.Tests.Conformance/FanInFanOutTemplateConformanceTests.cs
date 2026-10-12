@@ -7,12 +7,12 @@ using Xunit;
 namespace DbDataBuild.Tests.Conformance;
 
 /// <summary>
-/// The `stores` template on four real databases, through the commands a person would type: two PostgreSQL shop systems (store_east, store_west) seeded on their own, a SQL Server warehouse and a PostgreSQL
+/// The `fan_in_fan_out` template on four real databases, through the commands a person would type: two PostgreSQL shop systems (store_east, store_west) seeded on their own, a SQL Server warehouse and a PostgreSQL
 /// reporting database. The fan-in copy lands both shops in `warehouse.orders` on both engines, the fan-out model `marts.daily_sales` is built on both, and its rows are what the origin tables give when they are
 /// grouped here (not by either engine under test). The refresh plan of each engine leaves the copy to a deploy, and a refresh does not move rows between connections.
 /// </summary>
 [Trait("Group", "templates")]
-public partial class StoresTemplateConformanceTests
+public partial class FanInFanOutTemplateConformanceTests
 {
     [GeneratedRegex(@"plan:\s+(\S+\.plan\.yml)")]
     private static partial Regex PlanPath();
@@ -51,7 +51,7 @@ public partial class StoresTemplateConformanceTests
         }
         try
         {
-            Ok(Cli("project", "create", "stores", dir), "create");
+            Ok(Cli("project", "create", "fan_in_fan_out", dir), "create");
             Ok(Cli("connection", "seed", "store_east", "--seed", "1", "--apply"), "seed east");
             Ok(Cli("connection", "seed", "store_west", "--seed", "2", "--apply"), "seed west");
             Ok(Cli("project", "compile"), "compile");

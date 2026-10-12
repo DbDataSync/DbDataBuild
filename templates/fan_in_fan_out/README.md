@@ -1,4 +1,4 @@
-# stores: two shop systems, one warehouse, two engines
+# fan_in_fan_out: two shop systems, one warehouse, two engines
 
 Northstar Outfitters again, with its systems apart. Two regional shop databases (`store_east`, `store_west`, PostgreSQL) each hold a `pos.orders` table; the warehouse (`sqlserver`) and a reporting
 database (`postgres`) hold the project's tables. The project shows what one connection cannot:

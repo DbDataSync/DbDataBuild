@@ -1,4 +1,4 @@
-# macros: a small order ledger
+# macro_examples: a small order ledger
 
 A project that shows **macros**: names for expressions and for whole queries, kept in `macros/*.sql`. Two source tables hold orders (`ledger.orders`, the live state, and `ledger.orders_history`, the same
 orders as they stood at the end of each month) and three marts are built from them.

@@ -26,8 +26,8 @@ public class TemplateTests
         Assert.Contains(TemplateStore.All, t => t.Name == "retail");
         Assert.Contains(TemplateStore.All, t => t.Name == "chinook");
         Assert.Contains(TemplateStore.All, t => t.Name == "adventureworks");
-        Assert.Contains(TemplateStore.All, t => t.Name == "stores");
-        Assert.Contains(TemplateStore.All, t => t.Name == "macros");
+        Assert.Contains(TemplateStore.All, t => t.Name == "fan_in_fan_out");
+        Assert.Contains(TemplateStore.All, t => t.Name == "macro_examples");
         Assert.All(TemplateStore.All, t => Assert.NotEqual("", t.Description));
     }
 
@@ -83,7 +83,7 @@ public class TemplateTests
         var dir = Path.Combine(Path.GetTempPath(), "ddb-template-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Assert.Equal(0, Run("project", "create", "stores", dir).Exit);
+            Assert.Equal(0, Run("project", "create", "fan_in_fan_out", dir).Exit);
             var (exit, output, err) = Run("project", "compile", "--project", dir);
             Assert.True(exit == 0, output + err);
             foreach (var connection in new[] { "sqlserver", "postgres" })
@@ -106,7 +106,7 @@ public class TemplateTests
         var dir = Path.Combine(Path.GetTempPath(), "ddb-template-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Assert.Equal(0, Run("project", "create", "macros", dir).Exit);
+            Assert.Equal(0, Run("project", "create", "macro_examples", dir).Exit);
             var (exit, output, err) = Run("project", "compile", "--project", dir);
             Assert.True(exit == 0, output + err);
             string Script(string model) => File.ReadAllText(Path.Combine(dir, "rendered", "sqlserver", model, "load.default.sql"));
