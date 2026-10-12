@@ -31,8 +31,8 @@ loads:
     strategy: delete_insert_by_range
     inputs:
       days:  { type: INTEGER, default: 7 }
-      start: { type: DATE, resolver: { memory: "current_date - days" } }
-      end:   { type: DATE, resolver: { memory: "current_date + 1" } }
+      start: { type: DATE, resolver: { expression: "current_date - days" } }
+      end:   { type: DATE, resolver: { expression: "current_date + 1" } }
 refresh:
   hourly: incremental
   daily:  { load: backfill, inputs: { days: 60 } }
@@ -129,7 +129,7 @@ The lock moves from the connection to the **load** (connection and model): two r
 
 | Where | What |
 |---|---|
-| `project show refresh [plan]` (offline) | plans, members, order, inputs, resolver text, hashes; `--resolve` evaluates `memory` resolvers now |
+| `project show refresh [plan]` (offline) | plans, members, order, inputs, resolver text, hashes; `--resolve` evaluates `expression` resolvers now |
 | `connection refresh --dry-run` | resolves target and source resolvers read-only and prints the values it would use |
 | `connection monitor [<c>] [<plan>]` | the runs of a plan; for each member its last success and failures; partial runs apart from complete ones |
 | `connection status [<c>] [<plan>]` | one line per plan: last run, outcome, age, "overdue" past `expected_every`, "slow" past it in duration |
@@ -150,36 +150,36 @@ One resolver, `target_max` (generated `MAX(column)` on the target, less the look
 ```yaml
 inputs:
   days:  { type: INTEGER, default: 7 }
-  start: { type: DATE, resolver: { memory: "current_date - days" } }
+  start: { type: DATE, resolver: { expression: "current_date - days" } }
   end:   { type: DATE, resolver: { target: "SELECT max(order_date) + 1 FROM sales.orders" } }
   cutoff: { type: TIMESTAMP, resolver: { source: "SELECT max(updated_at) FROM orders" } }   # a copy: at the origin
   # several inputs from one resolver:
-  window: { resolver: { memory: "SELECT current_date - 7 AS start, current_date + 1 AS end" }, provides: [start, end] }
+  window: { resolver: { expression: "SELECT current_date - 7 AS start, current_date + 1 AS end" }, provides: [start, end] }
 ```
 
 The kinds, by where they run:
 
 | Kind | Runs | Reads | Login |
 |---|---|---|---|
-| `memory` | in the tool, in a DuckDB `:memory:` database | nothing from any database: calculation only | none |
+| `expression` | in the tool, evaluated by DuckDB in a `:memory:` database | nothing from any database: calculation only | none |
 | `target` | on the load's own connection | tables of the project there | the connection's read login |
 | `source` | on the origin of a copy (copies only: a query reads one connection, DDB-231, so data crosses connections only through a copy) | the origin's tables | the origin's read login |
 | `target_max` | as today, shorthand for a `target` resolver | the watermark column | read login |
 
-**The expression variant is not a separate language.** `memory: "current_date - days"` is shorthand for `SELECT current_date - days`, evaluated by DuckDB itself. A text without `SELECT` is wrapped, a text starting with `SELECT` is used as written. One mechanism, one parser, DuckDB's own functions (date arithmetic, `date_trunc`, `last_day`, intervals, `strftime`, case, coalesce, a lookup against a literal table).
+**An expression is not a separate language.** `expression: "current_date - days"` is shorthand for `SELECT current_date - days`, evaluated by DuckDB itself. A text without `SELECT` is wrapped, a text starting with `SELECT` (with no `FROM`, so several columns can feed `provides`) is used as written. One mechanism, one parser, DuckDB's own functions (date arithmetic, `date_trunc`, `last_day`, intervals, `strftime`, case, coalesce, a lookup against a literal table).
 
 ### Semantics to settle
 
-1. **Sandbox of `memory`.** A fresh in-memory database per resolution with external access off and configuration locked (no files, no network, no extension loading, no `ATTACH`), so the text can compute and nothing else. A table reference or a subquery over a table is a compile error (there is nothing to read). **Every DuckDB function is allowed for now**; whether to restrict them (an allow or a deny list) is a later discussion. The sandbox, not a function list, is what keeps a resolver from touching anything.
-2. **The clock.** `now()`, `current_date`, `today()` are allowed and are the reason `memory` exists. One run has **one frozen instant** (`run_started`), so all loads of a run agree, and it is recorded in the event. `current_date` and `now()` mean **UTC** unless the project (or a connection) sets `timezone:`; the session's own zone is never used.
+1. **Sandbox of `expression`.** A fresh in-memory database per resolution with external access off and configuration locked (no files, no network, no extension loading, no `ATTACH`), so the text can compute and nothing else. A table reference or a subquery over a table is a compile error (there is nothing to read). **Every DuckDB function is allowed for now**; whether to restrict them (an allow or a deny list) is a later discussion. The sandbox, not a function list, is what keeps a resolver from touching anything.
+2. **The clock.** `now()`, `current_date`, `today()` are allowed and are the reason `expression` exists. One run has **one frozen instant** (`run_started`), so all loads of a run agree, and it is recorded in the event. `current_date` and `now()` mean **UTC** unless the project (or a connection) sets `timezone:`; the session's own zone is never used.
 3. **Other inputs and parameters as variables.** A resolver may name the load's other inputs (`days` above), project and connection parameters (`${project.name}`, `${connection.name}`) and a fixed set of run variables (`run_started`, `plan`, `connection`). Inputs are resolved in dependency order; a cycle is a compile error. A `--input` override of `days` flows into `start`.
 4. **Result shape.** One row. One column for one input, or named columns matching `provides`. More than one row, or none, is an error; NULL goes to the input's `on_null` (`fail` default, `initial`, `skip_load`). The value is cast to the declared type; a value that does not fit is an error naming the input and the resolver, never a silent coercion.
-5. **Dialect.** `memory` is DuckDB text, the same for every connection, committed once. `target` and `source` resolvers are written in DuckDB dialect and lowered for the engine they run on, like a model's query (so the matrix and DDB-324 apply); a `source` resolver is lowered for the origin's engine. A `target` resolver is written over the project's models, not raw engine names.
+5. **Dialect.** `expression` is DuckDB text, the same for every connection, committed once. `target` and `source` resolvers are written in DuckDB dialect and lowered for the engine they run on, like a model's query (so the matrix and DDB-324 apply); a `source` resolver is lowered for the origin's engine. A `target` resolver is written over the project's models, not raw engine names.
 6. **Safety.** `target` and `source` run through `ReadSession` only (the gate invariant), as a single `SELECT`, with a timeout and a one-row cap. They never write. A `source` resolver on an origin whose login is not in the environment is a load failure like an unreachable origin.
 7. **When it runs, and a plan that moved.** In a refresh: per load, just before that load, with the frozen `run_started`. In a deploy: at plan time, and the values are shown in the plan. All computed values are treated alike (there is no stable or volatile split): `apply` resolves again, and if **any input differs from the plan** it blocks the deployment, shows each input with its planned and its new value, and in an interactive apply lets the deployer approve and continue with the new values. A non-interactive apply stops with exit 1 and, for each moved input, prints the override as it would be typed (`--input orders.backfill.start=2024-03-01`), so the deployer can append those arguments to the same command and run it again: the explicit way to say "yes, with these values". `--yes` does not approve moved inputs. Pinning an input with `--input` when planning has the same effect from the start (a pinned value is not computed, so it cannot move). Both values are recorded in the event. A clock-based input therefore moves at midnight and asks once; that is accepted as the conservative and simple rule.
 8. **Overrides.** A `--input` or membership value replaces the resolver, which is not run. The event records the source of each input: `flag`, `membership`, `parameter`, `resolver:memory|target|source`, `initial`.
-9. **Committed and hashed.** A `target`/`source` resolver's lowered text is rendered and committed under `rendered/<c>/` and hashed like a load script; a `memory` resolver is committed as its DuckDB text. A change to any resolver changes the load plan hash, and the refresh plan's hash with it. The event stores the resolver hash with the value.
-10. **Visibility.** `project show refresh --resolve` evaluates `memory` resolvers offline (what would `start` be now). `refresh --dry-run` also resolves `target` and `source` ones read-only. A resolver that is slow is visible: its duration is recorded.
+9. **Committed and hashed.** A `target`/`source` resolver's lowered text is rendered and committed under `rendered/<c>/` and hashed like a load script; an `expression` resolver is committed as its DuckDB text. A change to any resolver changes the load plan hash, and the refresh plan's hash with it. The event stores the resolver hash with the value.
+10. **Visibility.** `project show refresh --resolve` evaluates `expression` resolvers offline (what would `start` be now). `refresh --dry-run` also resolves `target` and `source` ones read-only. A resolver that is slow is visible: its duration is recorded.
 11. **Values are logged** (the existing accepted choice, DESIGN 6.6): a resolver is expected to return watermark-like values.
 
 ## 9. Tracking
@@ -188,9 +188,9 @@ New columns on the event and load rows (`refresh_plan`, plan hash, selection, me
 
 ## 10. Build order
 
-1. Load plans and refresh plans: `refresh:` in models and folder files, `refresh.plans` in the project, `loads.yml` and `refresh/<name>.yml`, `project show refresh`, the positional plan, memberships with names and input overrides, `--input`, selectors. Layout 7. `monitor`/`status` views.
+1. Load plans and refresh plans (with their tests, docs and the `hourly`/`daily` plans in the `retail` and sample multi-connection templates): `refresh:` in models and folder files, `refresh.plans` in the project, `loads.yml` and `refresh/<name>.yml`, `project show refresh`, the positional plan, memberships with names and input overrides, `--input`, selectors. Layout 7. `monitor`/`status` views.
 2. Failure rules (`on_failure`, outcomes, `--only-failed`), the per-load lock and `on_busy`, `expected_every` and duration warnings.
-3. Resolvers: `memory`, then user `target`, then `source`; resolvers for range inputs; `provides`; stable/volatile.
+3. Resolvers: `expression`, then user `target`, then `source`; resolvers for range inputs; `provides`; the moved-input rule of a deploy (section 8, item 7: block, show the new values, print the `--input` overrides to append).
 4. Copies as loads in a refresh (needs 3 for `source`, the origin check, and `max_parallel`).
 5. Parallelism.
 
