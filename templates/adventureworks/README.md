@@ -43,18 +43,31 @@ dbdatabuild project tests run                           # metadata rules and mod
 money is a decimal). `tests/models/` holds cases for the logic that is easy to get wrong: the explosion, the cost and price periods, the exchange rate of a weekend, the cohorts of
 quintiles, the year-on-year comparison, the on-time flags.
 
-## Trying it on a sandbox database
+## Running the cycle on a database
 
-`load-seeds` puts the source tables in an empty SQL Server (or PostgreSQL) database you do not mind filling. The logins are environment variables
-(`DBDATABUILD_SQLSERVER_WRITE` for what writes, `DBDATABUILD_SQLSERVER_READ` for what reads; see the main documentation):
+`connection seed` puts the source tables in an empty database you do not mind filling; the logins are environment variables (`DBDATABUILD_SQLSERVER_READ` and `DBDATABUILD_SQLSERVER_WRITE`, or `..._POSTGRES_...`).
+Create a SQL Server database case-sensitive (`CREATE DATABASE adventureworks COLLATE Latin1_General_100_CS_AS`) to match the project's string profile; with the server default `connection status` reports DDB-310 for a view column made of literals.
+The numbers below are from a run against SQL Server 2022 (the same cycle ran on PostgreSQL 17 with the profile in the comment at the top of `dbdatabuild.yml`: same counts, `--connection postgres`); ids and times differ in yours.
 
 ```
-dbdatabuild connection seed --apply         # creates the source tables and loads them (--replace drops and recreates tables that exist)
-dbdatabuild connection init --apply               # the tracking tables
-dbdatabuild project compile --check     # the rendered files are checked in against the models
-dbdatabuild connection deploy --write-plan --accept-inferred   # reads the database, writes a plan you can read
-dbdatabuild connection deploy --apply-plan plans/sqlserver/<the plan>.plan.yml
+dbdatabuild project compile                                   # offline; writes rendered/, including rendered/sqlserver/refresh.plan.yml
+dbdatabuild connection inspect --connection sqlserver         # can the tool use it? (before init: "tracking ... not there yet"; after: "Nothing in the way.")
+dbdatabuild connection seed --connection sqlserver --apply    # 23 table(s), 19531 row(s)
+dbdatabuild connection init --connection sqlserver --apply    # the tracking tables (13 statements)
+dbdatabuild connection status --connection sqlserver          # Structure  pending: a deploy would run 50 step(s) (0 risky, 0 destructive) and 24 load(s)
+dbdatabuild connection deploy --connection sqlserver --write-plan --accept-inferred    # Plan <id>: 74 step(s) (50 ddl, 24 load, ...); read plans/sqlserver/<id>.plan.md
+dbdatabuild connection deploy --connection sqlserver --apply-plan plans/sqlserver/<id>.plan.yml    # Applied plan <id>: 74 step(s) executed.
+dbdatabuild connection refresh --connection sqlserver         # Refresh plan rendered/sqlserver/refresh.plan.yml: 24 routine load(s). ... Refresh ref-<time>-<hash>: 24 step(s) ran.
+dbdatabuild connection status --connection sqlserver          # Structure  in sync: a deploy would change no structure (it would run 24 routine load(s))
+dbdatabuild connection monitor --connection sqlserver         # events (one deploy, one refresh), DDL, loads, recorded shapes; --event <id>, --lane refresh, --attention
 ```
+
+What each step is for, and the four `refresh.check` levels (`none`, `project`, `objects`, `live`) with the message each gives when it stops a refresh, are in the `retail` README (`dbdatabuild project create retail`), whose walk-through is the longest.
+In short: *deploy* changes structure and is reviewed; *refresh* repeats the loads of the committed refresh plan and never changes structure; `refresh.check` chooses whether it asks the database nothing (`none`), whether
+the project was deployed here (`project`), whether each object has the shape last deployed (`objects`, the default) or whether it still has that shape in the catalog (`live`).
+
+The lifecycle block in `dbdatabuild.yml` (commented) shows a project that records everything: `plans: {deploy: {keep: committed, audit: full}, refresh: {keep: committed, audit: full}}` (the plan text and the
+statement log in each event), `refresh: {check: objects, on_fail: block}` (the default, spelled out) and statement logs kept 90 days. Uncommented, a refresh ran as before (`check: objects`, 24 step(s) ran) and `connection monitor` listed it.
 
 ## Notes
 

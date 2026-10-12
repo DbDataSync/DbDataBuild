@@ -25,7 +25,7 @@ scoop install https://raw.githubusercontent.com/danshryock/DbDataBuild/main/buck
 ## A first look
 
 ```
-dbdatabuild project create adventureworks my-project   # a complete example project (seeds, models, tests) to explore offline; also starter, retail, chinook
+dbdatabuild project create adventureworks my-project   # a complete example project (seeds, models, tests) to explore offline; also starter, retail, chinook, stores (two engines, a copy), macros
 dbdatabuild project compile                        # check config and models, lower and lint every query, write the committed load scripts (--check in CI)
 dbdatabuild project tests run                      # run the project's tests (metadata rules in tests/metadata/, model tests)
 dbdatabuild project sample marts.fct_orders        # run a model on generated sample data, offline

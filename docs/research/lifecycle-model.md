@@ -327,7 +327,7 @@ Create a ready-to-run project from a template. Reads: the templates built into t
 | Parameter | Kind | Default | Meaning |
 |---|---|---|---|
 | `directory` | argument | the template's name | where to write the project |
-| `--template <name>` | option | `starter` | `starter`, `retail`, `chinook`, `adventureworks` |
+| `--template <name>` | option | `starter` | `starter`, `retail`, `chinook`, `adventureworks`, `stores`, `macros` |
 | `--list` | flag | | list the templates and write nothing |
 
 #### `project model create <schema.object>`  ·  `P⇒P`  ·  **new**

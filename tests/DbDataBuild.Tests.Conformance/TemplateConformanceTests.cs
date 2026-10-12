@@ -17,7 +17,7 @@ public class TemplateConformanceTests
     {
         var data = new TheoryData<string, string>();
         foreach (var engine in new[] { "sqlserver", "postgres" })
-            foreach (var template in new[] { "starter", "retail", "chinook", "adventureworks" })
+            foreach (var template in new[] { "starter", "retail", "chinook", "adventureworks", "macros" })
                 data.Add(engine, template);
         return data;
     }
@@ -62,7 +62,13 @@ public class TemplateConformanceTests
             void Ok((int Exit, string Out, string Err) r, string what) => Assert.True(r.Exit == 0, $"{what} failed ({r.Exit}):\n{r.Out}\n{r.Err}");
 
             Ok(Cli("project", "create", template, dir), "new");
-            if (name == "postgres") File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), PostgresConfig);
+            if (name == "postgres")
+            {
+                // the PostgreSQL profile replaces the file; what the template declares apart from the engine (the NAME parameters of `macros`) is kept
+                var original = File.ReadAllText(Path.Combine(dir, "dbdatabuild.yml"));
+                var parameters = original.IndexOf("\nparameters:\n", StringComparison.Ordinal) is var at and >= 0 ? original[(at + 1)..original.IndexOf("\npolicy:", at, StringComparison.Ordinal)] : "";
+                File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), PostgresConfig + parameters);
+            }
             if (native) File.AppendAllText(Path.Combine(dir, "dbdatabuild.yml"), "\nrewrites:\n  fidelity: native\n");
 
             Ok(Cli("connection", "seed", "--apply"), "load-seeds");

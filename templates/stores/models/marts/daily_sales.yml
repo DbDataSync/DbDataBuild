@@ -1,0 +1,13 @@
+name: marts.daily_sales
+kind: {type: full}
+connections=: [sqlserver, postgres]
+# store_id is written by the copy from a connection parameter (E01, W01), so no value ends in a space and the engines agree on it;
+# the copy's column cannot say `trimmed`, so the advice (DDB-236, docs/operations.md) is silenced here. `channel` says it in pos.orders.
+lint_ignore: [DDB-236]
+grain: [store_id, ordered_on, channel]
+columns:
+  - {name: store_id, type: "VARCHAR(10)", nullable: false}
+  - {name: ordered_on, type: DATE, nullable: false}
+  - {name: channel, type: "VARCHAR(10)", nullable: false}
+  - {name: orders, type: BIGINT, nullable: false}
+  - {name: amount, type: "DECIMAL(38, 2)"}

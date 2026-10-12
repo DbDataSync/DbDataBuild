@@ -1,0 +1,30 @@
+# Four connections in three roles (docs/concepts.md): two shop systems that are only read (store_east, store_west),
+# a warehouse the models are built on (sqlserver) and a reporting database (postgres). A connection is a name; its logins are
+# DBDATABUILD_<NAME>_READ and DBDATABUILD_<NAME>_WRITE (for store_east: DBDATABUILD_STORE_EAST_READ).
+connections:
+  sqlserver: { version: 16 }
+  postgres:
+    string_semantics: { trailing_space: significant }
+  # what differs between the systems goes in parameters; a copy reads them as ${origin.store_id}
+  store_east: { engine: postgres, parameters: { store_id: E01 } }
+  store_west: { engine: postgres, parameters: { store_id: W01 } }
+# models are built on the warehouse unless they say otherwise
+defaults: {connections: [sqlserver]}
+# the records of everything the tool builds, on every connection, are kept on the warehouse (central tracking)
+tracking: { connection: sqlserver }
+
+# How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
+#   plans:
+#     deploy:  { keep: committed, audit: full }
+#     refresh: { keep: committed, audit: standard }
+#   refresh: { check: objects, on_fail: block }
+#   retention: { statement_logs_days: 30 }
+
+# Text behaves differently on the two engines (SQL Server ignores trailing spaces when it compares, PostgreSQL does not), and one
+# profile cannot be exact on both. The project's profile fits SQL Server; the connection on the other engine says its own, over it
+# (docs/operations.md). A model built on both gets advice (DDB-236) where its query compares text, unless the columns are `trimmed`.
+string_semantics:
+  case: sensitive
+  trailing_space: ignored
+  collations:
+    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS, postgres: C }

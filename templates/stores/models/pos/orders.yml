@@ -1,0 +1,11 @@
+# The same table in two systems: `connections=:` lists where it exists. It is mapped (the tool builds nothing here).
+name: pos.orders
+kind:
+  type: mapped
+connections=: [store_east, store_west]
+grain: [order_id]
+columns:
+  - {name: order_id, type: BIGINT, nullable: false}
+  - {name: ordered_on, type: DATE, nullable: false}
+  - {name: channel, type: "VARCHAR(10)", nullable: false, trimmed: true}   # a code: no value ends in a space, so SQL Server and PostgreSQL agree when it is compared
+  - {name: amount, type: "DECIMAL(12, 2)", nullable: false}

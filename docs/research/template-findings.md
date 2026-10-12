@@ -58,6 +58,20 @@ Models added to `adventureworks` (`rpt_revenue_by_color_year`, `rpt_quota_long`,
 | L8 | `generate_series` between dates, or with bounds from another table | refused | **cataloged** (a lateral series is a `CROSS APPLY` of GENERATE_SERIES, integers only on SQL Server); the templates count days forward from a constant series |
 | L9 | `IS NOT DISTINCT FROM` as a pivot's null-safe comparison | not covered (DDB-305) | **fixed**: covered, with the probes that already compare it |
 
+## stores and macros, and the walk of every template through the new cycle (2026-10-12)
+
+`stores` (a fan-in copy, a fan-out model, central tracking, a refresh plan with an excluded copy) and `macros` (every kind of macro) were added, and `retail`, `chinook` and `adventureworks` were walked through `inspect`, `seed`, `init`, `status`, `deploy`, `refresh` and `monitor` on SQL Server 2022 and PostgreSQL 17 (entry 144).
+
+| # | Construct | What happened | Disposition |
+|---|---|---|---|
+| M1 | a macro that casts to an `ENUM` type | the lowered query said `CAST(CAST(status AS ENUM) AS VARCHAR)`, which no engine reads, and `compile` reported only a DDB-305 warning about a type `custom` | **fixed**: the lowerer refuses a cast to or from an enum (DDB-324, with the alias as the way out); an alias type (`CREATE TYPE money AS DECIMAL(12, 2)`) lowers to the type it stands for |
+| M2 | a DATE default of a macro parameter (`live_as_of := DATE '2024-06-30'`) | DuckDB folds it to a DATE constant that the plan carries as days since 1970; the lowerer wrote `CAST(19904 AS DATE)`, an error in DuckDB and PostgreSQL and 1954 on SQL Server | **fixed**: written as `DATE '2024-06-30'` |
+| M3 | `project model update --check` in a project with a copy | DDB-108, "has no query file", for the copy's definition | **fixed**: a copy is left out like a mapped model |
+| M4 | `project model update` for a query given a table by a project `NAME` parameter | DDB-219, the marker `__ddb_param_project_history_table__` is not a table (`compile` and `sample` were right) | **fixed**: names are resolved before the query is bound, on the model's first connection |
+| M5 | a SQL Server database created with the server's default collation | every command works, but `connection status` reports DDB-310 for a view column made of string literals (it takes the database collation) | **documented** in the READMEs (create the database `COLLATE Latin1_General_100_CS_AS`); the string profile is parked |
+| M6 | `retail` on PostgreSQL | the README said that `fct_shipment_packages` and the calendar do not render for PostgreSQL; all 23 models validate, deploy and refresh, and the marts match DuckDB | README corrected |
+| M7 | a column declared wider than its query returns (`macros`: `DECIMAL(21, 2)` against a `CAST(... AS money)`) | `compile` and the unit test passed; a deploy refused the model (DDB-420) | the template's declaration fixed; the unit test over the templates now runs `model update --check` |
+
 ## Not covered by a template yet
 
 `UNNEST` and list columns (L2), a lateral or date series (L8), `split_part` on SQL Server (C4), `json_extract` and `json_valid` (L6), and every regular expression on SQL Server (L7): the matrix says which are refused today; a template that needs one is how it gets built.
