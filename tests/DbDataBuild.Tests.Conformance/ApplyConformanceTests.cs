@@ -1266,6 +1266,54 @@ public partial class ApplyConformanceTests
     }
 
     [SkippableTheory, MemberData(nameof(Engines))]
+    public async Task The_words_about_objects_are_stored_as_rows_beside_the_documents_and_replaced_when_they_change(string name)
+    {
+        var run = await SetUp(name);
+        await using var engine = run.Engine;
+        try
+        {
+            var info = $"{run.Q("dbdatabuild")}.{run.Q("object_info")}";
+            async Task<List<string>> Rows(string kind, string subject) => [.. (await engine.RowsAsync(
+                $"SELECT {run.Q("element")}, {run.Q("item")}, {run.Q("item_key")}, COALESCE({run.Q("value_type")}, '-'), COALESCE({run.Q("value")}, '-') FROM {info} WHERE {run.Q("subject_kind")} = '{kind}' AND {run.Q("subject")} = '{subject}'")).Order(StringComparer.Ordinal)];
+            Ok(run.Cli("connection", "init", "--apply"), "init");
+
+            run.Write("dbdatabuild.yml", "title: Orders project\ndescription: \"Where the orders are.\"\ntags: [shop]\nproperties: {owner: sales, tier: 1}\nconnections:\n  " + name + ": {title: The database, properties: {live: true}}\n" + File.ReadAllText(Path.Combine(run.Dir, "dbdatabuild.yml")));
+            run.Write("models/marts/fct_orders.yml", "title: Orders fact\ndescription: \"One row per order; the amount is in dollars.\"\ntags: [finance]\nproperties: {owner: finance, tier: 2, pii: false, note: \"it's 100%\"}\n" + FctYaml.Replace("{name: amount,", "{title: Amount, description: \"Paid, tax included\", properties: {unit: USD}, name: amount,") + "indexes:\n  - {name: ix_orders_amount, columns: [amount], description: \"Range scans\", tags: [scan]}\n");
+            Ok(run.Cli("project", "compile"), "compile");
+            Assert.Equal(0, await CountAsync(run, info));
+            Ok(run.Cli("connection", "publish"), "publish");
+
+            Assert.Equal(new List<string>
+            {
+                "|description||-|One row per order; the amount is in dollars.", "|property|note|text|it's 100%", "|property|owner|text|finance", "|property|pii|boolean|false", "|property|tier|number|2",
+                "|tag|finance|-|-", "|title||-|Orders fact", "column:amount|description||-|Paid, tax included", "column:amount|property|unit|text|USD", "column:amount|title||-|Amount",
+                "index:ix_orders_amount|description||-|Range scans", "index:ix_orders_amount|tag|scan|-|-",
+            }.Order(StringComparer.Ordinal).ToList(), await Rows("model", "marts.fct_orders"));
+            Assert.Equal(new List<string> { "|description||-|Where the orders are.", "|property|owner|text|sales", "|property|tier|number|1", "|tag|shop|-|-", "|title||-|Orders project", "connection:" + name + "|property|live|boolean|true", "connection:" + name + "|title||-|The database" }.Order(StringComparer.Ordinal).ToList(), await Rows("project", "project"));
+            Assert.Empty(await Rows("model", "marts.v_orders"));                   // a model that says nothing has no rows
+
+            // the document says the same, and a second publish writes nothing
+            Assert.Empty(System.Text.Json.Nodes.JsonNode.Parse(run.Cli("connection", "publish", "--format", "json").Out)!["data"]!["written"]!.AsArray());
+            var before = await CountAsync(run, info);
+
+            // a changed description replaces the rows of that model and no other
+            run.Write("models/marts/fct_orders.yml", File.ReadAllText(Path.Combine(run.Dir, "models/marts/fct_orders.yml")).Replace("One row per order; the amount is in dollars.", "One row per order.").Replace("tags: [finance]", "tags: [finance, audited]"));
+            var changed = System.Text.Json.Nodes.JsonNode.Parse(run.Cli("connection", "publish", "--format", "json").Out)!["data"]!["written"]!.AsArray().Select(d => (string)d!["subject"]!).Order().ToList();
+            Assert.Equal(["marts.fct_orders"], changed);
+            Assert.Contains("|description||-|One row per order.", await Rows("model", "marts.fct_orders"));
+            Assert.DoesNotContain("|description||-|One row per order; the amount is in dollars.", await Rows("model", "marts.fct_orders"));
+            Assert.Contains("|tag|audited|-|-", await Rows("model", "marts.fct_orders"));
+            Assert.Equal(before + 1, await CountAsync(run, info));
+
+            // saying nothing any more leaves no rows
+            run.Write("models/marts/fct_orders.yml", FctYaml);
+            Ok(run.Cli("connection", "publish"), "publish");
+            Assert.Empty(await Rows("model", "marts.fct_orders"));
+        }
+        finally { if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
+    }
+
+    [SkippableTheory, MemberData(nameof(Engines))]
     public async Task Sources_are_exported_from_the_target_refreshed_checked_and_published(string name)
     {
         var run = await SetUp(name);
@@ -1529,7 +1577,7 @@ public partial class ApplyConformanceTests
             Refused(old, "DDB-505", "planning against an older layout");
             Assert.Contains("layout version 1", old.Err);
             Ok(run.Cli("connection", "init", "--apply"), "init upgrades");
-            Assert.Equal(["1", "5"], await engine.RowsAsync($"SELECT {run.Q("version")} FROM {T("tracking_version")}"));
+            Assert.Equal(["1", "6"], await engine.RowsAsync($"SELECT {run.Q("version")} FROM {T("tracking_version")}"));
             Ok(run.Cli("connection", "deploy", "--write-plan"), "plan after the upgrade");
 
             // metadata.store_on_apply: a successful apply also stores the project, the models it touched and the plan

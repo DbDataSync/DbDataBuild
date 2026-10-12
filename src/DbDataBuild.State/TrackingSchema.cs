@@ -15,8 +15,8 @@ public sealed record TrackingTable(string Name, string Purpose, IReadOnlyList<Tr
 /// </summary>
 public static class TrackingSchema
 {
-    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`).</summary>
-    public const int Version = 5;
+    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`); 6 added `object_info`, the title, description, tags and properties of the project, its connections, models, sources, columns and indexes as rows (the documents hold them as well).</summary>
+    public const int Version = 6;
 
     private static TrackingColumn C(string n, TrackingType t, bool nullable = false) => new(n, t, nullable);
 
@@ -73,6 +73,12 @@ public static class TrackingSchema
             C("connection", TrackingType.Name),
             C("plan_id", TrackingType.Short), C("plan_hash", TrackingType.Hash), C("plan_text", TrackingType.Long), C("stored_by", TrackingType.Name), C("stored_utc", TrackingType.TimestampUtc),
         ], ["connection", "plan_id"]),
+        new("object_info", "What a person says about an object in words (title, description, tags, properties), one row each, taken from the metadata documents when they are published. Nothing here is written into a deployed object.",
+        [
+            C("connection", TrackingType.Name),
+            C("subject_kind", TrackingType.Short), C("subject", TrackingType.Name), C("element", TrackingType.Name), C("item", TrackingType.Short), C("item_key", TrackingType.Short),
+            C("value_type", TrackingType.Short, true), C("value", TrackingType.Long, true), C("recorded_utc", TrackingType.TimestampUtc),
+        ], ["connection", "subject_kind", "subject", "element", "item", "item_key"]),
         new("metadata_document", "Project, source, model and plan metadata as JSON documents, for introspection with SQL. Append-only; the views metadata_current and metadata_columns show the latest.",
         [
             C("connection", TrackingType.Name),
@@ -86,6 +92,9 @@ public static class TrackingSchema
     /// so initializing a layout 4 store brings it to this one.
     /// </summary>
     public static readonly IReadOnlyList<(string Table, string Column)> AddedInLayout5 = [("migration_log", "lane"), ("migration_log", "project_hash")];
+
+    /// <summary>The table layout 6 added. The init script creates it when it is missing (a store of layout 5 is brought to 6 by `init`, which alters nothing), and the layout is recorded only when it is there.</summary>
+    public const string AddedInLayout6 = "object_info";
 
     public static TrackingTable Table(string name) => Tables.First(t => t.Name == name);
 }

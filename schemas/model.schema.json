@@ -217,6 +217,52 @@
         "trimmed": {
           "description": "Declared: no value of this column ends in a space, so it compares the same on every engine. `check` counts the rows that break it.",
           "type": "boolean"
+        },
+        "title": {
+          "description": "A short display name, one line, at most 200 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\n]*$"
+        },
+        "description": {
+          "description": "Free text, at most 4000 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "tags": {
+          "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+          }
+        },
+        "properties": {
+          "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+          "type": "object",
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
         }
       }
     },
@@ -547,6 +593,52 @@
           "items": {
             "$ref": "#/$defs/connectionName"
           }
+        },
+        "title": {
+          "description": "A short display name, one line, at most 200 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\n]*$"
+        },
+        "description": {
+          "description": "Free text, at most 4000 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "tags": {
+          "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+          }
+        },
+        "properties": {
+          "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+          "type": "object",
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
         }
       }
     },
@@ -649,7 +741,7 @@
       "type": "object",
       "additionalProperties": false,
       "patternProperties": {
-        "^(connections|kind|hooks|rewrites|lint_ignore|tags)[=+-]$": {
+        "^(connections|kind|hooks|rewrites|lint_ignore|tags|properties)[=+-]$": {
           "description": "A suffix on a setting that inherits from the project files above (`defaults:` in dbdatabuild.yml and in each folder's _dbdatabuild.yml): `key=` replaces what was inherited, `key-` removes the listed items or keys, `key+` merges (what happens without a suffix)."
         }
       },
@@ -721,12 +813,13 @@
           }
         },
         "tags": {
-          "description": "Labels for the model. `tag:<name>` in a model selector (`plan`, `graph`, `metadata`, ...) selects the models that carry it. Lists append across the project files above the model (a folder's `defaults:`), as `lint_ignore` does; `tags=` replaces and `tags-` removes.",
+          "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each. Lists append across the project files above (a folder's `defaults:`); `tags=` replaces and `tags-` removes. `tag:<name>` in a model selector selects by them.",
           "type": "array",
           "uniqueItems": true,
           "minItems": 1,
           "items": {
             "type": "string",
+            "maxLength": 128,
             "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
           }
         },
@@ -820,6 +913,41 @@
             "^[a-z][a-z0-9_]*$": {
               "$ref": "#/$defs/parameterValue"
             }
+          }
+        },
+        "title": {
+          "description": "A short display name, one line, at most 200 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\n]*$"
+        },
+        "description": {
+          "description": "Free text, at most 4000 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "properties": {
+          "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000. Mappings merge by key across the project files above (a folder's `defaults:`), the nearest winning; `properties=` replaces and `properties-: [key]` removes keys. `property:key=value` in a model selector selects by them.",
+          "type": "object",
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
           }
         }
       },

@@ -41,9 +41,13 @@ public class FuzzTests
     }
 
     private const string Config = """
-        defaults: {connections: [sqlserver, postgres]}
+        title: Fuzz project
+        description: "A project for the fuzz tests"
+        tags: [fuzz, "layer:one"]
+        properties: { owner: data, tier: 2, live: true, ratio: 0.5, code: "007" }
+        defaults: {connections: [sqlserver, postgres], tags: [base], properties: { source: fuzz }}
         connections:
-          sqlserver: { version: 17 }
+          sqlserver: { version: 17, title: Warehouse, description: "The main one", tags: [prod], properties: { region: eu } }
         string_semantics:
           case: insensitive
           accent: sensitive
@@ -55,11 +59,14 @@ public class FuzzTests
             - { name: grant, event: post_create, script: hooks/grant.sql }
         """;
 
-    private const string Source = "name: staging.events\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: seq, type: BIGINT, nullable: false}\n  - {name: payload, type: \"VARCHAR(100)\"}\n";
+    private const string Source = "name: staging.events\ntitle: Events\ndescription: \"Raw events\"\ntags: [raw]\nproperties: {system: crm}\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false, title: \"Event id\", description: \"The key\", tags: [key], properties: {pk: true}}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: seq, type: BIGINT, nullable: false}\n  - {name: payload, type: \"VARCHAR(100)\"}\n";
+
+    /// <summary>The words about the model, its columns' neighbours and its index: appended to the model's definition so the mutations reach them.</summary>
+    private const string ModelExtras = "\ntitle: Events\ndescription: \"Facts about events\"\ntags: [facts]\nproperties:\n  owner: data\n  tier: 1\n  reviewed: false\nindexes:\n  - {name: ix_seq, columns: [seq], title: \"By sequence\", description: \"Lookups by seq\", tags: [lookup], properties: {rank: 1}}\nhooks:\n  - {use: standard}\n";
 
     private const string Answers = "answers:\n  - {id: Q-history-marts.fct_events.payload, answer: not_backfilled, note: \"no history\"}\n";
 
-    private const string FolderFile = "defaults:\n  connections: [sqlserver]\n  lint_ignore: [DDB-223]\n  hooks:\n    - {name: audit, event: post_load, script: hooks/grant.sql}\n";
+    private const string FolderFile = "defaults:\n  connections: [sqlserver]\n  lint_ignore: [DDB-223]\n  tags: [folder]\n  properties: {zone: marts, tier: 3}\n  hooks:\n    - {name: audit, event: post_load, script: hooks/grant.sql}\n";
 
     private static string Project(string? config = null, string? source = null, string? model = null, string? sql = null, string? folder = null)
     {
@@ -69,7 +76,7 @@ public class FuzzTests
         Directory.CreateDirectory(Path.Combine(dir, "hooks"));
         File.WriteAllText(Path.Combine(dir, "hooks", "grant.sql"), "GRANT SELECT ON marts.fct_events TO reader;\n");
         File.WriteAllText(Path.Combine(dir, "models", "staging", "events.yml"), source ?? Source);
-        File.WriteAllText(Path.Combine(dir, "models", "marts", "fct_events.yml"), model ?? (LoadRendererTests.AllOpsYaml + "\nindexes:\n  - {name: ix_seq, columns: [seq]}\nhooks:\n  - {use: standard}\n"));
+        File.WriteAllText(Path.Combine(dir, "models", "marts", "fct_events.yml"), model ?? (LoadRendererTests.AllOpsYaml + ModelExtras));
         File.WriteAllText(Path.Combine(dir, "models", "marts", "fct_events.sql"), sql ?? LoadRendererTests.AllOpsSql);
         File.WriteAllText(Path.Combine(dir, "answers.yml"), Answers);
         File.WriteAllText(Path.Combine(dir, "models", "marts", "_dbdatabuild.yml"), folder ?? FolderFile);
@@ -109,7 +116,7 @@ public class FuzzTests
     [InlineData("folder")]
     public void A_damaged_project_file_is_answered_with_diagnostics_not_an_exception(string which)
     {
-        var baseText = which switch { "folder" => FolderFile, "config" => Config, "source" => Source, "model" => LoadRendererTests.AllOpsYaml + "\nindexes:\n  - {name: ix_seq, columns: [seq]}\nhooks:\n  - {use: standard}\n", _ => LoadRendererTests.AllOpsSql };
+        var baseText = which switch { "folder" => FolderFile, "config" => Config, "source" => Source, "model" => LoadRendererTests.AllOpsYaml + ModelExtras, _ => LoadRendererTests.AllOpsSql };
         var n = 0;
         foreach (var mutated in Mutations(baseText, Seed + which.Length, Rounds))
         {

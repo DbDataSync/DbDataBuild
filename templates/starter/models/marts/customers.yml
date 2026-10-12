@@ -1,13 +1,17 @@
 name: marts.customers
+title: Customers
+description: "One row per customer, with their order counts, first and latest order and lifetime value."
+tags: [customer]
+properties: {owner: analytics, refresh: daily}
 kind: {type: full}
 grain: [customer_id]
 columns:
-  - {name: customer_id, type: INTEGER, nullable: false}
+  - {name: customer_id, type: INTEGER, nullable: false, title: Customer, description: "The customer's id in the shop."}
   - {name: first_name, type: "VARCHAR(40)"}
   - {name: last_name, type: "VARCHAR(40)"}
   - {name: number_of_orders, type: BIGINT, nullable: false}
   - {name: first_order_date, type: DATE}
   - {name: most_recent_order_date, type: DATE}
-  - {name: lifetime_value, type: "DECIMAL(14, 2)"}
+  - {name: lifetime_value, type: "DECIMAL(14, 2)", description: "Sum of the amounts of the customer's orders, in dollars.", properties: {unit: USD}}
 indexes:
-  - {name: ux_customers_customer_id, columns: [customer_id], unique: true}
+  - {name: ux_customers_customer_id, columns: [customer_id], unique: true, description: "Makes the id a key for the reports that join on it."}

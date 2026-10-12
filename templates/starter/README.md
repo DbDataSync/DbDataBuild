@@ -23,6 +23,13 @@ dbdatabuild project tests run                       # the project's tests: metad
 | `tests/metadata/` | rules over what the project *is* (staging only reads sources, every model has a grain, ...) |
 | `tests/models/` | cases for a model's logic: given rows, expected rows |
 
+## Saying what things are
+
+The project, the connection, each mart, a few columns and an index carry a `title`, a `description`, `tags` and `properties` (see `dbdatabuild.yml` and `models/marts/`). They change nothing that is built; they
+are in the metadata (`dbdatabuild project show metadata marts.orders`), in the tracking table `object_info` after `dbdatabuild connection publish`, and in the rule `tests/metadata/marts_are_described_and_owned.sql`,
+which fails a mart that has no title, description or `owner`. `models/marts/_dbdatabuild.yml` gives every mart the tag `mart` and the property `layer: mart` once; `dbdatabuild project show graph tag:finance` or
+`property:owner=finance` selects models by them.
+
 ## Things to try
 
 - `dbdatabuild project show graph +marts.customers` and `dbdatabuild project show graph --column raw.payments.amount_cents`.

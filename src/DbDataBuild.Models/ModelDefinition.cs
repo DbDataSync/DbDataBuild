@@ -21,7 +21,7 @@ public static class TargetNames
 }
 
 /// <param name="Trimmed">Declared: no value of this column ends in a space. Trailing spaces are the one difference between engines that data can make go away (SQL Server ignores them in a comparison, PostgreSQL keeps them), so a column that has none compares the same everywhere; `check` counts the rows that break the declaration.</param>
-public sealed record ColumnDefinition(string Name, string Type, bool Nullable = true, string? Collation = null, int Line = 0, int CollationLine = 0, bool Trimmed = false);
+public sealed record ColumnDefinition(string Name, string Type, bool Nullable = true, string? Collation = null, int Line = 0, int CollationLine = 0, bool Trimmed = false, ObjectInfo? Info = null);
 
 public sealed record RenameDefinition(string From, string To);
 
@@ -65,10 +65,13 @@ public sealed record ModelDefinition(
     CopyWatermark? Watermark = null,
     IReadOnlyDictionary<string, ParameterValue>? DeclaredParameters = null,
     bool LocalCopy = false,
-    IReadOnlyList<string>? DeclaredTags = null)
+    ObjectInfo? DeclaredInfo = null)
 {
+    /// <summary>The model's title, description, tags and properties. Tags and properties are the model's file merged onto the project files above it (`defaults:` of each, the nearest winning); the title and description are the model's own and never inherited.</summary>
+    public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
+
     /// <summary>The model's tags (`tags:` in its file and in the project files above it, merged): labels that `tag:` selects by.</summary>
-    public IReadOnlyList<string> Tags => DeclaredTags ?? [];
+    public IReadOnlyList<string> Tags => Info.Tags;
 
     /// <summary>The model's own parameters (`parameters:` in its file, never inherited). Referenced as `${model.name}`.</summary>
     public IReadOnlyDictionary<string, ParameterValue> Parameters => DeclaredParameters ?? new Dictionary<string, ParameterValue>();

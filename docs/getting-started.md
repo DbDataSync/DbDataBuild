@@ -40,9 +40,9 @@ export DBDATABUILD_SQLSERVER_READ='Server=localhost,1433;User Id=reader;Password
 export DBDATABUILD_SQLSERVER_WRITE='Server=localhost,1433;User Id=builder;Password=...;TrustServerCertificate=true'
 
 dbdatabuild connection seed --apply                      # optional: put the seeded source tables into the database (without --apply it only shows what it would do)
-dbdatabuild connection init --connection sqlserver --apply   # create the tracking tables (without --apply it shows the statements)
-dbdatabuild connection status --connection sqlserver     # where it stands: nothing deployed yet, no drift
-dbdatabuild connection deploy --connection sqlserver     # plan (it asks what it must ask), show the plan, apply it when you say yes
+dbdatabuild connection init sqlserver --apply   # create the tracking tables (without --apply it shows the statements)
+dbdatabuild connection status sqlserver     # where it stands: nothing deployed yet, no drift
+dbdatabuild connection deploy sqlserver     # plan (it asks what it must ask), show the plan, apply it when you say yes
 ```
 
 `connection deploy` reads the database, writes `plans/sqlserver/<id>.plan.yml` (and a `.plan.md` report) and shows it: every statement, its risk and the reasons, and any question it cannot answer from the project (a renamed column, a load that needs a decision). It asks those questions at the terminal; a script gives the answers in a file (`--answers`) or with `--param`. Applying runs exactly what the plan recorded and refuses a plan that was edited, is out of date, or no longer matches the database. To separate the steps, `--write-plan` stops after the plan and `--apply-plan <file>` applies it later (`--dry-run` checks everything and executes nothing). A plan that stopped part-way continues when the same plan is applied again; a completed plan is refused.

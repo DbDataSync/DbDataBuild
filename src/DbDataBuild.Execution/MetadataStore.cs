@@ -7,6 +7,9 @@ namespace DbDataBuild.Execution;
 /// Metadata documents in the target (`metadata_document`, DESIGN.md 12): JSON text with its hash, append-only. A document is written only when it differs from the latest one
 /// for the same kind and subject, so republishing an unchanged project writes nothing.
 /// </summary>
+/// <summary>One row of `object_info`: <paramref name="Element"/> is empty for the subject itself, or `column:name`, `index:name` or `connection:name` for a part of it; <paramref name="Item"/> is `title`, `description`, `tag` or `property`; <paramref name="Key"/> is the tag or the property key (empty for a title and a description); a property has a type and its value as text.</summary>
+public sealed record InfoRow(string Element, string Item, string Key, string? ValueType, string? Value);
+
 public static class MetadataStore
 {
     private static string C(string target, string n) => TrackingDdl.For(target).Quote(n);
@@ -27,6 +30,43 @@ public static class MetadataStore
         var rows = await read.QueryAsync($"SELECT m.{c("document")} FROM {c(scope.SchemaName)}.{c("metadata_current")} m WHERE m.{c("connection")} = @connection AND m.{c("kind")} = @kind AND m.{c("subject")} = @subject",
             [new GateParameter("connection", DbType.String, scope.Connection), new GateParameter("kind", DbType.String, kind), new GateParameter("subject", DbType.String, subject)], ct);
         return rows.Count == 0 ? null : rows[0][0]?.ToString();
+    }
+
+    /// <summary>
+    /// Replaces the rows of `object_info` for one subject (a project, a model or a source) with <paramref name="rows"/>: the title, description, tags and properties the subject's document says, one row each. The old rows go first and
+    /// the document is stored after, so an interrupted publish leaves a document that still differs from the latest one and the next publish writes both again.
+    /// </summary>
+    public static async Task ReplaceInfoAsync(MutationGate gate, TrackingScope scope, string stepId, string kind, string subject, IReadOnlyList<InfoRow> rows, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var table = $"{c(scope.SchemaName)}.{c("object_info")}";
+        await gate.ExecuteAsync(GateStatement.Tracking($"{stepId}-info-delete", $"DELETE FROM {table} WHERE {c("connection")} = @connection AND {c("subject_kind")} = @subject_kind AND {c("subject")} = @subject",
+            [new("connection", DbType.String, scope.Connection), new("subject_kind", DbType.AnsiString, kind), new("subject", DbType.String, subject)]), ct);
+        var recorded = TrackingClock.NextUtc();
+        const int PerStatement = 50;       // 5 values a row beside the 4 shared ones: well under the 2100 parameters SQL Server takes in one statement
+        for (var from = 0; from < rows.Count; from += PerStatement)
+        {
+            var chunk = rows.Skip(from).Take(PerStatement).ToList();
+            var parameters = new List<GateParameter> { new("connection", DbType.String, scope.Connection), new("subject_kind", DbType.AnsiString, kind), new("subject", DbType.String, subject), new("recorded_utc", DbType.DateTime2, recorded) };
+            var values = new List<string>();
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                values.Add($"(@connection, @subject_kind, @subject, @element{i}, @item{i}, @item_key{i}, @value_type{i}, @value{i}, @recorded_utc)");
+                parameters.Add(new($"element{i}", DbType.String, chunk[i].Element)); parameters.Add(new($"item{i}", DbType.AnsiString, chunk[i].Item)); parameters.Add(new($"item_key{i}", DbType.AnsiString, chunk[i].Key));
+                parameters.Add(new($"value_type{i}", DbType.AnsiString, chunk[i].ValueType)); parameters.Add(new($"value{i}", DbType.String, chunk[i].Value));
+            }
+            var text = $"INSERT INTO {table} ({c("connection")}, {c("subject_kind")}, {c("subject")}, {c("element")}, {c("item")}, {c("item_key")}, {c("value_type")}, {c("value")}, {c("recorded_utc")}) VALUES {string.Join(", ", values)}";
+            await gate.ExecuteAsync(GateStatement.Tracking($"{stepId}-info-{from / PerStatement + 1:00}", text, parameters), ct);
+        }
+    }
+
+    /// <summary>The rows of `object_info` of one subject, for tests and for `connection status`: element, item, key, type, value.</summary>
+    public static async Task<IReadOnlyList<InfoRow>> InfoAsync(ReadSession read, TrackingScope scope, string kind, string subject, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var rows = await read.QueryAsync($"SELECT i.{c("element")}, i.{c("item")}, i.{c("item_key")}, i.{c("value_type")}, i.{c("value")} FROM {c(scope.SchemaName)}.{c("object_info")} i WHERE i.{c("connection")} = @connection AND i.{c("subject_kind")} = @kind AND i.{c("subject")} = @subject",
+            [new GateParameter("connection", DbType.String, scope.Connection), new GateParameter("kind", DbType.String, kind), new GateParameter("subject", DbType.String, subject)], ct);
+        return rows.Select(r => new InfoRow(((string)r[0]!), ((string)r[1]!).Trim(), ((string)r[2]!).Trim(), (r[3] as string)?.Trim(), r[4] as string)).ToList();
     }
 
     public static string Key(string kind, string subject) => $"{kind}|{subject}";

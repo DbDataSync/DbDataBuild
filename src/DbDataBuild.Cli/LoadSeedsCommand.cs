@@ -90,8 +90,8 @@ internal static class LoadSeedsCommand
                     output.WriteLine($"-- then {Statements(t.Seeded.Rows, t.Columns.Count)} INSERT statement(s) of up to {RowsPerStatement(t.Columns.Count)} rows");
                 }
                 output.WriteLine();
-                output.WriteLine($"Nothing was executed. Run `{ProductInfo.Cli} {spec.Name} --connection {target} --apply` with the write login configured to create and fill these tables{(replace ? "" : " (it stops at a table that already exists; --replace drops and recreates)")}.");
-                output.Next($"connection seed --connection {target} --apply");
+                output.WriteLine($"Nothing was executed. Run `{ProductInfo.Cli} {spec.Name} {target} --apply` with the write login configured to create and fill these tables{(replace ? "" : " (it stops at a table that already exists; --replace drops and recreates)")}.");
+                output.Next($"connection seed {target} --apply");
                 return CliApp.ExitOk;
             }
 

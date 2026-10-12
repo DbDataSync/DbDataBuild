@@ -32,12 +32,13 @@ internal static class MetadataBuilder
         return new
         {
             schema = ProjectSchema,
+            title = cfg.Info.Title, description = cfg.Info.Description, tags = cfg.Info.TagsForDocument, properties = cfg.Info.PropertiesForDocument,
             tool_version = ProductInfo.Version,
             matrix_version = MatrixLoader.EmbeddedVersion(),
             config = new
             {
                 default_connections = cfg.DefaultConnections,
-                connections = cfg.Connections.OrderBy(c => c.Key, StringComparer.Ordinal).ToDictionary(c => c.Key, c => c.Value.Version is { } v ? (object)new { engine = c.Value.Engine, version = v } : new { engine = c.Value.Engine }),
+                connections = cfg.Connections.OrderBy(c => c.Key, StringComparer.Ordinal).ToDictionary(c => c.Key, c => (object)new { engine = c.Value.Engine, version = c.Value.Version, title = c.Value.Info.Title, description = c.Value.Info.Description, tags = c.Value.Info.TagsForDocument, properties = c.Value.Info.PropertiesForDocument }),
                 target_versions = cfg.TargetVersions,
                 tracking_schema = cfg.TrackingSchemaName,
                 rewrites = new { fidelity = cfg.Rewrites?.Fidelity ?? RewriteSettings.Exact, disable = cfg.Rewrites?.Disable ?? [], enable = cfg.Rewrites?.Enable ?? [] },
@@ -124,7 +125,7 @@ internal static class MetadataBuilder
     public static string SourceFile(SourceDescriptor d) => d.File.Length > 0 ? d.File : d.Native is { File.Length: > 0 } n ? n.File.Replace('\\', '/') : SourceFile(d.Name);
 
     /// <summary>A native model's text is part of what it is, so a change to it changes the hash.</summary>
-    private static string DefinitionHash(SourceDescriptor d) => Hashing.ScriptHash(SourceDescriptorWriter.Yaml(d) + (d.Native == null ? "" : "\n" + d.Native.Access + "\n" + d.Native.Text));
+    private static string DefinitionHash(SourceDescriptor d) => Hashing.ScriptHash(SourceDescriptorWriter.Yaml(d, withInfo: false) + (d.Native == null ? "" : "\n" + d.Native.Access + "\n" + d.Native.Text));
 
     /// <summary>What makes a source native, or null for a mapped one: how it is run, where, the hash of its text (the text itself is in the file), and the tables it says it reads.</summary>
     private static object? NativeJson(SourceDescriptor d) => d.Native == null ? null : new
@@ -139,12 +140,13 @@ internal static class MetadataBuilder
     {
         schema = SourceSchema,
         name = d.Name,
+        title = d.Info.Title, description = d.Info.Description, tags = d.Info.TagsForDocument, properties = d.Info.PropertiesForDocument,
         file = SourceFile(d),
         definition_hash = DefinitionHash(d),
         native = NativeJson(d),
         grain = d.Grain,
-        columns = d.Columns.Select(c => new { name = c.Name, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation }).ToList(),
-        indexes = d.Indexes.Select(i => new { name = i.Name, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
+        columns = d.Columns.Select(c => new { name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation }).ToList(),
+        indexes = d.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
         foreign_keys = d.ForeignKeys.Select(f => new { name = f.Name, columns = f.Columns, references = new { table = f.Table, columns = f.ReferencedColumns } }).ToList(),
         consumers,
     };
@@ -223,9 +225,11 @@ internal static class MetadataBuilder
         {
             schema = ModelSchema,
             name = def.Name,
+            title = def.Info.Title, description = def.Info.Description,
             kind = new { type = def.KindType, unique_key = def.UniqueKey, time_column = def.TimeColumn, lookback = def.Lookback },
             grain = def.Grain,
-            tags = def.Tags.Count == 0 ? null : def.Tags.Order(StringComparer.Ordinal).ToList(),
+            tags = def.Info.TagsForDocument,
+            properties = def.Info.PropertiesForDocument,
             connections = targets,
             files = new { definition = source.DefinitionFile, query = source.QueryFile },
             inherited = source.Inherited.Select(o => new { path = o.Path, file = o.File, line = o.Line, value = o.Value }).ToList(),
@@ -240,13 +244,14 @@ internal static class MetadataBuilder
             },
             columns = def.Columns.Select(c => new
             {
-                name = c.Name, logical_type = c.Type, duckdb_type = lowered?.Query.Columns.FirstOrDefault(x => string.Equals(x.Name, c.Name, StringComparison.OrdinalIgnoreCase))?.DuckDbType,
+                name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument,
+                logical_type = c.Type, duckdb_type = lowered?.Query.Columns.FirstOrDefault(x => string.Equals(x.Name, c.Name, StringComparison.OrdinalIgnoreCase))?.DuckDbType,
                 nullable = c.Nullable, collation = c.Collation, native = Native(c), lineage = Lineage(c),
             }).ToList(),
             expected_shape_hash = shapeHashes,
             renames = def.Renames.Select(r => new { from = r.From, to = r.To }).ToList(),
             loads = rendered,
-            indexes = def.Indexes.Select(i => new { name = i.Name, columns = i.Columns, unique = i.Unique, include = i.Include, connections = i.Targets }).ToList(),
+            indexes = def.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include, connections = i.Targets }).ToList(),
             hooks,
             index_advice = IndexAdvisor.For(def, targets).Select(a => new
             {

@@ -39,6 +39,8 @@ List the project templates built in, or create a ready-to-run project from one.
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 
+Usage: `dbdatabuild project create [template] [directory]`
+
 | Argument | Meaning |
 |---|---|
 | `template` | The template to create (omit to list them) |
@@ -49,6 +51,8 @@ Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 Create a model to start from: a definition and a placeholder query that runs, in the project's layout (a view, a full table, or an incremental one).
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
+
+Usage: `dbdatabuild project model create <model> [options]`
 
 | Argument | Meaning |
 |---|---|
@@ -65,6 +69,8 @@ Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 Generate or update model definition files.
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
+
+Usage: `dbdatabuild project model update [paths]... [options]`
 
 | Argument | Meaning |
 |---|---|
@@ -84,6 +90,8 @@ Validate the project and write what is compiled from it (rendered/): the lowered
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 
+Usage: `dbdatabuild project compile [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
 | `models` (several) | Model names (marts.fct_orders), model files, or directories (default: every model) |
@@ -100,6 +108,8 @@ Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 Run the project's tests: metadata rules (DuckDB SQL over the metadata views) in tests/metadata/ and model tests (given rows, expected rows) in tests/models/.
 
 Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project tests run [tests]... [options]`
 
 | Argument | Meaning |
 |---|---|
@@ -119,6 +129,8 @@ List the project's tests with their kind, severity and tags (nothing is run).
 
 Effect: Offline only. Reads and writes: `P→`.
 
+Usage: `dbdatabuild project tests list [options]`
+
 | Option | Meaning |
 |---|---|
 | `--kind` `<text>` | List only tests of this kind: metadata (tests/metadata) or model (tests/models) |
@@ -130,6 +142,8 @@ Effect: Offline only. Reads and writes: `P→`.
 Run models on generated or supplied sample data, offline.
 
 Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project sample [models]... [options]`
 
 | Argument | Meaning |
 |---|---|
@@ -151,6 +165,8 @@ Run the seeds (DuckDB queries that generate the source data) into a DuckDB file.
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 
+Usage: `dbdatabuild project seed [options]`
+
 | Option | Meaning |
 |---|---|
 | `--out` `<file>` | The DuckDB file to write (default: .dbdatabuild/seed.duckdb) |
@@ -164,14 +180,16 @@ Export tables and views from a connection as mapped models (models/), so models 
 
 Effect: Target read-only. Reads and writes: `C→P`.
 
+Usage: `dbdatabuild project import [connection] [tables]... [options]`
+
 | Argument | Meaning |
 |---|---|
+| `connection` | Connection to read (default: the project's only default connection) |
 | `tables` (several) | Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the source descriptors the project already has) |
 
 | Option | Meaning |
 |---|---|
 | `--check` | CI: fail if a descriptor differs from the table it describes; writes nothing |
-| `--connection` `<text>` | Connection to read (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 | `--write` | Write the new and changed mapped models under models/ (without it the command only shows the diff) |
 
@@ -180,6 +198,8 @@ Effect: Target read-only. Reads and writes: `C→P`.
 Print the model x connection x operation pairing table.
 
 Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project show loads [options]`
 
 | Option | Meaning |
 |---|---|
@@ -191,9 +211,11 @@ Show the dependency graph (which table each model reads), column lineage, or a d
 
 Effect: Offline only. Reads and writes: `P→`.
 
+Usage: `dbdatabuild project show graph [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Selectors (default: every model): names, paths, `+model`, `model+`, `2+model`, `@model`, `kind:`, `tag:`, `connection:`, `path:`, `changed:<git ref>`, `exclude:...` |
+| `models` (several) | Selectors (default: every model): names, paths, `+model`, `model+`, `2+model`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:...` |
 
 | Option | Meaning |
 |---|---|
@@ -208,9 +230,11 @@ Print everything the tool knows about the project and its models (use --format j
 
 Effect: Offline only. Reads and writes: `P→`.
 
+Usage: `dbdatabuild project show metadata [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model) |
 
 | Option | Meaning |
 |---|---|
@@ -221,6 +245,8 @@ Effect: Offline only. Reads and writes: `P→`.
 Read plan files (offline, nothing applied): list a project's plans, or show one with its steps, risk, exact statements, report and what applying it would need to be allowed.
 
 Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project show plan [plan] [options]`
 
 | Argument | Meaning |
 |---|---|
@@ -237,6 +263,8 @@ Install the skill and JSON Schemas an AI coding agent needs to work in a project
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 
+Usage: `dbdatabuild project agent-kit [options]`
+
 | Option | Meaning |
 |---|---|
 | `--check` | CI: fail if the installed kit differs from this version's; writes nothing |
@@ -251,9 +279,14 @@ Can the tool use this connection, and if not, why: whether each login is set, co
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
+Usage: `dbdatabuild connection inspect [connection] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `connection` | Connection to inspect (default: the project's only default connection) |
+
 | Option | Meaning |
 |---|---|
-| `--connection` `<text>` | Connection to inspect (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 
 ## connection init
@@ -262,10 +295,15 @@ Create the tracking tables and their schema name (prints the script; --apply run
 
 Effect: Tracking tables only. Reads and writes: `P⇒T`.
 
+Usage: `dbdatabuild connection init [connection] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `connection` | Connection to initialize (default: the project's only default connection) |
+
 | Option | Meaning |
 |---|---|
 | `--apply` | Run the script on the write login (default: print it for review and connect to nothing) |
-| `--connection` `<text>` | Connection to initialize (default: the project's only default connection) |
 | `--project` `<path>` | Project root (contains dbdatabuild.yml) |
 | `--upgrade` | Bring tracking tables of an older layout (before 4) to this one first: adds the `connection` column to each record table (every existing row gets the connection being initialized), puts it in the primary keys and drops the old views; the script is printed for review like the rest |
 
@@ -275,13 +313,15 @@ Where a connection stands: drift, blocks, what a deploy would do.
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
+Usage: `dbdatabuild connection status [connection] [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
+| `connection` | Connection to check (default: the project's only default connection) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
 
 | Option | Meaning |
 |---|---|
-| `--connection` `<text>` | Connection to check (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 
 ## connection deploy
@@ -290,8 +330,11 @@ Change a connection's structure to match the models: plan with questions, show t
 
 Effect: Target writes (DDL and/or data, as the plan states). Reads and writes: `P⇒S`. Lane: deploy.
 
+Usage: `dbdatabuild connection deploy [connection] [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
+| `connection` | Connection to deploy to (default: the project's only default connection) |
 | `models` (several) | Model names, files or directories to plan (default: every model that declares the connection) |
 
 | Option | Meaning |
@@ -304,7 +347,6 @@ Effect: Target writes (DDL and/or data, as the plan states). Reads and writes: `
 | `--answers` `<file>` | Answers file for the questions (see schemas/answers.schema.json) |
 | `--apply-plan` `<file>` | Apply a plan file written by --write-plan (plans/<connection>/<id>.plan.yml). A plan that stopped part-way continues; a completed plan is refused |
 | `--backfill` `<text ...>` | model=operation: plan that operation as a backfill (risky; needs --allow-risky to apply); the model has no routine load in this plan (repeatable) |
-| `--connection` `<text>` | Connection to deploy to (default: the project's only default connection) |
 | `--dry-run` | Apply: run every check and print every statement; execute nothing |
 | `--full-refresh` `<text ...>` | model: read an incremental copy's origins from the start instead of from the newest value the destination holds (the merge by unique key makes it safe to repeat; it does not see rows deleted at the origin; repeatable) |
 | `--op` `<text ...>` | model=operation: load this model with a non-default operation (repeatable) |
@@ -321,15 +363,17 @@ Run the routine loads of the refresh plan that project compile wrote, as an even
 
 Effect: Target writes (data only). Reads and writes: `P⇒D`. Lane: refresh.
 
+Usage: `dbdatabuild connection refresh [connection] [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
+| `connection` | Connection (default: the project's only default connection) |
 | `models` (several) | Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan) |
 
 | Option | Meaning |
 |---|---|
 | `--allow-dirty` | Run from a working tree with uncommitted changes (recorded) |
 | `--check` `<text>` | The safety check before the loads, instead of the project's `refresh.check`: none (nothing; the engine's errors are the check), project (this project was deployed here), objects (each object against what was last deployed), live (each object against the catalog now) |
-| `--connection` `<text>` | Connection (default: the project's only default connection) |
 | `--dry-run` | Run every check and print every statement; execute nothing |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
 | `--project` `<path>` | Project root |
@@ -340,10 +384,15 @@ The events (deploys and refreshes), DDL and load history, recorded shapes, and w
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
+Usage: `dbdatabuild connection monitor [connection] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `connection` | Connection (default: the project's only default connection) |
+
 | Option | Meaning |
 |---|---|
 | `--attention` | Only what needs attention (the other tables are left out of the text; the document still has them) |
-| `--connection` `<text>` | Connection (default: the project's only default connection) |
 | `--event` `<text>` | One event in detail, by its id (as the first table shows it): its states, its DDL and its loads |
 | `--lane` `<text>` | Only the events of this lane (and their DDL and loads): deploy or refresh |
 | `--last` `<number>` | How many recent rows of each history to show |
@@ -355,9 +404,12 @@ Compare the data of two tables, of one connection or across connections and engi
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
+Usage: `dbdatabuild connection compare [connection] [table] [options]`
+
 | Argument | Meaning |
 |---|---|
-| `table` | The table or view to compare, as schema_name.table_name (a model's table, for example) |
+| `connection` | Connection (default: the project's only default connection) |
+| `table` | The table or view to compare, as schema_name.table_name (a model's table, for example). Required; the connection comes before it |
 
 | Option | Meaning |
 |---|---|
@@ -365,7 +417,6 @@ Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 | `--against-connection` `<text>` | Compare with the table on this connection (the same table name unless --against or --against-schema says another); the connections may be on different engines, and only digests of the values are compared |
 | `--against-schema` `<text>` | Compare with the table of the same name under this schema name (a development copy, for example) |
 | `--columns` `<text ...>` | Compare only these columns (and the key) |
-| `--connection` `<text>` | Connection (default: the project's only default connection) |
 | `--exclude-columns` `<text ...>` | Leave these columns out of the comparison |
 | `--key` `<text ...>` | Columns that identify a row (default: the model's grain or unique key, or a source's grain) |
 | `--limit` `<number>` | With --show-values, how many sample rows of each kind of difference |
@@ -378,10 +429,15 @@ Create the seeded source tables on a connection and fill them from the seeds (pr
 
 Effect: Target writes (DDL and/or data, as the plan states). Reads and writes: `P⇒S`.
 
+Usage: `dbdatabuild connection seed [connection] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `connection` | Connection to load (default: the project's only default connection) |
+
 | Option | Meaning |
 |---|---|
 | `--apply` | Create and fill the tables on the write login (default: print what would happen and connect to nothing) |
-| `--connection` `<text>` | Connection to load (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 | `--replace` | Drop and recreate a source table that already exists (default: stop at the first table that exists) |
 | `--scale` `<nullable`1>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
@@ -393,13 +449,15 @@ Store the project and model metadata as JSON in the connection for introspection
 
 Effect: Tracking tables only. Reads and writes: `P⇒T`.
 
+Usage: `dbdatabuild connection publish [connection] [models]... [options]`
+
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model) |
+| `connection` | Connection (default: the project's only default connection) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model) |
 
 | Option | Meaning |
 |---|---|
-| `--connection` `<text>` | Connection (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 
 ## ui terminal
@@ -408,9 +466,14 @@ Interactive terminal interface: choose, plan and run operations (each action it 
 
 Effect: Offline only. Reads and writes: `—`.
 
+Usage: `dbdatabuild ui terminal [connection] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `connection` | Connection to work on (default: the project's only default connection) |
+
 | Option | Meaning |
 |---|---|
-| `--connection` `<text>` | Connection to work on (default: the project's only default connection) |
 | `--project` `<path>` | Project root |
 
 ## ui web
@@ -418,6 +481,8 @@ Effect: Offline only. Reads and writes: `—`.
 Web interface on this machine's loopback address: project health, lineage, models and their rendered scripts, tests, the support matrix (it runs only commands that read, unless started with --allow-apply).
 
 Effect: Offline only. Reads and writes: `—`.
+
+Usage: `dbdatabuild ui web [options]`
 
 | Option | Meaning |
 |---|---|
@@ -430,6 +495,8 @@ Effect: Offline only. Reads and writes: `—`.
 Model Context Protocol server on standard input and output: the commands as tools for an AI agent, the agent kit as resources (each tool it offers declares its own effect; commands that change a connection are offered only with --allow-writes).
 
 Effect: Offline only. Reads and writes: `—`.
+
+Usage: `dbdatabuild ui mcp [options]`
 
 | Option | Meaning |
 |---|---|
@@ -444,6 +511,8 @@ Long-form explanation of a diagnostic code.
 
 Effect: Offline only. Reads and writes: `—`.
 
+Usage: `dbdatabuild help code <code>`
+
 | Argument | Meaning |
 |---|---|
 | `code` | Diagnostic code, e.g. DDB-214 |
@@ -453,6 +522,8 @@ Effect: Offline only. Reads and writes: `—`.
 Print the support matrix and portability report.
 
 Effect: Offline only. Reads and writes: `—`.
+
+Usage: `dbdatabuild help matrix [options]`
 
 | Option | Meaning |
 |---|---|

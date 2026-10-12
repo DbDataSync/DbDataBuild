@@ -6,7 +6,7 @@ namespace DbDataBuild.Models;
 /// <summary>Loads and validates one model definition (.yml). All problems are reported in one pass.</summary>
 public static class ModelDefinitionLoader
 {
-    private static readonly string[] TopKeys = ["name", "kind", "grain", "connections", "columns", "renames", "loads", "indexes", "hooks", "lint_ignore", "rewrites", "parameters", "tags"];
+    private static readonly string[] TopKeys = ["name", "kind", "grain", "connections", "columns", "renames", "loads", "indexes", "hooks", "lint_ignore", "rewrites", "parameters", .. YamlFieldReader.InfoKeys];
     private static readonly string[] RenameKeys = ["from", "to"];
 
     /// <param name="file">Path shown in diagnostics.</param>
@@ -46,7 +46,7 @@ public static class ModelDefinitionLoader
     }
 
     /// <summary>The top-level keys a model inherits from the project files above it (`defaults:` in each); a model's own file may use the same names, with a suffix, to change what it inherits.</summary>
-    public static readonly IReadOnlySet<string> LayeredKeys = new HashSet<string>(["connections", "kind", "hooks", "rewrites", "lint_ignore", "tags"], StringComparer.Ordinal);
+    public static readonly IReadOnlySet<string> LayeredKeys = new HashSet<string>(["connections", "kind", "hooks", "rewrites", "lint_ignore", "tags", "properties"], StringComparer.Ordinal);
 
     private sealed class Validator(string file, List<Diagnostic> diags, IReadOnlySet<string> connections) : YamlFieldReader(file, diags)
     {
@@ -98,9 +98,7 @@ public static class ModelDefinitionLoader
             foreach (var code in (lintIgnore ?? []).Where(c => !IndexAdvisorCodes.Contains(c.Value)))
                 Add(DiagnosticCatalog.InvalidValue, code, $"`{code.Value}` is not an advisory lint code.", $"One of: {string.Join(", ", IndexAdvisorCodes)}.");
 
-            var tags = StringList(top, "tags", required: false, allowEmpty: false, unique: true);
-            foreach (var tag in (tags ?? []).Where(t => !System.Text.RegularExpressions.Regex.IsMatch(t.Value, @"^[A-Za-z0-9_][A-Za-z0-9_.:\-]*$")))
-                Add(DiagnosticCatalog.InvalidValue, tag, $"`{tag.Value}` is not a tag.", "Letters, digits, `_`, `-`, `.` and `:`, starting with a letter, digit or `_`.");
+            var info = ReadInfo(top);
 
             var rewrites = ReadRewrites(top);
             var modelParameters = top.Get("parameters") is { } pn ? ParameterReferences.Read(pn, "`parameters`", (d, n, f) => Add(d, n, f)) : null;
@@ -134,7 +132,7 @@ public static class ModelDefinitionLoader
             return new ModelDefinition(name.Value, kindType.Value,
                 uniqueKey?.Select(k => k.Value).ToList() ?? [], timeColumn?.Value, lookback?.Value,
                 grain?.Select(g => g.Value).ToList() ?? [], targets?.Select(t => t.Value).ToList(),
-                columns, renames, loads, indexes, hooks, lintIgnore?.Select(c => c.Value).ToList(), rewrites, from?.Value, from?.Line ?? 0, slice, onMismatch, false, watermark, modelParameters, false, tags?.Select(t => t.Value).ToList());
+                columns, renames, loads, indexes, hooks, lintIgnore?.Select(c => c.Value).ToList(), rewrites, from?.Value, from?.Line ?? 0, slice, onMismatch, false, watermark, modelParameters, false, info);
         }
 
         /// <summary>`watermark: {column, lookback}` of an incremental copy. It needs a `unique_key` (the rows it reads again replace the ones with the same key).</summary>
@@ -391,7 +389,7 @@ public static class ModelDefinitionLoader
             var result = new List<IndexDefinition>();
             if (top.Get("indexes") is not { } node) return result;
             if (node is not YamlSequence seq) { Add(DiagnosticCatalog.InvalidValue, node, "`indexes` must be a list."); return result; }
-            string[] keys = ["name", "columns", "unique", "include", "connections"];
+            string[] keys = ["name", "columns", "unique", "include", "connections", .. InfoKeys];
             var declared = columns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in seq.Items)
@@ -420,7 +418,7 @@ public static class ModelDefinitionLoader
                 foreach (var t in (idxTargets ?? []).Where(t => !connections.Contains(t.Value)))
                     Add(DiagnosticCatalog.InvalidValue, t, $"Unknown connection `{t.Value}`.", $"One of: {string.Join(", ", connections.Order(StringComparer.Ordinal))}.");
                 if (name == null || cols == null) continue;
-                result.Add(new IndexDefinition(name.Value, cols.Select(c => c.Value).ToList(), unique, include?.Select(c => c.Value).ToList() ?? [], idxTargets?.Select(t => t.Value).ToList(), m.Line));
+                result.Add(new IndexDefinition(name.Value, cols.Select(c => c.Value).ToList(), unique, include?.Select(c => c.Value).ToList() ?? [], idxTargets?.Select(t => t.Value).ToList(), m.Line, ReadInfo(m)));
             }
             return result;
         }

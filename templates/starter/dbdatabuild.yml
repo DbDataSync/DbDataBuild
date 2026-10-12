@@ -1,3 +1,11 @@
+# What this project is, in words. A title, a description, tags and properties (free key-value data) can be written on the
+# project, a connection, a model, a column and an index. They are kept in the metadata documents and the tracking tables
+# (`connection publish`) so the deployed metadata says what an object is for; nothing is written into a database object.
+title: Starter shop
+description: "Orders, customers and payments of a small online shop, cleaned in staging and summarised in two marts."
+tags: [example]
+properties: {owner: analytics, tier: 2}
+
 # Where the models are built, and how text behaves there (docs/operations.md, DESIGN.md 7.4).
 #
 # SQL Server ignores trailing spaces when it compares text and PostgreSQL does not, so one project profile cannot
@@ -7,6 +15,8 @@
 #   tracking: { connection: postgres }
 #   string_semantics: { case: sensitive, trailing_space: significant, collations: { default: { duckdb: NFC, postgres: C } } }
 defaults: {connections: [sqlserver]}
+connections:
+  sqlserver: {title: Warehouse, description: "The database the models are built on.", properties: {environment: dev}}
 # where the records of what the tool builds are kept (drift, history, acknowledgements): nothing is tracked without it
 tracking: { connection: sqlserver }
 

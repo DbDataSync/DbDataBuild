@@ -59,7 +59,7 @@ OK: 23 model(s) valid. 0 warning(s), 35 note(s).
 46 rendered file(s); 46 written, 0 removed.
 ```
 
-**2. Can the tool use the connection?** `dbdatabuild connection inspect --connection sqlserver` connects with each login and says what is missing. It changes nothing.
+**2. Can the tool use the connection?** `dbdatabuild connection inspect sqlserver` connects with each login and says what is missing. It changes nothing.
 
 ```
   read login    DBDATABUILD_SQLSERVER_READ: sa connects; Microsoft SQL Server 2022 (RTM-CU26) ...
@@ -67,13 +67,13 @@ OK: 23 model(s) valid. 0 warning(s), 35 note(s).
   tracking      schema dbdatabuild on sqlserver: not there yet
   schema names  marts (missing: a deploy creates it), staging (missing: a deploy creates it)
 1 thing(s) in the way.
-Next: dbdatabuild connection init --connection sqlserver --apply
+Next: dbdatabuild connection init sqlserver --apply
 ```
 
 **3. Seed and initialize.** `connection seed --apply` creates the twelve source tables and fills them (`Loaded 12 table(s), 4632 row(s).`; it stops at a table that exists, `--replace` recreates it).
-`connection init --apply` creates the tracking tables (`Applied 13 statements. The tracking tables are ready.`). `inspect` now says `Nothing in the way.`
+`connection init --apply` creates the tracking tables (`Applied 14 statements. The tracking tables are ready.`). `inspect` now says `Nothing in the way.`
 
-**4. Status.** `connection status --connection sqlserver` compares the database with the compiled project and says what a deploy would do:
+**4. Status.** `connection status sqlserver` compares the database with the compiled project and says what a deploy would do:
 
 ```
 Structure  pending: a deploy would run 37 step(s) (0 risky, 0 destructive) and 11 load(s)
@@ -86,23 +86,23 @@ A plan now would have 48 step(s) (0 risky, 0 destructive) and ask 0 question(s) 
 **5. Deploy** (rare, reviewed, changes structure): write the plan, read `plans/sqlserver/<id>.plan.md`, apply it.
 
 ```
-dbdatabuild connection deploy --connection sqlserver --write-plan --accept-inferred
+dbdatabuild connection deploy sqlserver --write-plan --accept-inferred
   Plan 2026-10-12-63bfc38a: 48 step(s) (37 ddl, 11 load, 0 backfill, 0 hook, 0 track); 0 risky, 0 destructive.
-dbdatabuild connection deploy --connection sqlserver --apply-plan plans/sqlserver/2026-10-12-63bfc38a.plan.yml
+dbdatabuild connection deploy sqlserver --apply-plan plans/sqlserver/2026-10-12-63bfc38a.plan.yml
   Applied plan 2026-10-12-63bfc38a: 48 step(s) executed.
 ```
 
 **6. Refresh** (frequent, unattended, data only). It reads the committed refresh plan, not the models, checks what `refresh.check` says (the default is `objects`) and repeats the 11 loads:
 
 ```
-dbdatabuild connection refresh --connection sqlserver
+dbdatabuild connection refresh sqlserver
   Refresh plan rendered/sqlserver/refresh.plan.yml: 11 routine load(s).
   Refresh ref-20261012T182419-9aca: 11 step(s) ran.
 ```
 
 `status` now says `Structure  in sync: a deploy would change no structure (it would run 11 routine load(s))`.
 
-**7. Monitor.** `connection monitor --connection sqlserver` lists the events (a deploy and a refresh are one event each), the DDL and loads they ran, the shapes recorded for each object and what needs attention:
+**7. Monitor.** `connection monitor sqlserver` lists the events (a deploy and a refresh are one event each), the DDL and loads they ran, the shapes recorded for each object and what needs attention:
 
 ```
 Events (newest first) (2)
@@ -135,5 +135,5 @@ and `connection deploy --apply-plan 2026-10-12-ca1128bf` applies it by that id; 
 ## PostgreSQL
 
 The project is set for SQL Server (see the comment at the top of `dbdatabuild.yml` for the PostgreSQL profile). With that profile and an empty PostgreSQL 17 database, all 23 models validate and the cycle above runs as written
-with `--connection postgres` (`Applied plan ...: 48 step(s) executed.`, `Refresh ...: 11 step(s) ran.`), and the conformance suite compares every mart with DuckDB's rows on both engines. `fct_shipment_packages` uses
+with `postgres` as the connection (`Applied plan ...: 48 step(s) executed.`, `Refresh ...: 11 step(s) ran.`), and the conformance suite compares every mart with DuckDB's rows on both engines. `fct_shipment_packages` uses
 `generate_series`, which SQL Server has from version 16 (2022; `connections: sqlserver: {version: 16}` says so).

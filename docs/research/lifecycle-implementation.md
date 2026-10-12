@@ -8,7 +8,7 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 * **Fix the bugs first, then restructure, then add.** The scheduled-refresh failure and the doubled row counts are independent of the new names and are fixed in phase 1.
 * **One inner name, one outer name.** The command tree users see is new; the code keeps one `CommandSpec` per command and the JSON `command` field carries the new path (`connection deploy`). Tests use the new names.
 * **Every phase ends green**: unit suite, the real-engine suite for anything that touches a database, a progress-log entry saying what was verified where, docs regenerated (`docs/commands.md` is generated from the command tree).
-* **The tracking layout changes once** (layout 5, phase 5). Until then new facts go in existing columns.
+* **The tracking layout changes once per kind of fact** (layout 5, phase 5; layout 6, 2026-10-12, the words about objects: `object_info`). Until then new facts go in existing columns.
 
 ## 2. Phases
 
@@ -18,7 +18,7 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 | 1.1 | Event ids; the "applied once" rule per event | scheduled `refresh`/`run` with unchanged content works every time; ids `dep-…`/`ref-…` in `plan_id` columns, plan hash in `plan_hash` | | report shows ids | **run lane done** (entry 132); deploy lane keeps its content id until phase 3 |
 | 1.2 | `rows_loaded` | the rows inserted by a load, not the sum of every statement's count | | report numbers change | **done** (entry 133) |
 | 1.3 | Plan noise | one DDB-424 per cause; each note once; no "not interactive" note without a question | | text only | **done** (entry 134) |
-| 2 | The command tree | `project`, `connection`, `ui`, `help` nouns; old verbs removed; JSON `command`, schemas, TUI catalog, MCP tool names, generated docs | 1 | **yes** | **done** (entry 135), except the positional `<c>` (the option `--connection` stays for now) and the commands marked *later* |
+| 2 | The command tree | `project`, `connection`, `ui`, `help` nouns; old verbs removed; JSON `command`, schemas, TUI catalog, MCP tool names, generated docs | 1 | **yes** | **done** (entry 135), and the positional `<c>` (entry 146; the option `--connection` is gone from the commands that work on one connection) except the commands marked *later* |
 | 3 | `deploy` as one flow | `status` read-only; `deploy` interactive; `--write-plan`, `--apply-plan`, `--ack`, `--reason`; continuing an incomplete event; no `--resume` | 2 | yes | **done** (entry 135); the deploy lane still keys a plan by its content id (event ids for deploy come with layout 5) |
 | 4 | Refresh from a compiled plan | `project compile` writes `refresh.plan.yml` with `requires`; `connection refresh` runs it; check levels `none`, `project`, `objects`, `live`; `--on-fail` | 2, 5 for `project` | yes | **done** (entry 138) |
 | 5 | Plan policy, events, layout 5 | `plans.*.keep/audit`, `event_log`, `plan_store`, statement log without tracking writes, `retention.statement_logs_days`; `init --upgrade` from 4 | 1 | tracking layout | **done** (entries 137 to 141): settings read and acted on (`keep` committed|database|ephemeral, `audit` minimal|standard|full for both lanes, statement-log retention); layout 5 is `lane` and `project_hash` on `migration_log` plus the `plan_store` table; there is no `event_log` table, the event stays the `migration_log` row |
@@ -50,7 +50,7 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 ### Phase 2 The command tree
 
 * `CommandSpec` gains `Target` (`project`, `connection`, `ui`, `help`), `Verb` (and sub-verb), `Lane`, `Disposition`; `Name` becomes the full path (`connection deploy`).
-* `CliApp.Build` builds the nested `System.CommandLine` tree from the specs; each leaf keeps its handler. `<c>` becomes a positional argument (optional when there is one default connection); `--connection` disappears.
+* `CliApp.Build` builds the nested `System.CommandLine` tree from the specs; each leaf keeps its handler. `<c>` becomes a positional argument (optional when there is one default connection); `--connection` disappears (done, entry 146: it is the first argument; a command that takes models, tables or patterns after it reads the first as the connection when it is one of the project's connections, else as the first of them; `project compile` and `project model create` keep `--connection` as a filter that takes several, as does `project show plan`).
 * Every document's `command` is the full path; `schemas/output.schema.json` is regenerated for the new names (a script, not by hand); `TuiCatalog`, the MCP tool surface and `docs/commands.md` follow from the specs.
 * Tests move to the new names mechanically where the behaviour is a rename (`validate` → `project compile --check` and so on); a test lists the command tree and fails on an old verb.
 * Done when: no old verb parses; the unit suite and the conformance suite pass on the new names; README, templates and the skill use them.
@@ -105,3 +105,5 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 | 2026-10-08 | 5, 7, 8 | `keep: ephemeral`, audit levels, statement-log retention; lane and disposition on the MCP tools and the terminal catalog; lane chips on the web page's screens |
 | 2026-10-08 | 5, later | `plans.deploy.keep: database` with the `plan_store` table; `project model create` |
 | 2026-10-08 | 6 | `monitor --lane|--event|--attention`; one header and one summary for the interactive deploy and the refresh |
+| 2026-10-12 | later | `title`, `description`, `tags` and `properties` on the project, connections, models, columns and indexes; tracking layout 6 (`object_info`, `init` and `init --upgrade` from 5); `property:key=value`; verified on SQL Server 2022 and PostgreSQL 17 (entry 145) |
+| 2026-10-12 | 2 | the positional connection name: `connection <verb> [c]`, `project import [c] [tables]`, `ui terminal [c]`; `--connection` removed from them, no alias; verified on SQL Server 2022 and PostgreSQL 17 (entry 146) |

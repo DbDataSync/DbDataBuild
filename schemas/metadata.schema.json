@@ -118,6 +118,30 @@
                   },
                   "version": {
                     "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "tags": {
+                    "description": "Sorted; omitted when there are none.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "properties": {
+                    "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -290,6 +314,30 @@
               "kind"
             ]
           }
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "description": "Sorted; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
         }
       },
       "required": [
@@ -385,6 +433,30 @@
                 }
               }
             }
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "description": "Sorted; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
           }
         }
       },
@@ -488,6 +560,30 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "description": "Sorted; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
           }
         }
       },
@@ -636,7 +732,7 @@
           }
         },
         "tags": {
-          "description": "The model's tags, sorted; omitted when it has none.",
+          "description": "Sorted; omitted when there are none.",
           "type": "array",
           "items": {
             "type": "string"
@@ -840,6 +936,23 @@
           "items": {
             "type": "string"
           }
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "properties": {
+          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
         }
       },
       "required": [
@@ -896,6 +1009,30 @@
               },
               "collation": {
                 "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tags": {
+                "description": "Sorted; omitted when there are none.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "properties": {
+                "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ]
+                }
               }
             },
             "required": [
@@ -927,6 +1064,30 @@
                 "type": "array",
                 "items": {
                   "type": "string"
+                }
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tags": {
+                "description": "Sorted; omitted when there are none.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "properties": {
+                "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ]
                 }
               }
             },
@@ -1020,6 +1181,30 @@
             "text_hash",
             "reads"
           ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "description": "Sorted; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
         }
       },
       "required": [

@@ -56,7 +56,10 @@ internal static class MetadataPublisher
         var n = 0;
         foreach (var d in changed)
         {
-            await MetadataStore.StoreAsync(gate, scope, $"metadata-{++n:000}", d.Kind, d.Subject, d.Json, d.Hash, ProductInfo.Version, planId, gitCommit);
+            var step = $"metadata-{++n:000}";
+            // the rows first, the document after: an interrupted publish leaves a document that still differs from the latest, so the next one writes both again
+            if (MetadataInfoRows.HasRows(d.Kind)) await MetadataStore.ReplaceInfoAsync(gate, scope, step, d.Kind, d.Subject, MetadataInfoRows.From(d.Kind, d.Json));
+            await MetadataStore.StoreAsync(gate, scope, step, d.Kind, d.Subject, d.Json, d.Hash, ProductInfo.Version, planId, gitCommit);
             written.Add(d);
         }
         return new Result(written, unchanged);

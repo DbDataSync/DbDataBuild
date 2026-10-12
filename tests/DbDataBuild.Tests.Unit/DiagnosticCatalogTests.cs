@@ -35,6 +35,7 @@ public class DiagnosticCatalogTests
         { "DDB-215", ValidModel.Replace("incremental_by_unique_key\n  unique_key: [order_id]", "incremental_by_time_range") },
         { "DDB-216", ValidModel.Replace("grain: [order_id]", "grain: [customer_id]") },
         { "DDB-217", ValidModel.Replace("grain: [order_id]", "grain: [order_id, ghost]") },
+        { "DDB-243", ValidModel + "\nproperties:\n  \"two words\": 1\n" },
     };
 
     [Theory, MemberData(nameof(Fixtures))]

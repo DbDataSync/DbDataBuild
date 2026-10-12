@@ -1,4 +1,8 @@
 name: marts.orders
+title: Orders
+description: "One row per order, with the amount paid by each payment method."
+tags: [order, finance]
+properties: {owner: finance, refresh: daily, pii: false}
 kind: {type: full}
 grain: [order_id]
 columns:
@@ -11,6 +15,6 @@ columns:
   - {name: bank_transfer_amount, type: "DECIMAL(14, 2)"}
   - {name: coupon_amount, type: "DECIMAL(14, 2)"}
   - {name: gift_card_amount, type: "DECIMAL(14, 2)"}
-  - {name: amount, type: "DECIMAL(14, 2)"}
+  - {name: amount, type: "DECIMAL(14, 2)", description: "The total paid, in dollars.", properties: {unit: USD}}
 indexes:
   - {name: ux_orders_order_id, columns: [order_id], unique: true}

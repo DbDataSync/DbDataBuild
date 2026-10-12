@@ -54,34 +54,34 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 1. **Seed the two shops, each with its own seed** (the seeds generate one table, `pos.orders`; a different `--seed` gives different rows):
 
    ```
-   dbdatabuild connection seed --connection store_east --seed 1 --apply     # pos.orders  60 row(s)
-   dbdatabuild connection seed --connection store_west --seed 2 --apply     # pos.orders  60 row(s)
+   dbdatabuild connection seed store_east --seed 1 --apply     # pos.orders  60 row(s)
+   dbdatabuild connection seed store_west --seed 2 --apply     # pos.orders  60 row(s)
    ```
 
 2. **Inspect, then initialize the tracking tables once** (they live on the warehouse and hold the records of every connection):
 
    ```
-   dbdatabuild connection inspect --connection sqlserver        # schema names  marts (missing: a deploy creates it), warehouse (missing: a deploy creates it) ... 1 thing(s) in the way.
-   dbdatabuild connection init --connection sqlserver --apply   # Applied 13 statements. The tracking tables are ready.
-   dbdatabuild connection inspect --connection store_east       # tracking  schema dbdatabuild on sqlserver: ready (layout 5) ... Nothing in the way.
+   dbdatabuild connection inspect sqlserver        # schema names  marts (missing: a deploy creates it), warehouse (missing: a deploy creates it) ... 1 thing(s) in the way.
+   dbdatabuild connection init sqlserver --apply   # Applied 14 statements. The tracking tables are ready.
+   dbdatabuild connection inspect store_east       # tracking  schema dbdatabuild on sqlserver: ready (layout 6) ... Nothing in the way.
    ```
 
 3. **Deploy to each engine that builds something.** The warehouse plan reads the live state of the warehouse and of both origins (`pos.orders` must still match its declaration on each: DDB-230 names an origin whose table has drifted;
    `on_mismatch: skip` in the copy would leave that origin out instead of stopping):
 
    ```
-   dbdatabuild connection status --connection sqlserver          # Structure  pending: a deploy would run 9 step(s) ... and 3 load(s)   (A plan now would have 12 step(s))
-   dbdatabuild connection deploy --connection sqlserver --write-plan
+   dbdatabuild connection status sqlserver          # Structure  pending: a deploy would run 9 step(s) ... and 3 load(s)   (A plan now would have 12 step(s))
+   dbdatabuild connection deploy sqlserver --write-plan
    #   Plan 2026-10-12-7a515c7a: 12 step(s) (7 ddl, 3 load, 0 backfill, 0 hook, 0 track); 0 risky, 0 destructive.
-   dbdatabuild connection deploy --connection sqlserver --apply-plan plans/sqlserver/2026-10-12-7a515c7a.plan.yml
+   dbdatabuild connection deploy sqlserver --apply-plan plans/sqlserver/2026-10-12-7a515c7a.plan.yml
    #   step 7/12: copy warehouse.orders from store_east (pos.orders)
    #   step 8/12: load warehouse.orders (default)
    #   step 9/12: copy warehouse.orders from store_west (pos.orders)
    #   step 10/12: load warehouse.orders (default)
    #   step 11/12: drop staging table of warehouse.orders
    #   step 12/12: load marts.daily_sales (default)
-   dbdatabuild connection deploy --connection postgres --write-plan      # the same project on the other engine, filled from the same two shops
-   dbdatabuild connection deploy --connection postgres --apply-plan plans/postgres/<id>.plan.yml
+   dbdatabuild connection deploy postgres --write-plan      # the same project on the other engine, filled from the same two shops
+   dbdatabuild connection deploy postgres --apply-plan plans/postgres/<id>.plan.yml
    ```
 
    `warehouse.orders` then holds 60 rows for `E01` and 60 for `W01` on both engines.
@@ -89,15 +89,15 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 4. **Refresh each engine, and compare them** (a comparison across engines reads only digests of the values):
 
    ```
-   dbdatabuild connection refresh --connection sqlserver      # Refresh plan rendered/sqlserver/refresh.plan.yml: 1 routine load(s); 1 model(s) are not routine (a deploy handles them): warehouse.orders.
-   dbdatabuild connection refresh --connection postgres
-   dbdatabuild connection compare marts.daily_sales --connection sqlserver --against-connection postgres
+   dbdatabuild connection refresh sqlserver      # Refresh plan rendered/sqlserver/refresh.plan.yml: 1 routine load(s); 1 model(s) are not routine (a deploy handles them): warehouse.orders.
+   dbdatabuild connection refresh postgres
+   dbdatabuild connection compare sqlserver marts.daily_sales --against-connection postgres
    #   matched on the key: 60   only in marts.daily_sales: 0   only in marts.daily_sales: 0
    #   matched rows whose values differ: 0
    #   The tables are identical on the compared columns.
    ```
 
-5. **Monitor.** `dbdatabuild connection monitor --connection sqlserver` has a table the single-connection templates leave empty, the copy origins with their last good run:
+5. **Monitor.** `dbdatabuild connection monitor sqlserver` has a table the single-connection templates leave empty, the copy origins with their last good run:
 
    ```
    Copy origins (last good run, and the latest attempt) (2)
@@ -112,6 +112,11 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
    with a change is different, and a run replaces only the rows of the origin it loads). The reporting database waits for its own deploy. The conformance test `StoresTemplateConformanceTests` does exactly this on real engines.
 
 `status` may say `Structure  pending: a deploy would run 3 step(s)` after a deploy: those are the transfers and the load of the copy, which every deploy runs again (they move data; no structure changes).
+
+## Words about the connections
+
+Each of the four connections has a `title`, a `description`, `tags` and `properties` in `dbdatabuild.yml` (`role: origin` on the shop systems, `role: build` on the warehouse). They are in the project's metadata
+document and, after `dbdatabuild connection publish sqlserver`, in the tracking table `object_info` under `connection:<name>`, so the records say which connection is for what. Nothing is written into the databases.
 
 ## Notes
 

@@ -138,11 +138,11 @@ public class ConnectionsTests
     public void A_command_that_needs_one_connection_names_it_in_its_header_and_asks_for_that_connections_login()
     {
         var dir = Project("defaults: {connections: [wh_sql]}\ntracking: { connection: wh_pg }\nconnections:\n  wh_sql: { engine: sqlserver }\n  wh_pg: { engine: postgres }\n");
-        var (exit, output, err) = Run("connection", "init", "--project", dir, "--connection", "wh_pg", "--apply");
+        var (exit, output, err) = Run("connection", "init", "wh_pg", "--project", dir, "--apply");
         Assert.NotEqual(0, exit);
         Assert.Contains("connection: wh_pg", output);
         Assert.Contains("DBDATABUILD_WH_PG_WRITE", err + output);                                             // not DBDATABUILD_POSTGRES_WRITE
-        var script = Run("connection", "init", "--project", dir, "--connection", "wh_pg");
+        var script = Run("connection", "init", "wh_pg", "--project", dir);
         Assert.Contains("CREATE SCHEMA", script.Out);
         Assert.DoesNotContain("[", script.Out.Split('\n').Where(l => l.StartsWith("CREATE", StringComparison.Ordinal)).FirstOrDefault() ?? "");      // PostgreSQL quoting, not SQL Server's
     }

@@ -73,7 +73,9 @@ public static class SourceImport
         var kept2 = columns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string> grain = committed != null && committed.Grain.Count > 0 ? committed.Grain
             : live.PrimaryKey.Count > 0 && live.PrimaryKey.All(kept2.Contains) ? live.PrimaryKey : [];
-        return new SourceDescriptor(live.QualifiedName, columns, grain, live.Indexes ?? [], live.ForeignKeys ?? []);
+        // what a person said about the table and its indexes is kept: the catalog knows none of it
+        var keptIndexes = (live.Indexes ?? []).Select(i => committed?.Indexes.FirstOrDefault(x => string.Equals(x.Name, i.Name, StringComparison.OrdinalIgnoreCase)) is { Info: { } info } ? i with { Info = info } : i).ToList();
+        return new SourceDescriptor(live.QualifiedName, columns, grain, keptIndexes, live.ForeignKeys ?? [], DeclaredInfo: committed?.DeclaredInfo);
     }
 
     /// <summary>What differs between a committed descriptor (null: none yet) and the one the live object produces. Empty means in sync. Column order is not compared.</summary>

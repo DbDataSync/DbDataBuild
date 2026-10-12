@@ -23,7 +23,7 @@ public sealed class FormWindow : Ui.Modal
     {
         this.session = session;
         Form = new FormModel(command, session.ProjectRoot);
-        if (Form.Fields.FirstOrDefault(f => f.Label == "--connection") is { } t && session.EnsureTarget() is { } target) t.Value = target;
+        if (Form.Fields.FirstOrDefault(f => f.IsArgument && f.Label == "connection") is { } t && session.EnsureTarget() is { } target) t.Value = target;
         prefill?.Invoke(Form);
 
         var y = 0;

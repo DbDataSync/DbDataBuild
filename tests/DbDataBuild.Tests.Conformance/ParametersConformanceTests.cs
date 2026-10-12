@@ -53,9 +53,9 @@ public partial class ParametersConformanceTests
             Write("models/marts/m.yml", "name: marts.m\nkind: {type: full}\nparameters:\n  note: skip\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n");
             Write("models/marts/m.sql", Query);
 
-            Ok(Cli("connection", "init", "--connection", name, "--apply"), "init");
+            Ok(Cli("connection", "init", name, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
-            var plan = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var plan = Cli("connection", "deploy", name, "--write-plan");
             Ok(plan, "plan");
             var text = File.ReadAllText(PlanOf(plan.Out));
             Assert.Contains("source: \"parameter\"", text);
@@ -70,7 +70,7 @@ public partial class ParametersConformanceTests
             Assert.Single(stale);
             Assert.EndsWith("refresh.plan.yml", stale[0]);
             Ok(Cli("project", "compile"), "compile after the value changed");
-            var again = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var again = Cli("connection", "deploy", name, "--write-plan");
             Ok(again, "second plan");
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(again.Out)), "second apply");
             Assert.Equal(["1", "9"], await engine.RowsAsync("SELECT CAST(id AS VARCHAR(10)) FROM marts.m"));
