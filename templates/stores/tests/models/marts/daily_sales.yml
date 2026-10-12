@@ -1,0 +1,14 @@
+# description: marts.daily_sales counts and adds up the orders of each store, day and channel; two stores may use the same order number
+# tags: marts
+cases:
+  - name: the same order number in two stores is two orders
+    given:
+      warehouse.orders:
+        - {order_id: 1, ordered_on: 2024-03-01, channel: web, amount: 10.00, store_id: E01}
+        - {order_id: 1, ordered_on: 2024-03-01, channel: web, amount: 20.50, store_id: W01}
+        - {order_id: 2, ordered_on: 2024-03-01, channel: web, amount: 5.25, store_id: E01}
+        - {order_id: 3, ordered_on: 2024-03-02, channel: store, amount: 7.00, store_id: E01}
+    expect:
+      - {store_id: E01, ordered_on: 2024-03-01, channel: web, orders: 2, amount: 15.25}
+      - {store_id: W01, ordered_on: 2024-03-01, channel: web, orders: 1, amount: 20.50}
+      - {store_id: E01, ordered_on: 2024-03-02, channel: store, orders: 1, amount: 7.00}

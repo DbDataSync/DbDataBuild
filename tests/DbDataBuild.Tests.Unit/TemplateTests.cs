@@ -20,12 +20,13 @@ public class TemplateTests
     }
 
     [Fact]
-    public void The_distribution_carries_four_projects()
+    public void The_distribution_carries_five_projects()
     {
         Assert.Contains(TemplateStore.All, t => t.Name == "starter");
         Assert.Contains(TemplateStore.All, t => t.Name == "retail");
         Assert.Contains(TemplateStore.All, t => t.Name == "chinook");
         Assert.Contains(TemplateStore.All, t => t.Name == "adventureworks");
+        Assert.Contains(TemplateStore.All, t => t.Name == "stores");
         Assert.All(TemplateStore.All, t => Assert.NotEqual("", t.Description));
     }
 
@@ -65,6 +66,29 @@ public class TemplateTests
 
             var (renderExit, renderOut, renderErr) = Run("project", "compile", "--project", dir, "--content");
             Assert.True(renderExit == 0, renderOut + renderErr);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void The_stores_template_compiles_a_refresh_plan_per_engine_that_leaves_the_copy_to_a_deploy()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ddb-template-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Assert.Equal(0, Run("project", "create", "stores", dir).Exit);
+            var (exit, output, err) = Run("project", "compile", "--project", dir);
+            Assert.True(exit == 0, output + err);
+            foreach (var connection in new[] { "sqlserver", "postgres" })
+            {
+                var plan = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh.plan.yml"));
+                Assert.Contains("model: \"marts.daily_sales\"", plan);                                        // the fan-out model is a routine load on both engines
+                Assert.Matches("excluded:\\s*\n\\s*- model: \"warehouse.orders\"\\s*\n\\s*reason: \"a copy moves rows between connections; a deploy plans it\"", plan);
+            }
+            Assert.False(File.Exists(Path.Combine(dir, "rendered", "store_east", "refresh.plan.yml")));     // a shop system is only read: nothing is built on it
         }
         finally
         {
