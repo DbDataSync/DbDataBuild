@@ -204,10 +204,19 @@ Decided with the owner:
 
 **Second half done (entry 146)**: `connection <verb> [c]` instead of `--connection <c>` for every command that works on one connection (and `project import`, `ui terminal`), optional with one default connection, no alias. Left as options because they take a list or filter, not the connection a command works on: `project compile --connection`, `project model create --connection`, `project show plan --connection`; the owner may want them positional or renamed (decision). The terminal and the web page were not driven by hand.
 
-## U. Refresh plans, load plans and inputs (designed 2026-10-12; not built)
+## U. Refresh plans, load plans and inputs (designed 2026-10-12; build step 1 done 2026-10-12, entry 148)
 
 Design: `docs/research/refresh-plans.md`. A backfill is a load like any other; a copy is a load; any input a resolver could supply can be given by the person running it. Named, project-wide **refresh plans** (`hourly`, `daily`) are declared in models (`refresh:`) and the project (`refresh.plans`), compiled to `rendered/<c>/loads.yml` and `rendered/<c>/refresh/<name>.yml`, run as `connection refresh [<c>] [<plan>] [selectors]` with `--input`, with failure rules (`on_failure`), a lock per load (`on_busy`, a busy skip lets dependents run), `expected_every`, and later parallelism. Build order: (1) plans, memberships, `--input`, selectors, layout 7, views; (2) failure rules, per-load lock; (3) resolvers `memory`, `target`, `source`, range-input resolvers, `provides`; (4) copies in a refresh; (5) parallelism.
 
 Resolver semantics were reviewed and confirmed (design section 8): kinds `memory` (DuckDB `:memory:`, sandboxed, any function for now), `target` and `source` (copies only); UTC default with a `timezone:` setting; one frozen run instant; no stable or volatile split: a deploy whose inputs differ at apply blocks, shows the new values and, interactively, lets the deployer approve and continue. Later: whether to restrict the functions a `memory` resolver may use.
 
 Parked on purpose: user-defined reload strategies and inputs of any type (including lists); `retry`; cross-plan dependencies; re-evaluating the upstream/downstream effect system as a whole.
+
+**Step 1 is built** (entry 148): `refresh:` in models and folder files, `refresh.plans`, `loads.yml` and `refresh/<plan>.yml`, `connection refresh [plan] [selectors] --input`, `project show refresh`, the plan views of `monitor` and `status`, tracking layout 7. Left, in order: (2) failure rules (`on_failure` acts; outcomes `completed_with_failures`, `stopped`; `--only-failed`), the per-load lock and `on_busy`, the `expected_every` and duration warnings in `status` and `monitor`; (3) resolvers; (4) copies in a refresh; (5) parallelism. Smaller things step 1 left, none needing a decision:
+
+* `title`, `description`, `tags` and `properties` on memberships and loads (plans have them), and `load:` selecting by a load's tag; a membership's `on_failure` is stored and not yet used.
+* `inputs:` with defaults inside `loads:` (the declaration of an input with `default`, `type`) belongs to step 3; today the inputs are a range load's `start`/`end`, the watermark and the query parameters.
+* The metadata documents and `object_info` do not carry the plans; `refresh.plans` at connection level is refused by the loader though `config.schema.json` shares one definition for both levels.
+* `project show refresh --resolve`, `refresh --dry-run` resolving read-only (step 3).
+* Decision made, for the owner to confirm: membership names are unique per model inside a plan (two models may both have an `incremental` member); the implicit `default` membership of a load that needs a person is left out with a reason instead of failing the compile; a bare word that looks like a plan name is always read as the plan.
+* Not verified: Fabric (layout 7 DDL is generated for it and has never run; the upgrade is refused there); the terminal interface and the web page were not driven for the new arguments (covered by the tool-surface and form-model tests).

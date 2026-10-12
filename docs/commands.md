@@ -23,8 +23,8 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`connection init`](#connection-init) | `P⇒T` | Tracking tables only | Create the tracking tables and their schema name (prints the script; --apply runs it) |
 | [`connection status`](#connection-status) | `C→` | Target read-only | Where a connection stands: drift, blocks, what a deploy would do |
 | [`connection deploy`](#connection-deploy) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Change a connection's structure to match the models: plan with questions, show the plan, apply it (--write-plan stops after writing the plan; --apply-plan applies a written one; --ack records a decision) |
-| [`connection refresh`](#connection-refresh) | `P⇒D` | Target writes (data only) | Run the routine loads of the refresh plan that project compile wrote, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what is not routine to a deploy |
-| [`connection monitor`](#connection-monitor) | `C→` | Target read-only | The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention |
+| [`connection refresh`](#connection-refresh) | `P⇒D` | Target writes (data only) | Run the loads of a refresh plan that project compile wrote (the plan default unless one is named, all of it or the members the selectors choose), or one load named model.load, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what a refresh cannot run to a deploy |
+| [`connection monitor`](#connection-monitor) | `C→` | Target read-only | The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention; with a refresh plan named, that plan's runs and each member's last success and failure |
 | [`connection compare`](#connection-compare) | `C→` | Target read-only | Compare the data of two tables, of one connection or across connections and engines (by digests): schemas, row counts and a key-based row diff (values are read only with --show-values) |
 | [`connection seed`](#connection-seed) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Create the seeded source tables on a connection and fill them from the seeds (prints what it would do unless --apply) |
 | [`connection publish`](#connection-publish) | `P⇒T` | Tracking tables only | Store the project and model metadata as JSON in the connection for introspection |
@@ -377,7 +377,7 @@ Usage: `dbdatabuild connection deploy [connection] [models]... [options]`
 
 ## connection refresh
 
-Run the routine loads of the refresh plan that project compile wrote, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what is not routine to a deploy.
+Run the loads of a refresh plan that project compile wrote (the plan default unless one is named, all of it or the members the selectors choose), or one load named model.load, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what a refresh cannot run to a deploy.
 
 Effect: Target writes (data only). Reads and writes: `P⇒D`. Lane: refresh.
 
@@ -400,7 +400,7 @@ Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [optio
 
 ## connection monitor
 
-The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention.
+The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention; with a refresh plan named, that plan's runs and each member's last success and failure.
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 

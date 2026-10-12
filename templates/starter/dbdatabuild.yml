@@ -23,7 +23,7 @@ tracking: { connection: sqlserver }
 # How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
 #   plans:
 #     deploy:  { keep: committed, audit: full }      # committed (plans/ in git), database (kept in the tracking tables, applied by id), ephemeral (not kept)
-#     refresh: { keep: committed, audit: standard }  # the refresh plan is compiled by `project compile` into rendered/<connection>/refresh.plan.yml
+#     refresh: { keep: committed, audit: standard }  # the refresh plan is compiled by `project compile` into rendered/<connection>/loads.yml and refresh/<plan>.yml
 #   refresh: { check: objects, on_fail: block }      # none | project | objects | live: what a refresh compares before it runs
 #   retention: { statement_logs_days: 30 }           # local statement logs older than this are removed by the next deploy or refresh
 string_semantics:

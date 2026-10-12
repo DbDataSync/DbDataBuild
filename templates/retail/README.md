@@ -51,8 +51,7 @@ is from a run of these commands against SQL Server 2022 (ids, times and hashes d
 - The logins are environment variables, one pair per connection: `DBDATABUILD_SQLSERVER_READ` for what reads and `DBDATABUILD_SQLSERVER_WRITE` for what writes
   (`Server=127.0.0.1,1433;User Id=...;Password=...;Database=retail;TrustServerCertificate=true`; for a trial the two may be the same login).
 
-**1. Compile, offline.** `dbdatabuild project compile` checks the project and writes `rendered/`: the lowered queries, one load script per model and connection, and the **refresh plan**,
-`rendered/sqlserver/refresh.plan.yml` (commit it: it documents what the nightly refresh runs).
+**1. Compile, offline.** `dbdatabuild project compile` checks the project and writes `rendered/`: the lowered queries, one load script per model and connection, and the **load plans** of every load (`rendered/sqlserver/loads.yml`) and one file per **refresh plan** (`rendered/sqlserver/refresh/daily.yml`, `hourly.yml`: commit them, they document what the nightly and the hourly refresh run). The plans are declared in `dbdatabuild.yml` (`refresh.plans`); every mart is in `daily` because the folder file `models/marts/_dbdatabuild.yml` says so, and `fct_sales_lines` adds itself to `hourly` in its own file. `dbdatabuild project show refresh daily` reads one.
 
 ```
 OK: 23 model(s) valid. 0 warning(s), 35 note(s).
@@ -92,11 +91,11 @@ dbdatabuild connection deploy sqlserver --apply-plan plans/sqlserver/2026-10-12-
   Applied plan 2026-10-12-63bfc38a: 48 step(s) executed.
 ```
 
-**6. Refresh** (frequent, unattended, data only). It reads the committed refresh plan, not the models, checks what `refresh.check` says (the default is `objects`) and repeats the 11 loads:
+**6. Refresh** (frequent, unattended, data only). It reads the committed refresh plan, not the models, checks what `refresh.check` says (the default is `objects`) and repeats the 11 loads of the plan `daily` (`connection refresh sqlserver hourly` runs only the sales lines):
 
 ```
-dbdatabuild connection refresh sqlserver
-  Refresh plan rendered/sqlserver/refresh.plan.yml: 11 routine load(s).
+dbdatabuild connection refresh sqlserver daily
+  Refresh plan rendered/sqlserver/refresh/daily.yml: 11 of 11 member(s).
   Refresh ref-20261012T182419-9aca: 11 step(s) ran.
 ```
 
