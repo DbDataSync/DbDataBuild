@@ -363,18 +363,20 @@ Run the routine loads of the refresh plan that project compile wrote, as an even
 
 Effect: Target writes (data only). Reads and writes: `P⇒D`. Lane: refresh.
 
-Usage: `dbdatabuild connection refresh [connection] [models]... [options]`
+Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [options]`
 
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection (default: the project's only default connection) |
-| `models` (several) | Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan) |
+| `plan` | The refresh plan to run (default: `default`); a load named directly as `model.load` runs on its own, in no plan |
+| `selectors` (several) | Which members of the plan to run: model names, `tag:`, `kind:`, `connection:`, `path:`, `property:`, `+model`, `model+`, `@model`, `changed:<ref>`, `exclude:<selector>`, `load:<name>`, or patterns with * and ? (default: the whole plan) |
 
 | Option | Meaning |
 |---|---|
 | `--allow-dirty` | Run from a working tree with uncommitted changes (recorded) |
 | `--check` `<text>` | The safety check before the loads, instead of the project's `refresh.check`: none (nothing; the engine's errors are the check), project (this project was deployed here), objects (each object against what was last deployed), live (each object against the catalog now) |
 | `--dry-run` | Run every check and print every statement; execute nothing |
+| `--input` `<text ...>` | `[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
 | `--project` `<path>` | Project root |
 

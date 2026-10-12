@@ -166,8 +166,8 @@ public class ParametersTests
         Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), Typed.Replace("region: eu", "region: us").Replace("value: 5", "value: 50"));
         var changed = RenderFiles("--check", "--project", dir);
-        Assert.Equal(1, changed.Exit);                                                                      // the values are bound at run time, not rendered: only the refresh plan, which records them, differs
-        Assert.Contains("refresh.plan.yml", changed.Err);
+        Assert.Equal(1, changed.Exit);                                                                      // the values are bound at run time, not rendered: only the load plans (`loads.yml`), which record them, and the plan that names them by hash differ
+        Assert.Contains("loads.yml", changed.Err);
         Assert.DoesNotContain("load.", changed.Err);
         Assert.DoesNotContain("lowered.sql", changed.Err);
         Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);

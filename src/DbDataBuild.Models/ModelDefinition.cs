@@ -65,8 +65,12 @@ public sealed record ModelDefinition(
     CopyWatermark? Watermark = null,
     IReadOnlyDictionary<string, ParameterValue>? DeclaredParameters = null,
     bool LocalCopy = false,
-    ObjectInfo? DeclaredInfo = null)
+    ObjectInfo? DeclaredInfo = null,
+    IReadOnlyList<RefreshMembership>? DeclaredRefresh = null)
 {
+    /// <summary>The refresh plans the model's loads are in (`refresh:`, merged down the project files like `tags`). Empty when it says nothing, which puts a model with a default load in the plan `default`.</summary>
+    public IReadOnlyList<RefreshMembership> Refresh => DeclaredRefresh ?? [];
+
     /// <summary>The model's title, description, tags and properties. Tags and properties are the model's file merged onto the project files above it (`defaults:` of each, the nearest winning); the title and description are the model's own and never inherited.</summary>
     public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
 

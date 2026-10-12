@@ -60,7 +60,7 @@ public sealed record SourceForeignKey(string Name, IReadOnlyList<string> Columns
 
 public static class SourceDescriptorLoader
 {
-    private static readonly string[] Keys = ["name", "kind", "connections", "columns", "grain", "indexes", "foreign_keys", "reads", "parameters", "track_definition", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] Keys = ["name", "kind", "connections", "columns", "grain", "indexes", "foreign_keys", "reads", "parameters", "track_definition", "refresh", .. YamlFieldReader.InfoKeys];
 
     /// <summary>The kind of a model that maps an existing table: no query, nothing built, everything declared.</summary>
     public const string MappedKind = "mapped";

@@ -137,6 +137,9 @@ public sealed record ProjectConfig(
     /// <summary>The lifecycle settings of the project (`plans:`, `refresh:`, `retention:`): the built-in defaults when the file says nothing.</summary>
     public LifecycleSettings Lifecycle { get; init; } = LifecycleSettings.Default;
 
+    /// <summary>The refresh plans the project declares (`refresh.plans`), by name. Empty when it declares none, in which case a model may name any plan; `default` is always valid.</summary>
+    public IReadOnlyDictionary<string, RefreshPlanSettings> RefreshPlans { get; init; } = new Dictionary<string, RefreshPlanSettings>();
+
     /// <summary>The lifecycle settings in force on one connection: the project's with what the connection says laid over them.</summary>
     public LifecycleSettings LifecycleOf(string connection) => Connections.TryGetValue(connection, out var c) && c.Lifecycle is { } own ? own.Apply(Lifecycle) : Lifecycle;
 

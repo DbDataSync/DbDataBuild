@@ -88,11 +88,11 @@ public class TemplateTests
             Assert.True(exit == 0, output + err);
             foreach (var connection in new[] { "sqlserver", "postgres" })
             {
-                var plan = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh.plan.yml"));
-                Assert.Contains("model: \"marts.daily_sales\"", plan);                                        // the fan-out model is a routine load on both engines
-                Assert.Matches("excluded:\\s*\n\\s*- model: \"warehouse.orders\"\\s*\n\\s*reason: \"a copy moves rows between connections; a deploy plans it\"", plan);
+                var loads = File.ReadAllText(Path.Combine(dir, "rendered", connection, "loads.yml"));
+                Assert.Contains("model: \"marts.daily_sales\"", loads);                                       // the fan-out model is a load on both engines
+                Assert.Matches("excluded:\\s*\n\\s*- model: \"warehouse.orders\"\\s*\n\\s*reason: \"a copy moves rows between connections; a deploy plans it\"", loads);
             }
-            Assert.False(File.Exists(Path.Combine(dir, "rendered", "store_east", "refresh.plan.yml")));     // a shop system is only read: nothing is built on it
+            Assert.False(File.Exists(Path.Combine(dir, "rendered", "store_east", "loads.yml")));     // a shop system is only read: nothing is built on it
         }
         finally
         {

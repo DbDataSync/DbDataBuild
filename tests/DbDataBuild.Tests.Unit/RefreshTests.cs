@@ -68,7 +68,7 @@ public class RefreshTests
         Assert.Contains("does not exist", gone.Err);
 
         var dir2 = Project();
-        var planFile = Path.Combine(dir2, "rendered/sqlserver/refresh.plan.yml");
+        var planFile = Path.Combine(dir2, "rendered/sqlserver/refresh/default.yml");
         File.WriteAllText(planFile, File.ReadAllText(planFile).Replace("marts.fct_orders", "marts.fct_ordersx"));
         var edited = Refresh(dir2);
         Assert.Equal(CliApp.ExitFindings, edited.Exit);
@@ -82,8 +82,15 @@ public class RefreshTests
         Assert.NotEqual(CliApp.ExitOk, Refresh(dir, "--check", "always").Exit);                    // the parser refuses a level that is not one
         var none = Refresh(dir, "no.such.model");
         Assert.Equal(CliApp.ExitUsage, none.Exit);
-        Assert.Contains("No routine load", none.Err);
-        Assert.Contains("marts.fct_orders", none.Err);                                             // it names what the plan does hold
+        Assert.Contains("does not name a valid model", none.Err);                                  // a selector is the grammar of the other commands
+        var excluded = Refresh(dir, "exclude:marts.fct_orders");
+        Assert.Equal(CliApp.ExitUsage, excluded.Exit);
+        Assert.Contains("No member of the plan `default` matches", excluded.Err);
+        Assert.Contains("marts.fct_orders.default", excluded.Err);                                 // it names what the plan does hold
+        var plan = Refresh(dir, "hourly");
+        Assert.Equal(CliApp.ExitUsage, plan.Exit);
+        Assert.Contains("DDB-450", plan.Err);
+        Assert.Contains("default", plan.Err);                                                      // and the plans there are
     }
 
     [Fact]

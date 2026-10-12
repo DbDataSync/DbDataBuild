@@ -230,7 +230,9 @@ public static class CliApp
                     cmd.SetAction(pr => { var (checkConn, checkRest) = SplitConnection(pr.GetValue(checkProject)!.FullName, pr.GetValue(checkTarget), pr.GetValue(checkModels) ?? []); return Reported(pr, spec, (o, e) => PlanCommand.Check(spec, pr.GetValue(checkProject)!.FullName, checkConn, checkRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection refresh":
-                    var runModels = new Argument<string[]>("models") { Description = "Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan)", Arity = ArgumentArity.ZeroOrMore };
+                    var runPlan = new Argument<string?>("plan") { Description = "The refresh plan to run (default: `default`); a load named directly as `model.load` runs on its own, in no plan", Arity = ArgumentArity.ZeroOrOne };
+                    GuardOptionLike(runPlan, spec.Name);
+                    var runModels = new Argument<string[]>("selectors") { Description = "Which members of the plan to run: model names, `tag:`, `kind:`, `connection:`, `path:`, `property:`, `+model`, `model+`, `@model`, `changed:<ref>`, `exclude:<selector>`, `load:<name>`, or patterns with * and ? (default: the whole plan)", Arity = ArgumentArity.ZeroOrMore };
                     GuardOptionLike(runModels, spec.Name);
                     var runProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var runTarget = ConnectionArgument("Connection", spec.Name);
@@ -240,9 +242,10 @@ public static class CliApp
                     runOnFail.AcceptOnlyFromAmong("block", "warn");
                     var runDirty = new Option<bool>("--allow-dirty") { Description = "Run from a working tree with uncommitted changes (recorded)" };
                     var runDry = new Option<bool>("--dry-run") { Description = "Run every check and print every statement; execute nothing" };
-                    cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runModels);
-                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry);
-                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), pr.GetValue(runModels) ?? []); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    var runInput = new Option<string[]>("--input") { Description = "`[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input", DefaultValueFactory = _ => [] };
+                    cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runPlan); cmd.Arguments.Add(runModels);
+                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry); cmd.Options.Add(runInput);
+                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), [.. pr.GetValue(runPlan) is { } rp ? [rp] : Array.Empty<string>(), .. pr.GetValue(runModels) ?? []]); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), pr.GetValue(runInput) ?? [], o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection monitor":
                     var reportProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };

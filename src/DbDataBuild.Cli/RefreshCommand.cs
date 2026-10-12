@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using DbDataBuild.Core;
 using DbDataBuild.Execution;
 using DbDataBuild.Models;
@@ -7,13 +9,29 @@ using DbDataBuild.State;
 namespace DbDataBuild.Cli;
 
 /// <summary>
-/// `dbdatabuild connection refresh`: run the routine loads of a connection from the refresh plan `project compile` wrote. It reads that plan and the committed scripts, not the models; it asks the connection
-/// nothing about its structure unless the chosen check says to (`refresh.check`: none, project, objects, live); it never changes structure, and each run is an event of its own. Anything that is not a routine
-/// load was left out of the plan when it was compiled, and a deploy handles it.
+/// `dbdatabuild connection refresh [connection] [plan] [selector ...]`: run the loads of a refresh plan that `project compile` wrote (`rendered/&lt;connection&gt;/refresh/&lt;plan&gt;.yml`, the loads it names in
+/// `loads.yml`), or one load named directly (`model.load`, no plan). It reads the compiled files and the committed scripts, not the models (selectors that name models by their settings, `tag:` or `+model`, are the one
+/// thing that loads the project); it asks the connection nothing about its structure unless the chosen check says to (`refresh.check`: none, project, objects, live); it never changes structure, and each run is an event of
+/// its own that records the plan, its hash, the selection and the inputs each load ran with.
 /// </summary>
 internal static class RefreshCommand
 {
-    public static int Run(CommandSpec spec, string root, string? targetArg, string[] models, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, TextWriter output, TextWriter error, Func<string, string?> env)
+    private static readonly Regex PlanForm = new("^[a-z][a-z0-9_]*$");
+    private static readonly JsonSerializerOptions Json = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>One load to run: the load plan, the membership it runs as (null when a person named the load directly), and the inputs given by the person running it.</summary>
+    private sealed record RunItem(LoadPlanEntry Entry, RefreshMember? Member, int Position)
+    {
+        public string Membership => Member?.Name ?? Entry.Load;
+        public string Display => Member?.FullName ?? Entry.FullName;
+    }
+
+    /// <summary>An input as it will run: its value (null for one a resolver finds when the load runs) and where the value came from.</summary>
+    private sealed record EffectiveInput(string Name, string Type, string Source, string? Value);
+
+    private sealed record InputFlag(string? Target, string Name, string Value, string Text);
+
+    public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, TextWriter output, TextWriter error, Func<string, string?> env)
     {
         var configDiags = new List<Diagnostic>();
         var config = ProjectConfigLoader.LoadFromProject(root, configDiags);
@@ -23,59 +41,174 @@ internal static class RefreshCommand
         if (connection == null) return CliApp.ExitUsage;
 
         var settings = config.LifecycleOf(connection.Name);
-        var check = settings.Check; var onFail = settings.OnFail;
-        if (checkArg != null && !Enum.TryParse(checkArg, ignoreCase: true, out check)) { error.WriteLine($"--check is none, project, objects or live, not `{checkArg}`."); return CliApp.ExitUsage; }
-        if (onFailArg != null && !Enum.TryParse(onFailArg, ignoreCase: true, out onFail)) { error.WriteLine($"--on-fail is block or warn, not `{onFailArg}`."); return CliApp.ExitUsage; }
-
-        var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
-        output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}{(dryRun ? " (DRY RUN: nothing will be executed)" : "")}  |  connection: {connection.Name}  |  check: {LifecycleSettings.Name(check)}");
-        if (readMissing != null) { error.Diag(readMissing); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
-
-        // ---- the compiled plan, and the committed files it names ----
-        var planPath = Path.Combine(root, RenderCommand.RenderedDir, connection.Name, RefreshPlanDocument.FileName);
-        var relative = Path.GetRelativePath(root, planPath).Replace('\\', '/');
-        if (!File.Exists(planPath))
+        if (checkArg != null && !Enum.TryParse<RefreshCheck>(checkArg, ignoreCase: true, out _)) { error.WriteLine($"--check is none, project, objects or live, not `{checkArg}`."); return CliApp.ExitUsage; }
+        if (onFailArg != null && !Enum.TryParse<OnFail>(onFailArg, ignoreCase: true, out _)) { error.WriteLine($"--on-fail is block or warn, not `{onFailArg}`."); return CliApp.ExitUsage; }
+        var flags = new List<InputFlag>();
+        foreach (var text in inputArgs)
         {
-            error.Diag(new Diagnostic(DiagnosticCatalog.RefreshPlanMissing, new(relative, 0, 0), $"There is no `{relative}`."));
+            var eq = text.IndexOf('=');
+            if (eq <= 0 || eq == text.Length - 1) { error.WriteLine($"--input is `[model.]name=value`, not `{text}`."); return CliApp.ExitUsage; }
+            var key = text[..eq]; var dot = key.LastIndexOf('.');
+            var (target, name) = dot < 0 ? ((string?)null, key) : (key[..dot], key[(dot + 1)..]);
+            if (name.Length == 0 || (target != null && target.Length == 0)) { error.WriteLine($"--input is `[model.]name=value`, not `{text}`."); return CliApp.ExitUsage; }
+            flags.Add(new(target, name, text[(eq + 1)..], text));
+        }
+
+        string Header(string? plan) => $"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}{(dryRun ? " (DRY RUN: nothing will be executed)" : "")}  |  connection: {connection.Name}{(plan != null ? $"  |  plan: {plan}" : "")}";
+
+        // ---- the compiled files: every load, and the plans ----
+        var renderedDir = Path.Combine(root, RenderCommand.RenderedDir, connection.Name);
+        string Relative(string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
+        var loadsPath = Path.Combine(renderedDir, LoadsDocument.FileName);
+        var planNames = Directory.Exists(Path.Combine(renderedDir, RefreshPlanDocument.FolderName))
+            ? Directory.EnumerateFiles(Path.Combine(renderedDir, RefreshPlanDocument.FolderName), "*.yml").Select(f => Path.GetFileNameWithoutExtension(f)).Order(StringComparer.Ordinal).ToList() : [];
+        if (!File.Exists(loadsPath))
+        {
+            output.WriteLine(Header(null));
+            error.Diag(new Diagnostic(DiagnosticCatalog.RefreshPlanMissing, new(Relative(loadsPath), 0, 0), $"There is no `{Relative(loadsPath)}`."));
             output.WriteLine("Nothing was executed.");
             output.Next("project compile");
             return CliApp.ExitFindings;
         }
-        var planText = File.ReadAllText(planPath);
         var parseDiags = new List<Diagnostic>();
-        var compiled = RefreshPlanDocument.Parse(planText, relative, parseDiags);
-        if (compiled == null) { foreach (var d in parseDiags) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
-        if (compiled.Connection != connection.Name)
+        var loadsFile = LoadsDocument.Parse(File.ReadAllText(loadsPath), Relative(loadsPath), parseDiags);
+        if (loadsFile == null) { output.WriteLine(Header(null)); foreach (var d in parseDiags) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
+        if (loadsFile.Connection != connection.Name)
         {
-            error.Diag(new Diagnostic(DiagnosticCatalog.PlanFileInvalid, new(relative, 0, 0), $"The refresh plan is for `{compiled.Connection}`, not `{connection.Name}`."));
+            output.WriteLine(Header(null));
+            error.Diag(new Diagnostic(DiagnosticCatalog.PlanFileInvalid, new(Relative(loadsPath), 0, 0), $"The loads file is for `{loadsFile.Connection}`, not `{connection.Name}`."));
             return CliApp.ExitFindings;
         }
 
-        var loads = compiled.Loads.Where(l => models.Length == 0 || models.Any(m => Matches(m, l.Model))).ToList();
-        if (models.Length > 0 && loads.Count == 0)
+        // ---- what was asked for: a plan (default `default`), or loads named directly ----
+        var rest = args.ToList();
+        string? planName = null;
+        var direct = new List<LoadPlanEntry>();
+        if (rest.Count > 0 && loadsFile.Loads.FirstOrDefault(l => l.FullName == rest[0]) != null)
         {
-            error.WriteLine($"No routine load of `{connection.Name}` matches {string.Join(", ", models.Select(m => $"`{m}`"))}. The refresh plan has: {string.Join(", ", compiled.Loads.Select(l => l.Model))}.");
-            return CliApp.ExitUsage;
+            foreach (var a in rest)
+            {
+                if (loadsFile.Loads.FirstOrDefault(l => l.FullName == a) is { } load) { if (!direct.Contains(load)) direct.Add(load); }
+                else { error.WriteLine($"`{a}` is not a load of `{connection.Name}` (a load named directly is `model.load`, for example `{loadsFile.Loads[0].FullName}`), and a load named directly takes no plan or selector."); return CliApp.ExitUsage; }
+            }
+            rest.Clear();
         }
-        output.WriteLine($"Refresh plan {relative}: {loads.Count} routine load(s){(compiled.Excluded.Count > 0 ? $"; {compiled.Excluded.Count} model(s) are not routine (a deploy handles them): {string.Join(", ", compiled.Excluded.Take(3).Select(x => x.Model))}{(compiled.Excluded.Count > 3 ? ", …" : "")}" : "")}.");
-        if (loads.Count == 0) { output.WriteLine("Nothing to do: no load applies."); return CliApp.ExitOk; }
+        else if (rest.Count > 0 && PlanForm.IsMatch(rest[0]) && rest[0] != "all")
+        {
+            planName = rest[0];
+            rest.RemoveAt(0);
+            if (!planNames.Contains(planName))
+            {
+                output.WriteLine(Header(null));
+                error.Diag(new Diagnostic(DiagnosticCatalog.RefreshPlanUnknown, new($"connection:{connection.Name}", 0, 0), $"`{planName}` is not a refresh plan of `{connection.Name}`. {(planNames.Count == 0 ? "It has none." : "Its plans: " + string.Join(", ", planNames) + ".")}"));
+                output.Payload("plans", planNames);
+                return CliApp.ExitUsage;
+            }
+        }
+        else if (planNames.Contains(RefreshPlanSettings.DefaultName)) planName = RefreshPlanSettings.DefaultName;
+        else
+        {
+            output.WriteLine(Header(null));
+            output.Payload("plans", planNames);
+            output.WriteLine(planNames.Count == 0 ? $"`{connection.Name}` has no refresh plans: no model has a load that is in one. Declare them with `refresh:` in a model, then `project compile`." : $"`{connection.Name}` has no plan called `default`. Name one: {string.Join(", ", planNames)}.");
+            if (planNames.Count > 0) output.Next(planNames.Select(p => $"connection refresh {connection.Name} {p}").ToArray());
+            return planNames.Count == 0 ? CliApp.ExitFindings : CliApp.ExitUsage;
+        }
 
+        RefreshPlanFile? plan = null;
+        string? planRelative = null;
+        string planText = "";
+        var items = new List<RunItem>();
+        var members = new List<RefreshRunMember>();
+        string planHash;
+        string selection;
+        if (planName != null)
+        {
+            var planPath = Path.Combine(renderedDir, RefreshPlanDocument.FolderName, planName + ".yml");
+            planRelative = Relative(planPath);
+            planText = File.ReadAllText(planPath);
+            plan = RefreshPlanDocument.Parse(planText, planRelative, parseDiags);
+            if (plan == null) { output.WriteLine(Header(planName)); foreach (var d in parseDiags) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
+            if (plan.Connection != connection.Name || plan.Name != planName)
+            {
+                output.WriteLine(Header(planName));
+                error.Diag(new Diagnostic(DiagnosticCatalog.PlanFileInvalid, new(planRelative, 0, 0), $"The refresh plan is for `{plan.Name}` on `{plan.Connection}`, not `{planName}` on `{connection.Name}`."));
+                return CliApp.ExitFindings;
+            }
+            var selected = Select(plan, rest, root, error);
+            if (selected == null) return CliApp.ExitUsage;
+            planHash = plan.Hash;
+            selection = string.Join(' ', rest);
+            var position = 0;
+            foreach (var m in plan.Members)
+            {
+                position++;
+                var entry = loadsFile.Loads.FirstOrDefault(l => l.Model == m.Model && l.Load == m.Load && l.Hash == m.LoadPlanHash);
+                var chosen = selected.Contains(m.FullName);
+                if (entry == null)
+                {
+                    output.WriteLine(Header(planName));
+                    error.Diag(new Diagnostic(DiagnosticCatalog.RefreshFileChanged, new(planRelative, 0, 0), $"The refresh plan names the load plan {m.LoadPlanHash[..12]} of `{m.Model}.{m.Load}`, which `{Relative(loadsPath)}` does not have (it was compiled again since)."));
+                    output.WriteLine("Nothing was executed.");
+                    output.Next("project compile");
+                    return CliApp.ExitFindings;
+                }
+                members.Add(new(position, m.Name, m.Model, m.Load, m.LoadPlanHash, chosen));
+                if (chosen) items.Add(new(entry, m, position));
+            }
+            if (items.Count == 0)
+            {
+                output.WriteLine(Header(planName));
+                if (plan.Members.Count == 0) { output.WriteLine($"The plan `{planName}` has no members{(plan.Excluded.Count > 0 ? $" ({plan.Excluded.Count} left out; `project show refresh {planName}` says why)" : "")}. Nothing to do."); return CliApp.ExitOk; }
+                error.WriteLine($"No member of the plan `{planName}` matches {string.Join(", ", rest.Select(m => $"`{m}`"))}. The plan has: {string.Join(", ", plan.Members.Select(m => m.FullName))}.");
+                return CliApp.ExitUsage;
+            }
+        }
+        else
+        {
+            if (loadsFile.Loads.Count == 0) { output.WriteLine(Header(null)); error.WriteLine($"`{connection.Name}` has no load plans."); return CliApp.ExitUsage; }
+            var position = 0;
+            foreach (var e in direct.OrderBy(d => loadsFile.Loads.ToList().IndexOf(d)))
+            {
+                position++;
+                items.Add(new(e, null, position));
+                members.Add(new(position, e.Load, e.Model, e.Load, e.Hash, true));
+            }
+            planHash = Hashing.Sha256Hex(string.Join("\n", items.Select(i => i.Entry.Hash)));
+            selection = string.Join(' ', direct.Select(d => d.FullName));
+        }
+        // ---- the check level: a flag, the plan's own, the connection's, the project's ----
+        var check = checkArg != null ? Enum.Parse<RefreshCheck>(checkArg, ignoreCase: true) : plan?.Settings.Check is { } pc && Enum.TryParse<RefreshCheck>(pc, ignoreCase: true, out var planCheck) ? planCheck : settings.Check;
+        var onFail = onFailArg != null ? Enum.Parse<OnFail>(onFailArg, ignoreCase: true) : plan?.Settings.OnFail is { } pf && Enum.TryParse<OnFail>(pf, ignoreCase: true, out var planOnFail) ? planOnFail : settings.OnFail;
+        output.WriteLine(Header(planName) + $"  |  check: {LifecycleSettings.Name(check)}");
+        var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        if (readMissing != null) { error.Diag(readMissing); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
+
+        // ---- the inputs: a flag, the membership, a project parameter, what the connection finds ----
+        var inputs = new Dictionary<RunItem, List<EffectiveInput>>();
+        if (!ResolveInputs(items, flags, connection.Name, inputs, error)) { output.WriteLine("Nothing was executed."); return CliApp.ExitUsage; }
+
+        output.WriteLine(plan != null
+            ? $"Refresh plan {planRelative}: {items.Count} of {plan.Members.Count} member(s){(rest.Count > 0 ? $" ({string.Join(" ", rest)})" : "")}{(plan.Excluded.Count > 0 ? $"; {plan.Excluded.Count} left out: {string.Join(", ", plan.Excluded.Take(3).Select(x => x.Model))}{(plan.Excluded.Count > 3 ? ", …" : "")}" : "")}."
+            : $"{items.Count} load(s) named directly (no plan).");
+
+        // ---- the files the loads run, against their hashes ----
         var scripts = new Dictionary<string, string>(StringComparer.Ordinal);
         var changed = new List<Diagnostic>();
-        string? Read(string file, string hash, string what)
+        string? ReadFile(string file, string hash, string what)
         {
             var path = Path.GetFullPath(Path.Combine(file.StartsWith("hooks/", StringComparison.Ordinal) || !file.Contains('/') ? root : Path.Combine(root, RenderCommand.RenderedDir), file));
-            if (!File.Exists(path)) { changed.Add(new Diagnostic(DiagnosticCatalog.RefreshFileChanged, new(file, 0, 0), $"The {what} `{file}`, which the refresh plan names, does not exist.")); return null; }
+            if (!File.Exists(path)) { changed.Add(new Diagnostic(DiagnosticCatalog.RefreshFileChanged, new(file, 0, 0), $"The {what} `{file}`, which the compiled refresh files name, does not exist.")); return null; }
             var text = File.ReadAllText(path);
-            if (Hashing.ScriptHash(text) != hash) { changed.Add(new Diagnostic(DiagnosticCatalog.RefreshFileChanged, new(file, 0, 0), $"The {what} `{file}` is not the one the refresh plan was compiled from (its content has another hash).")); return null; }
+            if (Hashing.ScriptHash(text) != hash) { changed.Add(new Diagnostic(DiagnosticCatalog.RefreshFileChanged, new(file, 0, 0), $"The {what} `{file}` is not the one `{LoadsDocument.FileName}` was compiled from (its content has another hash).")); return null; }
             return text;
         }
-        foreach (var l in loads)
+        foreach (var l in items.Select(i => i.Entry).Distinct())
         {
-            if (Read(l.File, l.FileHash, "load script") is { } script) scripts[l.File] = script;
-            if (l.ResolverFile != null && Read(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
+            if (ReadFile(l.File, l.FileHash, "load script") is { } script) scripts[l.File] = script;
+            if (l.ResolverFile != null && ReadFile(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
             foreach (var h in l.Before.Concat(l.After))
-                if (Read(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
+                if (ReadFile(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
 
@@ -90,8 +223,9 @@ internal static class RefreshCommand
         }
         var scope = tracking.Target is { } ts ? new TrackingScope(ts.Engine, ts.SchemaName, connection.Name) : null;
         var findings = new List<Diagnostic>();
-        var steps = new List<PlanStep>();
-        if (RefreshChecks.NeedsTracking(check, compiled, scope) is { } untracked) findings.Add(untracked);
+        var built = new List<(RunItem Item, PlanStep Step)>();
+        var requires = items.Select(i => i.Entry).DistinctBy(e => e.Model).Select(e => (Object: e.Model, e.ShapeHash)).ToList();
+        if (RefreshChecks.NeedsTracking(check, connection.Name, scope) is { } untracked) findings.Add(untracked);
         // a check that cannot run (nothing to read it from) stops a blocking refresh before the connection is opened
         if (!(findings.Count > 0 && onFail == OnFail.Block))
             try
@@ -101,17 +235,20 @@ internal static class RefreshCommand
                     await using var data = await ReadSession.OpenAsync(read!);
                     await using var own = trackingRead == null ? null : await ReadSession.OpenAsync(trackingRead);
                     var track = scope == null ? null : own ?? data;
-                    if (check != RefreshCheck.None && findings.Count == 0) findings.AddRange(await RefreshChecks.RunAsync(check, compiled, loads, connection.Engine, data, track, scope));
+                    if (check != RefreshCheck.None && findings.Count == 0) findings.AddRange(await RefreshChecks.RunAsync(check, connection.Name, loadsFile.ProjectHash, requires, connection.Engine, data, track, scope));
                     if (findings.Count > 0 && onFail == OnFail.Block) return;
-                    foreach (var l in loads) steps.AddRange(await StepsOfAsync(compiled, l, scripts, data, connection.Engine, findings, onFail));
+                    foreach (var item in items) built.AddRange((await StepsOfAsync(item, inputs[item], scripts, data, findings, onFail)).Select(s => (item, s)));
                 }).GetAwaiter().GetResult();
             }
             catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
 
         foreach (var d in findings) error.Diag(d with { SeverityOverride = onFail == OnFail.Warn ? Severity.Warning : null });
+        output.Payload("plan", planName);
+        output.Payload("plan_hash", planHash);
+        output.Payload("selection", selection.Length == 0 ? null : selection);
         output.Payload("check", LifecycleSettings.Name(check));
         output.Payload("on_fail", LifecycleSettings.Name(onFail));
-        output.Payload("loads", loads.Select(l => new { model = l.Model, operation = l.Operation }).ToList());
+        output.Payload("loads", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }).ToList() }).ToList());
         output.Payload("findings", findings.Select(f => f.Code).ToList());
         if (findings.Count > 0 && onFail == OnFail.Block)
         {
@@ -119,72 +256,177 @@ internal static class RefreshCommand
             output.Next("connection deploy");
             return CliApp.ExitFindings;
         }
-        if (steps.Count == 0) { output.WriteLine("Nothing to do: no load applies."); return CliApp.ExitOk; }
+        if (built.Count == 0) { output.WriteLine("Nothing to do: no load applies."); return findings.Count > 0 ? CliApp.ExitFindings : CliApp.ExitOk; }
 
         // ---- run it as an event of its own ----
         var (commit, dirty) = GitInfo.Read(root);
         var id = PlanDocument.CreateRunId(DateTime.UtcNow);
-        var plan = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps.Select((s, i) => s with { Id = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList(), []);
+        var steps = built.Select((b, i) => b.Step with { Id = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList();
+        var stepInfo = new Dictionary<string, RefreshStepInfo>(StringComparer.Ordinal);
+        for (var i = 0; i < built.Count; i++)
+        {
+            var item = built[i].Item;
+            stepInfo[steps[i].Id] = new(item.Membership, item.Entry.Hash, JsonSerializer.Serialize(inputs[item].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }), Json));
+        }
+        var run = new RefreshRunInfo(planName, selection, members, stepInfo);
+        var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps, []);
         var audit = settings.Refresh.Audit;
-        return ApplyCommand.RunPlan(spec, plan, audit == AuditLevel.Full ? planText : "", relative, root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
-            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: RefreshPlanDocument.ContentHash(compiled), RecordShapes: check == RefreshCheck.Live, Header: false), output, error, env);
+        return ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
+            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run), output, error, env);
     }
 
-    /// <summary>The steps of one load: the hooks before it, the load with the values found now, the hooks after it. A resolver that finds nothing falls back to the initial value the model declared, or stops the load.</summary>
-    private static async Task<IEnumerable<PlanStep>> StepsOfAsync(RefreshPlan plan, RefreshLoad l, Dictionary<string, string> scripts, ReadSession read, string engine, List<Diagnostic> findings, OnFail onFail)
+    /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
+    private static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error)
     {
+        var all = plan.Members.Select(m => m.FullName).ToHashSet(StringComparer.Ordinal);
+        if (selectors.Count == 0) return all;
+        var loadTerms = new List<string>(); var notLoad = new List<string>(); var globs = new List<string>(); var modelTerms = new List<string>();
+        foreach (var s in selectors)
+        {
+            if (s.StartsWith("load:", StringComparison.Ordinal)) loadTerms.Add(s[5..]);
+            else if (s.StartsWith("exclude:load:", StringComparison.Ordinal)) notLoad.Add(s[13..]);
+            else if (s.Any(c => c is '*' or '?') && s != "*" && !s.Contains(':')) globs.Add(s);
+            else modelTerms.Add(s);
+        }
+        HashSet<string>? models = null;                                                    // null: every model
+        var positives = modelTerms.Where(t => !t.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
+        var excludes = modelTerms.Where(t => t.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
+        if (positives.Count > 0 || excludes.Count > 0)
+        {
+            var ctx = ProjectContext.Load(root);
+            if (positives.Count > 0)
+            {
+                var picked = ctx.Select(positives, error);
+                if (picked == null) return null;
+                models = picked.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+            if (globs.Count > 0) models = [.. models ?? [], .. GlobModels(plan, globs)];
+            if (excludes.Count > 0)
+            {
+                var kept = ctx.Select(excludes, error);
+                if (kept == null) return null;
+                var keptNames = kept.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                models = models == null ? keptNames : models.Where(keptNames.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        else if (globs.Count > 0) models = GlobModels(plan, globs);
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in plan.Members)
+            if ((models == null || models.Contains(m.Model)) && (loadTerms.Count == 0 || loadTerms.Contains(m.Load)) && !notLoad.Contains(m.Load)) result.Add(m.FullName);
+        return result;
+    }
+
+    private static HashSet<string> GlobModels(RefreshPlanFile plan, List<string> globs) =>
+        plan.Members.Select(m => m.Model).Distinct().Where(n => globs.Any(g => Regex.IsMatch(n, "^" + Regex.Escape(g).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The value each input of each load runs with, and its source, strongest first: a `--input` flag, the membership's value, the project's parameter, and (found when the load runs) the resolver, then `initial`. An override
+    /// replaces the default, so a resolver it replaces is never run. An input nobody gives a value for stops the run: a scheduled refresh has no one to ask.
+    /// </summary>
+    private static bool ResolveInputs(List<RunItem> items, List<InputFlag> flags, string connection, Dictionary<RunItem, List<EffectiveInput>> result, TextWriter error)
+    {
+        var ok = true;
+        foreach (var item in items) result[item] = [];
+        foreach (var flag in flags)
+        {
+            var candidates = items.Where(i => i.Entry.Inputs.Any(p => p.Name == flag.Name) && (flag.Target == null || flag.Target == i.Display || flag.Target == i.Entry.Model || flag.Target == i.Entry.FullName)).ToList();
+            if (candidates.Count == 0)
+            {
+                error.WriteLine(flag.Target == null
+                    ? $"--input `{flag.Text}`: none of the loads to run has an input called `{flag.Name}`. {Describe(items)}"
+                    : $"--input `{flag.Text}`: `{flag.Target}` is not a load to run with an input called `{flag.Name}`. {Describe(items)}");
+                ok = false; continue;
+            }
+            if (candidates.Count > 1)
+            {
+                error.WriteLine($"--input `{flag.Text}` fits more than one load ({string.Join(", ", candidates.Select(c => c.Display))}): name the load, for example `--input {candidates[0].Display}.{flag.Name}={flag.Value}`.");
+                ok = false; continue;
+            }
+        }
+        if (!ok) return false;
+        foreach (var item in items)
+            foreach (var p in item.Entry.Inputs)
+            {
+                var flag = flags.Where(f => f.Name == p.Name && (f.Target == null || f.Target == item.Display || f.Target == item.Entry.Model || f.Target == item.Entry.FullName)).LastOrDefault();
+                var given = item.Member?.Inputs.FirstOrDefault(x => x.Name == p.Name);
+                string? value; string source;
+                if (flag != null) (value, source) = (flag.Value, "flag");
+                else if (given != null) (value, source) = (given.Value, "membership");
+                else if (p.Source == RefreshParameter.FromParameter) (value, source) = (p.Value, "parameter");
+                else if (p.Source == RefreshParameter.FromResolver) (value, source) = (null, "resolver");
+                else
+                {
+                    error.Diag(new Diagnostic(DiagnosticCatalog.RefreshInputMissing, new(item.Entry.File, 0, 0), $"`{item.Display}` needs a value for `{p.Name}` ({p.Type}), which has no default: give it with `--input {item.Entry.FullName}.{p.Name}=<value>`."));
+                    ok = false; continue;
+                }
+                if (flag != null || given != null)
+                {
+                    if (!RefreshPlanBuilder.InputFits(p.Type, value!)) { error.WriteLine($"The value `{value}` of the input `{p.Name}` of `{item.Display}` is not a {p.Type}."); ok = false; continue; }
+                }
+                result[item].Add(new(p.Name, p.Type, source, value));
+            }
+        return ok;
+
+        static string Describe(List<RunItem> items) => items.SelectMany(i => i.Entry.Inputs.Select(p => $"{i.Display}.{p.Name}")).ToList() is { Count: > 0 } all ? $"The inputs of the loads to run: {string.Join(", ", all)}." : "None of them takes an input.";
+    }
+
+    /// <summary>The steps of one load: the hooks before it, the load with the values it runs with, the hooks after it. A resolver that finds nothing falls back to the initial value the model declared, or stops the load.</summary>
+    private static async Task<IEnumerable<PlanStep>> StepsOfAsync(RunItem item, List<EffectiveInput> inputs, Dictionary<string, string> scripts, ReadSession read, List<Diagnostic> findings, OnFail onFail)
+    {
+        var l = item.Entry;
         var parameters = new List<PlanParameter>();
         string? resolverText = null, resolverResult = null;
-        foreach (var p in l.Parameters)
+        for (var i = 0; i < inputs.Count; i++)
         {
-            if (p.Source != "resolver") { parameters.Add(new(p.Name, p.Type, "parameter", p.Value)); continue; }
+            var p = inputs[i];
+            if (p.Source != "resolver") { parameters.Add(new(p.Name, p.Type, p.Source, p.Value)); continue; }
             resolverText = scripts[l.ResolverFile!];
             var found = await TargetSnapshotReader.RunResolverAsync(read, resolverText, p.Type);
             if (found.Error != null)
             {
-                findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{l.Model} / {l.Operation}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark."));
+                findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{item.Display} ({l.Load}): the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark."));
                 return [];
             }
             resolverResult = found.Value;
             var value = found.Value;
+            var source = "resolver:target";
             if (value == null)
             {
-                if (l.OnNull == WatermarkSpec.InitialLiteral && l.Initial != null) value = l.Initial;
+                if (l.OnNull == WatermarkSpec.InitialLiteral && l.Initial != null) (value, source) = (l.Initial, "initial");
                 else
                 {
-                    findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{l.Model} / {l.Operation}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value (a deploy asks for it)."));
+                    findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{item.Display} ({l.Load}): the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`."));
                     return [];
                 }
             }
-            parameters.Add(new(p.Name, p.Type, "resolver", value));
+            parameters.Add(new(p.Name, p.Type, source, value));
+            inputs[i] = p with { Source = source, Value = value };                         // what the event records
         }
+        var suffix = item.Membership != l.Load ? $" as {item.Membership}" : "";
         PlanStep Hook(RefreshHook h) => new("", StepType.Hook, l.Model, $"hook {h.Name} ({h.Event})", scripts[h.File], RiskClass.Safe, ["hook.fired", $"event {h.Event}"], null, [], Operation: h.Event, FileHash: h.FileHash, Hook: h.Name, Effect: h.Effect);
-        var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Operation})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, resolverText, resolverResult, HasResolver: resolverText != null,
-            FileHash: l.FileHash, Operation: l.Operation, DefinitionHash: l.DefinitionHash);
+        var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Load}{suffix})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, resolverText, resolverResult, HasResolver: resolverText != null,
+            FileHash: l.FileHash, Operation: l.Load, DefinitionHash: l.DefinitionHash);
         return l.Before.Select(Hook).Append(load).Concat(l.After.Select(Hook)).ToList();
     }
-
-    /// <summary>A model name, or a pattern with `*` and `?`.</summary>
-    private static bool Matches(string pattern, string model) =>
-        pattern == model || System.Text.RegularExpressions.Regex.IsMatch(model, "^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 }
 
 /// <summary>The safety checks before a refresh (`refresh.check`), from cheapest to strictest. Each compares what the compiled project expects of the objects the refresh uses with something recorded or live.</summary>
 internal static class RefreshChecks
 {
     /// <summary>The levels that read the tracking tables cannot run when nothing is tracked for the connection.</summary>
-    public static Diagnostic? NeedsTracking(RefreshCheck level, RefreshPlan plan, TrackingScope? scope) =>
+    public static Diagnostic? NeedsTracking(RefreshCheck level, string connection, TrackingScope? scope) =>
         level is RefreshCheck.Project or RefreshCheck.Objects && scope == null
-            ? new Diagnostic(DiagnosticCatalog.RefreshCheckFailed, new($"connection:{plan.Connection}", 0, 0), $"The `{LifecycleSettings.Name(level)}` check reads the tracking tables, and nothing is tracked for `{plan.Connection}`. Use `--check live` (the catalog) or `--check none`.")
+            ? new Diagnostic(DiagnosticCatalog.RefreshCheckFailed, new($"connection:{connection}", 0, 0), $"The `{LifecycleSettings.Name(level)}` check reads the tracking tables, and nothing is tracked for `{connection}`. Use `--check live` (the catalog) or `--check none`.")
             : null;
 
-    public static async Task<IReadOnlyList<Diagnostic>> RunAsync(RefreshCheck level, RefreshPlan plan, IReadOnlyList<RefreshLoad> loads, string engine, ReadSession data, ReadSession? tracking, TrackingScope? scope)
+    /// <param name="expected">The objects the loads to run use, each with the shape the compiled project expects of it.</param>
+    public static async Task<IReadOnlyList<Diagnostic>> RunAsync(RefreshCheck level, string connection, string projectHash, IReadOnlyList<(string Object, string ShapeHash)> expected, string engine, ReadSession data, ReadSession? tracking, TrackingScope? scope)
     {
         var findings = new List<Diagnostic>();
         Diagnostic Behind(string what, string found) => new(DiagnosticCatalog.RefreshCheckFailed, new(what, 0, 0), found);
         if (level != RefreshCheck.Live && (tracking == null || scope == null))
         {
-            findings.Add(Behind($"connection:{plan.Connection}", $"The `{LifecycleSettings.Name(level)}` check reads the tracking tables, and nothing is tracked for `{plan.Connection}`. Use `--check live` (the catalog) or `--check none`."));
+            findings.Add(Behind($"connection:{connection}", $"The `{LifecycleSettings.Name(level)}` check reads the tracking tables, and nothing is tracked for `{connection}`. Use `--check live` (the catalog) or `--check none`."));
             return findings;
         }
         if (scope != null && tracking != null)
@@ -192,14 +434,13 @@ internal static class RefreshChecks
             var status = await TrackingStore.StatusAsync(tracking, scope.Engine, scope.SchemaName);
             if (status.AsDiagnostic(scope.SchemaName) is { } notReady) return [notReady];
         }
-        var expected = plan.Requires.Where(r => loads.Any(l => l.Model == r.Object)).ToList();
         switch (level)
         {
             case RefreshCheck.Project:
             {
                 var (deployed, eventId) = await AuditLog.LastDeployedProjectAsync(tracking!, scope!);
-                if (deployed == null) findings.Add(Behind($"connection:{plan.Connection}", "No completed deploy of this connection recorded the project's structure, so it cannot be said that this project was deployed here."));
-                else if (deployed != plan.ProjectHash) findings.Add(Behind($"connection:{plan.Connection}", $"The project expects structure {plan.ProjectHash[..12]}, but the last completed deploy ({eventId}) recorded {deployed[..12]}."));
+                if (deployed == null) findings.Add(Behind($"connection:{connection}", "No completed deploy of this connection recorded the project's structure, so it cannot be said that this project was deployed here."));
+                else if (deployed != projectHash) findings.Add(Behind($"connection:{connection}", $"The project expects structure {projectHash[..12]}, but the last completed deploy ({eventId}) recorded {deployed[..12]}."));
                 break;
             }
             case RefreshCheck.Objects:

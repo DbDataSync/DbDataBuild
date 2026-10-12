@@ -18,10 +18,11 @@ public sealed record ApplyTracking(LoginSettings Read, LoginSettings? Write, str
 /// <param name="ProjectHash">The structure the compiled project expected of the connection, recorded on a deploy event (so a refresh can ask whether this project was deployed).</param>
 /// <param name="PlanHash">The hash to record for the plan, when it is not the hash of the plan as the engine sees it (a refresh records the compiled plan's).</param>
 /// <param name="Refresh">A refresh runs routine loads only and asks the connection nothing about its structure: no plan is verified against the live objects, there is nothing to continue, and the id of every run is its own.</param>
+/// <param name="Run">For a refresh: the plan it ran (null for a load named directly), the selection, the plan's members as run, and what each step belongs to; recorded on the event and on each load row.</param>
 /// <param name="RecordText">Whether the text of each DDL statement is kept in `ddl_log` (audit `full`); the hash always is.</param>
 /// <param name="RecordShapes">Whether each load records the shape of its object before and after (a catalog read per load). A deploy does; a refresh does only when it checks against the live catalog.</param>
 public sealed record ApplyOptions(bool DryRun, bool AllowRisky, IReadOnlySet<string> AllowDestructive, string? GitCommit, bool GitDirty, string Invoker, Func<bool>? StopRequested = null, Func<string, CancellationToken, Task<ReadSession>>? OpenOrigin = null,
-    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true);
+    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null);
 
 /// <param name="Status">ok, dry-run, skipped (done in an earlier attempt), stopped (the operator stopped before it) or failed.</param>
 public sealed record StepOutcome(string StepId, string Description, string Status, string? Detail = null);
@@ -159,7 +160,12 @@ public static class ApplyEngine
         // ---- execute ----
         var outcomes = new List<StepOutcome>();
         var before = string.Join(",", plan.Bases.Select(b => b.LiveShapeHash ?? "-"));
-        if (!gate.DryRun) await tracker.MigrationAsync("migration:start", plan.Id, planHash, planText, o.GitCommit, o.Invoker, "started", Hashing.Sha256Hex(before), null, o.Lane, o.ProjectHash, ct);
+        if (!gate.DryRun)
+        {
+            await tracker.MigrationAsync("migration:start", plan.Id, planHash, planText, o.GitCommit, o.Invoker, "started", Hashing.Sha256Hex(before), null, o.Lane, o.ProjectHash, o.Run?.PlanName, SelectionOf(o), ct);
+            foreach (var m in o.Run?.Members ?? [])
+                await tracker.PlanMemberAsync($"member:{m.Position}", plan.Id, m.Position, m.Membership, m.Model, m.Load, m.LoadPlanHash, m.Selected, ct);
+        }
 
         foreach (var step in plan.Steps)
         {
@@ -204,6 +210,9 @@ public static class ApplyEngine
         return new ApplyResult(outcomes, []);
     }
 
+    /// <summary>What the event records as the selection: the text of the arguments that chose it, or nothing when the whole plan ran.</summary>
+    private static string? SelectionOf(ApplyOptions o) => o.Run is { Selection.Length: > 0 } r ? r.Selection : null;
+
     private static Diagnostic Stale(string detail) => new(DiagnosticCatalog.PlanIsStale, new("plan", 0, 0), detail);
 
     private static bool IsDone(PlanStep s, PlanProgress p) => s.Type switch
@@ -217,7 +226,7 @@ public static class ApplyEngine
     private static async Task FinishMigration(Tracker tracker, MutationGate gate, Plan plan, string planHash, string planText, ApplyOptions o, string status, CancellationToken ct)
     {
         if (gate.DryRun) return;
-        try { await tracker.MigrationAsync("migration:" + status, plan.Id, planHash, planText, o.GitCommit, o.Invoker, status, null, null, o.Lane, o.ProjectHash, ct); }
+        try { await tracker.MigrationAsync("migration:" + status, plan.Id, planHash, planText, o.GitCommit, o.Invoker, status, null, null, o.Lane, o.ProjectHash, o.Run?.PlanName, SelectionOf(o), ct); }
         catch (Exception ex) when (ex is not OperationCanceledException) { /* the failure that got us here matters more; the statement log has what ran */ }
     }
 
@@ -226,6 +235,10 @@ public static class ApplyEngine
         var (schema, name) = DdlGenerator.Split(obj);
         return (await CatalogReader.ReadObjectsAsync(reader, engine, schema, ct, objectName: name)).GetValueOrDefault(obj);
     }
+
+    /// <summary>What a refresh step belongs to, for its row in `run_log`; nothing for a step of a deploy.</summary>
+    private static RefreshStepRecord? RefreshRecord(ApplyOptions o, PlanStep step) =>
+        o.Run is { } run && run.Steps.TryGetValue(step.Id, out var info) ? new RefreshStepRecord(info.Membership, info.LoadPlanHash, info.InputsJson) : null;
 
     /// <summary>Executes one step. Returns a diagnostic when the step ran but its result is not what the plan promised.</summary>
     private static async Task<Diagnostic?> ExecuteStepAsync(Plan plan, PlanStep step, ReadSession reader, MutationGate gate, Tracker tracker, ApplyOptions o, Guid runId, CancellationToken ct)
@@ -279,22 +292,23 @@ public static class ApplyEngine
             case StepType.Backfill:
             {
                 var parameters = step.Parameters.Select(ToGate).ToList();
+                var clock = System.Diagnostics.Stopwatch.StartNew();
                 var shapeStart = gate.DryRun || !o.RecordShapes ? null : (await LiveAsync(reader, engine, step.Object, ct))?.ShapeHash;
                 var json = JsonSerializer.Serialize(step.Parameters.Select(p => new { p.Name, p.Type, p.Source, p.Value }), new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 var watermark = step.Parameters.FirstOrDefault(p => p.Name == "watermark")?.Value;
                 if (!gate.DryRun)
                     await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "load", plan.Id, o.GitCommit, step.DefinitionHash, shapeStart, step.Operation,
-                        step.FileHash, step.ResolverText == null ? null : Hashing.ScriptHash(step.ResolverText), json, watermark, ct);
+                        step.FileHash, step.ResolverText == null ? null : Hashing.ScriptHash(step.ResolverText), json, watermark, RefreshRecord(o, step), ct);
                 long rows;
                 try { rows = await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id, StatementKind.Data, step.Text, parameters), ct); }
                 catch (Exception) when (!gate.DryRun)
                 {
-                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, ct);
+                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, clock.ElapsedMilliseconds, ct);
                     throw;
                 }
                 if (gate.DryRun) return null;
                 var shapeEnd = o.RecordShapes ? (await LiveAsync(reader, engine, step.Object, ct))?.ShapeHash : null;
-                await tracker.FinishRunAsync(step.Id, runId, "ok", rows, shapeEnd, ct);
+                await tracker.FinishRunAsync(step.Id, runId, "ok", rows, shapeEnd, clock.ElapsedMilliseconds, ct);
                 // the range of data this operation produced, under the shape it produced it in (DESIGN.md 12.3 reads these)
                 var start = step.Parameters.FirstOrDefault(p => p.Name is "start" or "watermark")?.Value;
                 var end = step.Parameters.FirstOrDefault(p => p.Name == "end")?.Value;
@@ -307,19 +321,20 @@ public static class ApplyEngine
             {
                 // a hook is native SQL run exactly as committed; it is logged like a load (operation = its event, load_name = its name)
                 var kind = step.Effect == "data" ? StatementKind.Data : StatementKind.Ddl;
+                var clock = System.Diagnostics.Stopwatch.StartNew();
                 var before = gate.DryRun || !o.RecordShapes ? null : await LiveAsync(reader, engine, step.Object, ct);
                 if (!gate.DryRun)
-                    await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "hook", plan.Id, o.GitCommit, null, before?.ShapeHash, step.Hook, step.FileHash, null, null, null, ct);
+                    await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "hook", plan.Id, o.GitCommit, null, before?.ShapeHash, step.Hook, step.FileHash, null, null, null, RefreshRecord(o, step), ct);
                 long rows;
                 try { rows = await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id, kind, step.Text), ct); }
                 catch (Exception) when (!gate.DryRun)
                 {
-                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, ct);
+                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, clock.ElapsedMilliseconds, ct);
                     throw;
                 }
                 if (gate.DryRun) return null;
                 var after = o.RecordShapes ? await LiveAsync(reader, engine, step.Object, ct) : null;
-                await tracker.FinishRunAsync(step.Id, runId, "ok", rows, after?.ShapeHash, ct);
+                await tracker.FinishRunAsync(step.Id, runId, "ok", rows, after?.ShapeHash, clock.ElapsedMilliseconds, ct);
                 // a script that changed the object's shape was the operator's own decision: record the new shape so it is not mistaken for an outside change
                 if (kind == StatementKind.Ddl && after != null && before != null && after.ShapeHash != before.ShapeHash)
                     await tracker.RecordSchemaVersionAsync(step.Id + ":version", step.Object, after.ShapeHash, after.PhysicalHash, "hook", plan.Id, o.GitCommit, ct);
@@ -354,7 +369,7 @@ public static class ApplyEngine
         }
 
         await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id + ":staging", StatementKind.Ddl, step.Text), ct);
-        await tracker.BeginRunAsync(step.Id, runId, step.Object, "transfer", plan.Id, o.GitCommit, null, null, $"from {spec.Origin}", null, null, null, null, ct);          // the origin is in the record, so `report` can say which origin last copied well
+        await tracker.BeginRunAsync(step.Id, runId, step.Object, "transfer", plan.Id, o.GitCommit, null, null, $"from {spec.Origin}", null, null, null, null, null, ct);          // the origin is in the record, so `report` can say which origin last copied well
         try
         {
             await using var origin = await o.OpenOrigin!(spec.Origin, ct);
@@ -368,22 +383,22 @@ public static class ApplyEngine
                 project = read.Select(c => names.ToList().FindIndex(n => string.Equals(n, c.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
             if (project == null && !names.SequenceEqual(read.Select(c => c.Name), StringComparer.OrdinalIgnoreCase))
             {
-                await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, ct);
+                await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, null, ct);
                 return new Diagnostic(DiagnosticCatalog.StepResultDiffers, new($"step:{step.Id}", 0, 0),
                     $"The read on `{spec.Origin}` returned the columns [{string.Join(", ", names)}], but the plan expects [{string.Join(", ", read.Select(c => c.Name))}]. Nothing was copied.");
             }
             var written = await gate.BulkCopyAsync(statement, stagingSchema, stagingTable, columns, Converted(project == null ? stream.ReadAsync(ct) : Projected(stream.ReadAsync(ct), project, ct), columns, read.Count, spec.Slice, ct), ct);
-            await tracker.FinishRunAsync(step.Id, runId, "ok", written, null, ct);
+            await tracker.FinishRunAsync(step.Id, runId, "ok", written, null, null, ct);
             return null;
         }
         catch (TransferException ex)
         {
-            await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, ct);
+            await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, null, ct);
             return new Diagnostic(DiagnosticCatalog.StepFailed, new($"step:{step.Id}", 0, 0), $"step {step.Id} ({step.Description}): {ex.Message} Later steps did not run.");
         }
         catch (Exception)
         {
-            await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, ct);
+            await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, null, ct);
             throw;
         }
     }

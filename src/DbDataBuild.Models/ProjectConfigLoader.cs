@@ -53,7 +53,7 @@ public static class ProjectConfigLoader
             var tracking = ReadTracking(top, connections.Keys.ToHashSet(StringComparer.Ordinal)) ?? d.Tracking;
             var semantics = ReadSemantics(top, d.StringSemantics);
             var policy = ReadPolicy(top, d.Policy);
-            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), DeclaredInfo = ReadInfo(top) };
+            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), RefreshPlans = ReadRefreshPlans(top), DeclaredInfo = ReadInfo(top) };
         }
 
         // ---- plans, refresh, retention ----
@@ -114,12 +114,61 @@ public static class ProjectConfigLoader
                 if (refreshNode is not YamlMapping rf) Add(DiagnosticCatalog.InvalidValue, refreshNode, $"`{W("refresh")}` must be a mapping (`check`, `on_fail`).");
                 else
                 {
-                    CheckKeys(rf, ["check", "on_fail"], $"`{W("refresh")}`");
+                    CheckKeys(rf, scope.Length == 0 ? ["check", "on_fail", "plans"] : ["check", "on_fail"], $"`{W("refresh")}`");
                     check = ReadChoice<RefreshCheck>(rf, "check", W("refresh")); onFail = ReadChoice<OnFail>(rf, "on_fail", W("refresh"));
                 }
             }
             var result = new LifecycleOverride(deployKeep, deployAudit, refreshKeep, refreshAudit, clean, check, onFail);
             return result == new LifecycleOverride() ? null : result;
+        }
+
+        /// <summary>
+        /// `refresh: { plans: { hourly: { title, description, tags, properties, on_failure, on_busy, expected_every, parallel, check, on_fail } } }`: the refresh plans the project declares, so a model that names another is
+        /// told. A plan may be an empty mapping (`daily: {}`) or null. The rules are validated and kept in the compiled plan file.
+        /// </summary>
+        private Dictionary<string, RefreshPlanSettings> ReadRefreshPlans(YamlMapping top)
+        {
+            var result = new Dictionary<string, RefreshPlanSettings>(StringComparer.Ordinal);
+            if ((top.Get("refresh") as YamlMapping)?.Get("plans") is not { } node) return result;
+            if (node is not YamlMapping plans) { Add(DiagnosticCatalog.InvalidValue, node, "`refresh.plans` must be a mapping of plan names to their settings, for example `plans: { hourly: { expected_every: 1h } }`."); return result; }
+            foreach (var e in plans.Entries)
+            {
+                var name = e.Key.Value;
+                if (!RefreshPlanSettings.NameForm.IsMatch(name)) { Add(DiagnosticCatalog.InvalidValue, e.Key, $"`{name}` is not a refresh plan name.", "Lowercase snake_case, such as `hourly` or `daily`."); continue; }
+                if (e.Value is not YamlMapping m)
+                {
+                    if (e.Value is YamlScalar { Quoted: false, Value: "" or "null" or "~" }) { result[name] = new(name, ObjectInfo.Empty, null, null, null, null, null, null, e.Key.Line); continue; }
+                    Add(DiagnosticCatalog.InvalidValue, e.Value, $"`refresh.plans.{name}` must be a mapping of settings (`{{}}` for none).");
+                    continue;
+                }
+                CheckKeys(m, [.. YamlFieldReader.InfoKeys, "on_failure", "on_busy", "expected_every", "parallel", "check", "on_fail"], $"`refresh.plans.{name}`");
+                var where = $"refresh.plans.{name}";
+                string? Word(string key, IReadOnlyList<string> allowed)
+                {
+                    if (m.Get(key) is not { } n) return null;
+                    if (n is YamlScalar s && allowed.Contains(s.Value)) return s.Value;
+                    Add(DiagnosticCatalog.InvalidValue, n, $"`{where}.{key}` is {(n is YamlScalar sc ? $"`{sc.Value}`" : "not a single word")}.", $"One of: {string.Join(", ", allowed)}.");
+                    return null;
+                }
+                var onFailure = Word("on_failure", OnFailureModes.All);
+                var onBusy = Word("on_busy", OnBusyModes.All);
+                EveryDuration? every = null;
+                if (m.Get("expected_every") is { } en)
+                {
+                    every = en is YamlScalar es ? EveryDuration.TryParse(es.Value) : null;
+                    if (every == null) Add(DiagnosticCatalog.InvalidValue, en, $"`{where}.expected_every` is not a span.", "A whole number and a unit, for example `15m`, `1h`, `1d` or `1w`.");
+                }
+                int? parallel = null;
+                if (m.Get("parallel") is { } pn)
+                {
+                    if (pn is YamlScalar ps && int.TryParse(ps.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count) && count is >= 1 and <= 64) parallel = count;
+                    else Add(DiagnosticCatalog.InvalidValue, pn, $"`{where}.parallel` must be a whole number from 1 to 64.");
+                }
+                var check = ReadChoice<RefreshCheck>(m, "check", where);
+                var onFail = ReadChoice<OnFail>(m, "on_fail", where);
+                result[name] = new RefreshPlanSettings(name, ReadInfo(m) ?? ObjectInfo.Empty, onFailure, onBusy, every, parallel, check, onFail, e.Key.Line);
+            }
+            return result;
         }
 
         private LifecycleSettings ReadLifecycle(YamlMapping top)

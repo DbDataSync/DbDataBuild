@@ -1,3 +1,4 @@
+using System.Globalization;
 using DbDataBuild.Core;
 using DbDataBuild.Models;
 using DbDataBuild.Planning;
@@ -8,9 +9,21 @@ using DbDataBuild.Targets.Rendering;
 
 namespace DbDataBuild.Cli;
 
+/// <summary>What `project compile` writes for the refreshes of one connection: every load plan, and one file per refresh plan.</summary>
+internal sealed record CompiledRefresh(LoadsFile Loads, IReadOnlyList<RefreshPlanFile> Plans)
+{
+    /// <summary>The files, relative to `rendered/`.</summary>
+    public IEnumerable<RenderedFile> Files()
+    {
+        yield return new($"{Loads.Connection}/{LoadsDocument.FileName}", LoadsDocument.Serialize(Loads));
+        foreach (var p in Plans) yield return new(RefreshPlanDocument.PathOf(p.Connection, p.Name), RefreshPlanDocument.Serialize(p));
+    }
+}
+
 /// <summary>
-/// Compiles the refresh plan of a connection from the project alone (no connection is opened): the routine loads in dependency order, with the hooks around them, the committed scripts they run (by path
-/// and hash), and what the compiled project expects the structure to be. A model whose load is not routine (a copy, a load that needs a value from a person, a structure hook) is left out and says why.
+/// Compiles the refreshes of a connection from the project alone (no connection is opened): every load of every model as a load plan (`loads.yml`: the committed script and its hash, the inputs with where each default
+/// comes from, the hooks around it, what the structure should be), and each refresh plan as the members that are in it, in dependency order, naming their load plans by hash (`refresh/&lt;name&gt;.yml`). A model with
+/// a default load and no `refresh:` anywhere is in the plan `default`. A load that cannot run unattended is a load plan, and may be in a plan only if its membership gives the inputs that have no default.
 /// </summary>
 internal static class RefreshPlanBuilder
 {
@@ -37,8 +50,18 @@ internal static class RefreshPlanBuilder
         catch (DdlUnsupportedException ex) { return "unsupported:" + ex.Diagnostic.Code; }
     }
 
+    /// <summary>Whether a value written for an input is one of the input's type. A type this does not know a form for takes any text.</summary>
+    internal static bool InputFits(string type, string value)
+    {
+        var t = type.Trim().ToUpperInvariant();
+        if (t == "DATE" || t.StartsWith("TIMESTAMP", StringComparison.Ordinal) || t is "BIGINT" or "INTEGER" or "INT" or "SMALLINT") return ColumnTypes.LiteralFits(t == "INT" ? "INTEGER" : type, value);
+        if (t.StartsWith("DECIMAL", StringComparison.Ordinal) || t.StartsWith("NUMERIC", StringComparison.Ordinal) || t is "DOUBLE" or "REAL" or "FLOAT") return decimal.TryParse(value.Trim(), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _);
+        if (t is "BOOLEAN" or "BOOL") return value is "true" or "false";
+        return true;
+    }
+
     /// <param name="models">Every model of the project that declares <paramref name="connection"/>, with its query as that connection reads it, and its rendering for the connection.</param>
-    public static RefreshPlan Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, List<Diagnostic> diags)
+    public static CompiledRefresh Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, List<Diagnostic> diags)
     {
         var root = ctx.Root;
         var ddl = TargetRegistry.Get(ctx.Config.EngineOf(connection) ?? connection).CreateDdl(ctx.Config.ForConnection(connection));
@@ -51,45 +74,117 @@ internal static class RefreshPlanBuilder
         }).ToList();
         var renders = models.ToDictionary(x => x.Model.Source.Definition.Name, x => x.Render, StringComparer.Ordinal);
 
-        var loads = new List<RefreshLoad>();
-        var requires = new List<RefreshRequirement>();
+        var loads = new List<LoadPlanEntry>();
         var excluded = new List<RefreshExclusion>();
+        var excludedLoads = new Dictionary<(string Model, string Load), string>();           // a load that has no load plan, and why: a plan that names it says so
+        var modelOrder = new List<PlannedModel>();
         foreach (var model in ModelOrder.Sort(planned, out _))
         {
             var def = model.Definition;
-            var ops = renders[def.Name].Loads.Where(l => l.Target == connection).ToList();
+            var ops = renders[def.Name].Loads.Where(l => l.Target == connection).OrderBy(o => o.Operation, StringComparer.Ordinal).ToList();
             if (ops.Count == 0) continue;                                           // a view, a mapped model, a kind without loads
-            void Skip(string reason) => excluded.Add(new(def.Name, reason));
-            if (def.IsCopy && !def.LocalCopy) { Skip("a copy moves rows between connections; a deploy plans it"); continue; }
-            var op = ops.FirstOrDefault(o => o.IsDefault) ?? (ops.Count == 1 ? ops[0] : null);
-            if (op == null) { Skip("it has several load operations and none is the default"); continue; }
-
-            var parameters = new List<RefreshParameter>();
-            var routine = true;
-            foreach (var p in op.Parameters)
+            modelOrder.Add(model);
+            void Skip(RenderedOperation? op, string reason)
             {
-                if (p.Source == "parameter")
-                {
-                    var key = QueryParameter.KeyOf(p.Name);
-                    if (key == null || model.ParameterValues?.GetValueOrDefault(key) is not { } pv) { Skip($"the parameter `{key ?? p.Name}` has no value on {connection}"); routine = false; break; }
-                    parameters.Add(new(p.Name, pv.Type, "parameter", pv.Value));
-                }
-                else if (p.Source == "resolver") parameters.Add(new(p.Name, p.Type, "resolver", null));
-                else { Skip($"the operation `{op.Operation}` needs a value from a person (`@{p.Name}`); a deploy asks for it"); routine = false; break; }
+                if (op == null) { excluded.Add(new(def.Name, reason)); foreach (var o in ops) excludedLoads[(def.Name, o.Operation)] = reason; }
+                else { excluded.Add(new(def.Name, $"the load `{op.Operation}`: {reason}")); excludedLoads[(def.Name, op.Operation)] = reason; }
             }
-            if (!routine) continue;
-
+            if (def.IsCopy && !def.LocalCopy) { Skip(null, "a copy moves rows between connections; a deploy plans it"); continue; }
+            var shape = ExpectedShape(ddl, def);
+            if (shape.StartsWith("unsupported:", StringComparison.Ordinal)) { Skip(null, $"its declared columns have no type on {connection} ({shape[12..]})"); continue; }
             var hooks = model.HookList.Where(h => h.Hook.Event is "pre_load" or "post_load").ToList();
             var bad = hooks.FirstOrDefault(h => h.Hook.Effect != "data" || !string.Equals(h.Hook.Risk, "safe", StringComparison.OrdinalIgnoreCase));
-            if (bad != null) { Skip($"the hook `{bad.Hook.Name}` around its load is not a safe data hook, so the load is not routine"); continue; }
+            if (bad != null) { Skip(null, $"the hook `{bad.Hook.Name}` around its load is not a safe data hook, so the load is not routine"); continue; }
             RefreshHook Hook(PlannedHook h) => new(h.Hook.Name, h.Hook.Event, h.Hook.ScriptPath.Replace('\\', '/'), h.FileHash, h.Hook.Effect, h.Hook.Risk);
 
-            var shape = ExpectedShape(ddl, def);
-            if (shape.StartsWith("unsupported:", StringComparison.Ordinal)) { Skip($"its declared columns have no type on {connection} ({shape[12..]})"); continue; }
-            loads.Add(new(def.Name, op.Operation, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
-                parameters, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList()));
-            requires.Add(new(def.Name, shape));
+            foreach (var op in ops)
+            {
+                var inputs = new List<RefreshParameter>();
+                var routine = true;
+                foreach (var p in op.Parameters)
+                {
+                    if (p.Source == "parameter")
+                    {
+                        var key = QueryParameter.KeyOf(p.Name);
+                        if (key == null || model.ParameterValues?.GetValueOrDefault(key) is not { } pv) { Skip(op, $"the parameter `{key ?? p.Name}` has no value on {connection}"); routine = false; break; }
+                        inputs.Add(new(p.Name, pv.Type, RefreshParameter.FromParameter, pv.Value));
+                    }
+                    else if (p.Source == "resolver") inputs.Add(new(p.Name, p.Type, RefreshParameter.FromResolver, null));
+                    else inputs.Add(new(p.Name, p.Type, RefreshParameter.Required, null));
+                }
+                if (!routine) continue;
+                loads.Add(new(def.Name, op.Operation, op.Strategy, op.IsDefault, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
+                    shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList()));
+            }
         }
-        return new RefreshPlan(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, requires.OrderBy(r => r.Object, StringComparer.Ordinal).ToList(), excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ToList());
+        var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList());
+
+        // ---- the refresh plans: who is in which, in what order ----
+        var members = new Dictionary<string, List<RefreshMember>>(StringComparer.Ordinal);
+        var planExcluded = new Dictionary<string, List<RefreshPlanExclusion>>(StringComparer.Ordinal);
+        List<RefreshMember> MembersOf(string plan) => members.TryGetValue(plan, out var l) ? l : members[plan] = [];
+        List<RefreshPlanExclusion> ExcludedOf(string plan) => planExcluded.TryGetValue(plan, out var l) ? l : planExcluded[plan] = [];
+        foreach (var model in modelOrder)
+        {
+            var def = model.Definition;
+            var ops = renders[def.Name].Loads.Where(l => l.Target == connection).ToList();
+            if (def.Refresh.Count == 0)
+            {
+                var op = ops.FirstOrDefault(o => o.IsDefault) ?? (ops.Count == 1 ? ops[0] : null);
+                if (op == null) { ExcludedOf(RefreshPlanSettings.DefaultName).Add(new(def.Name, "-", "it has several load operations and none is the default")); continue; }
+                Place(RefreshPlanSettings.DefaultName, new RefreshMembership(RefreshPlanSettings.DefaultName, op.Operation, op.Operation, [], null), def, ops, implied: true);
+                continue;
+            }
+            foreach (var m in def.Refresh) Place(m.Plan, m, def, ops);
+        }
+
+        void Place(string plan, RefreshMembership m, ModelDefinition def, List<RenderedOperation> ops, bool implied = false)
+        {
+            if (!ops.Any(o => o.Operation == m.Load)) return;                      // the load is limited to other connections (`connections:` on it)
+            var where = new SourceLocation(m.File ?? def.Name, m.Line, 1);
+            if (loadsFile.Find(def.Name, m.Load) is not { } entry)
+            {
+                ExcludedOf(plan).Add(new(def.Name, m.Name, excludedLoads.GetValueOrDefault((def.Name, m.Load), "it has no load plan")));
+                return;
+            }
+            if (implied && entry.RequiredInputs.Any())
+            {
+                // nobody wrote this membership: a model whose default load needs a person is left out of `default`, as it always was, and says why
+                ExcludedOf(plan).Add(new(def.Name, m.Name, $"the load `{m.Load}` needs a value from a person ({string.Join(", ", entry.RequiredInputs.Select(i => "@" + i.Name))}); name it in a plan with `inputs:`, or run it with `--input`"));
+                return;
+            }
+            var ok = true;
+            foreach (var (name, value) in m.Inputs)
+            {
+                if (entry.Inputs.FirstOrDefault(i => i.Name == name) is not { } input)
+                {
+                    diags.Add(new Diagnostic(DiagnosticCatalog.RefreshMembershipInvalid, where, $"`{def.Name}`: the load `{m.Load}` in the plan `{plan}` is given the input `{name}`, which it does not take.",
+                        entry.Inputs.Count == 0 ? "It takes no input." : $"Its inputs: {string.Join(", ", entry.Inputs.Select(i => i.Name))}."));
+                    ok = false;
+                }
+                else if (!InputFits(input.Type, value))
+                {
+                    diags.Add(new Diagnostic(DiagnosticCatalog.RefreshMembershipInvalid, where, $"`{def.Name}`: the value `{value}` of the input `{name}` of `{m.Load}` in the plan `{plan}` is not a {input.Type}."));
+                    ok = false;
+                }
+            }
+            foreach (var missing in entry.RequiredInputs.Where(i => m.Inputs.All(g => g.Key != i.Name)))
+            {
+                diags.Add(new Diagnostic(DiagnosticCatalog.RefreshInputMissing, where, $"`{def.Name}`: the load `{m.Load}` in the plan `{plan}` needs a value for `{missing.Name}` ({missing.Type}), and the membership gives none."));
+                ok = false;
+            }
+            if (ok) MembersOf(plan).Add(new(m.Name, def.Name, m.Load, entry.Hash, m.OnFailure, m.Inputs.Select(i => new RefreshInputValue(i.Key, i.Value)).ToList()));
+        }
+
+        // a plan the project declares has a file even when no model is in it yet; `default` has one when anything is in it
+        var names = members.Keys.Concat(planExcluded.Keys).Concat(ctx.Config.RefreshPlans.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var plans = new List<RefreshPlanFile>();
+        foreach (var name in names)
+        {
+            ctx.Config.RefreshPlans.TryGetValue(name, out var declared);
+            plans.Add(new RefreshPlanFile(connection, name, declared?.Info ?? ObjectInfo.Empty, RefreshPlanSettingsText.From(declared), members.GetValueOrDefault(name) ?? [],
+                (planExcluded.GetValueOrDefault(name) ?? []).OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Member, StringComparer.Ordinal).ToList()));
+        }
+        return new CompiledRefresh(loadsFile, plans);
     }
 }
