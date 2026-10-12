@@ -1,6 +1,6 @@
 # Refresh plans, load plans and inputs
 
-Status: design, agreed with the owner 2026-10-12 (the conversation that settled the terms, failure rules, overlap and subsets), not built. It replaces three items of the lifecycle work: `refresh --backfill`, copies in a refresh, and `monitor --plan`. The semantics of resolvers (section 8) are **proposed and open for review before anything is built**.
+Status: design, agreed with the owner 2026-10-12 (the conversation that settled the terms, failure rules, overlap and subsets), not built. It replaces three items of the lifecycle work: `refresh --backfill`, copies in a refresh, and `monitor --plan`. The semantics of resolvers (section 8) were reviewed and confirmed by the owner on 2026-10-12.
 
 Background: `docs/concepts.md` (deploy and refresh), `docs/research/lifecycle-model.md`, DESIGN.md 6.6 (load operations), 6.5.2 (copies).
 
@@ -139,13 +139,13 @@ The lock moves from the connection to the **load** (connection and model): two r
 - **Selectors** are the model selector grammar the other commands have (`tag:`, `kind:`, `connection:`, `path:`, `property:`, `+model`, `@model`, `changed:`, `exclude:`), plus `load:<name>` and tags on loads. A selection keeps dependency order. Loads not selected are not failures, and neither are their dependents.
 - The event records the selection. `monitor` and `status` show "last complete run" and "last partial run" apart: a plan that only ever ran in part is not healthy.
 
-## 8. Inputs and resolvers (proposed; to review before building)
+## 8. Inputs and resolvers (confirmed 2026-10-12)
 
 ### What exists
 
 One resolver, `target_max` (generated `MAX(column)` on the target, less the lookback), for the single `@watermark` of `watermark_append`. The range strategy's `@start`/`@end` have no resolver. The loader rejects any other resolver name.
 
-### Proposed: a resolver computes one or more inputs
+### A resolver computes one or more inputs
 
 ```yaml
 inputs:
@@ -163,20 +163,20 @@ The kinds, by where they run:
 |---|---|---|---|
 | `memory` | in the tool, in a DuckDB `:memory:` database | nothing from any database: calculation only | none |
 | `target` | on the load's own connection | tables of the project there | the connection's read login |
-| `source` | on the origin of a copy | the origin's tables | the origin's read login |
+| `source` | on the origin of a copy (copies only: a query reads one connection, DDB-231, so data crosses connections only through a copy) | the origin's tables | the origin's read login |
 | `target_max` | as today, shorthand for a `target` resolver | the watermark column | read login |
 
 **The expression variant is not a separate language.** `memory: "current_date - days"` is shorthand for `SELECT current_date - days`, evaluated by DuckDB itself. A text without `SELECT` is wrapped, a text starting with `SELECT` is used as written. One mechanism, one parser, DuckDB's own functions (date arithmetic, `date_trunc`, `last_day`, intervals, `strftime`, case, coalesce, a lookup against a literal table).
 
 ### Semantics to settle
 
-1. **Sandbox of `memory`.** A fresh in-memory database per resolution with external access off and configuration locked (no files, no network, no extension loading, no `ATTACH`), so the text can compute and nothing else. A table reference, a subquery over a table, `random()`, `uuid()` and file functions are compile errors. Which functions count as allowed needs a list (open: a deny list or an allow list; I propose an allow list by function category, extended by the matrix-like data file, so a new DuckDB function is refused until listed).
-2. **The clock.** `now()`, `current_date`, `today()` are allowed and are the reason `memory` exists. One run has **one frozen instant** (`run_started`), so all loads of a run agree, and it is recorded in the event. Open: which time zone `current_date` means. Proposal: UTC unless the project (or connection) sets `timezone:`, and the compiler refuses a date function that depends on the session zone when none is set.
+1. **Sandbox of `memory`.** A fresh in-memory database per resolution with external access off and configuration locked (no files, no network, no extension loading, no `ATTACH`), so the text can compute and nothing else. A table reference or a subquery over a table is a compile error (there is nothing to read). **Every DuckDB function is allowed for now**; whether to restrict them (an allow or a deny list) is a later discussion. The sandbox, not a function list, is what keeps a resolver from touching anything.
+2. **The clock.** `now()`, `current_date`, `today()` are allowed and are the reason `memory` exists. One run has **one frozen instant** (`run_started`), so all loads of a run agree, and it is recorded in the event. `current_date` and `now()` mean **UTC** unless the project (or a connection) sets `timezone:`; the session's own zone is never used.
 3. **Other inputs and parameters as variables.** A resolver may name the load's other inputs (`days` above), project and connection parameters (`${project.name}`, `${connection.name}`) and a fixed set of run variables (`run_started`, `plan`, `connection`). Inputs are resolved in dependency order; a cycle is a compile error. A `--input` override of `days` flows into `start`.
 4. **Result shape.** One row. One column for one input, or named columns matching `provides`. More than one row, or none, is an error; NULL goes to the input's `on_null` (`fail` default, `initial`, `skip_load`). The value is cast to the declared type; a value that does not fit is an error naming the input and the resolver, never a silent coercion.
 5. **Dialect.** `memory` is DuckDB text, the same for every connection, committed once. `target` and `source` resolvers are written in DuckDB dialect and lowered for the engine they run on, like a model's query (so the matrix and DDB-324 apply); a `source` resolver is lowered for the origin's engine. A `target` resolver is written over the project's models, not raw engine names.
 6. **Safety.** `target` and `source` run through `ReadSession` only (the gate invariant), as a single `SELECT`, with a timeout and a one-row cap. They never write. A `source` resolver on an origin whose login is not in the environment is a load failure like an unreachable origin.
-7. **When it runs.** In a refresh: per load, just before that load, with the frozen `run_started`. In a deploy: at plan time and shown. Today's rule that `apply` re-runs a resolver and refuses a plan whose value moved is right for `target`/`source` (data changed under the plan) and wrong for a clock-based `memory` resolver (it always moves). Proposal: a resolver is `stable` or `volatile`; the stale-plan check applies to stable resolvers only; the value of a volatile one is recomputed at apply and both are recorded. Open.
+7. **When it runs, and a plan that moved.** In a refresh: per load, just before that load, with the frozen `run_started`. In a deploy: at plan time, and the values are shown in the plan. All computed values are treated alike (there is no stable or volatile split): `apply` resolves again, and if **any input differs from the plan** it blocks the deployment, shows each input with its planned and its new value, and in an interactive apply lets the deployer approve and continue with the new values. A non-interactive apply (`--yes`, `--apply-plan` without a terminal) stops with exit 1 naming the new values; `--yes` does not approve moved inputs. The ways out are to plan again, or to pin the input with `--input` when planning (a pinned value is not computed, so it cannot move). Both values are recorded in the event. A clock-based input therefore moves at midnight and asks once; that is accepted as the conservative and simple rule.
 8. **Overrides.** A `--input` or membership value replaces the resolver, which is not run. The event records the source of each input: `flag`, `membership`, `parameter`, `resolver:memory|target|source`, `initial`.
 9. **Committed and hashed.** A `target`/`source` resolver's lowered text is rendered and committed under `rendered/<c>/` and hashed like a load script; a `memory` resolver is committed as its DuckDB text. A change to any resolver changes the load plan hash, and the refresh plan's hash with it. The event stores the resolver hash with the value.
 10. **Visibility.** `project show refresh --resolve` evaluates `memory` resolvers offline (what would `start` be now). `refresh --dry-run` also resolves `target` and `source` ones read-only. A resolver that is slow is visible: its duration is recorded.
