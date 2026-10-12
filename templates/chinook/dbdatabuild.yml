@@ -9,6 +9,14 @@
 defaults: {connections: [sqlserver]}
 # where the records of what the tool builds are kept (drift, history, acknowledgements): nothing is tracked without it
 tracking: { connection: sqlserver }
+
+# How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
+# Chinook is a small catalog that changes rarely, so the example keeps little of a plan and lets a refresh warn instead of stop.
+#   plans:
+#     deploy:  { keep: ephemeral, audit: minimal }   # made and applied in one step; only the hash and the event are kept
+#     refresh: { keep: committed, audit: minimal }   # the refresh plan is compiled by `project compile` into rendered/<connection>/refresh.plan.yml
+#   refresh: { check: project, on_fail: warn }       # none | project | objects | live: `project` asks only whether this structure was deployed here
+#   retention: { statement_logs_days: 7 }            # local statement logs older than this are removed by the next deploy or refresh
 string_semantics:
   case: sensitive
   trailing_space: ignored

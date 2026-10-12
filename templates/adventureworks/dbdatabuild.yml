@@ -9,6 +9,14 @@
 defaults: {connections: [sqlserver]}
 # where the records of what the tool builds are kept (drift, history, acknowledgements): nothing is tracked without it
 tracking: { connection: sqlserver }
+
+# How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
+# AdventureWorks has slowly changing dimensions and as-of joins, so the example records the full text of every plan and checks each object before a refresh.
+#   plans:
+#     deploy:  { keep: committed, audit: full }      # plans/ in git, text also in the database
+#     refresh: { keep: committed, audit: full }      # adds the plan text and the statement log to each refresh event
+#   refresh: { check: objects, on_fail: block }      # none | project | objects | live: each object against what was last deployed (the default)
+#   retention: { statement_logs_days: 90 }           # local statement logs older than this are removed by the next deploy or refresh
 string_semantics:
   case: sensitive
   trailing_space: ignored
