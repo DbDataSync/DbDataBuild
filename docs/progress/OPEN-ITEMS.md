@@ -54,11 +54,11 @@ Written 2026-10-02, brought up to date 2026-10-07. Unit tests 1817, real-engine 
 ## E. Suggested order (for you to change; refreshed 2026-10-07)
 
 0. **Deploy and refresh as two lanes, one event record, consistent verbs and hints** (design: `docs/research/lifecycle-model.md`; plan and status: `docs/research/lifecycle-implementation.md`; for users: `docs/concepts.md`; entries 130 and 131). Built so far (entries 132 to 138): the command tree, events for refresh, the rows of a load, headers and `Next:` hints, the settings, the compiled refresh plan with its checks, layout 5. Left: the deploy event as its own id, `monitor --plan`, more interface hints (terminal tabs), the positional connection name, `--backfill` for a refresh.
-1. **Decisions only the owner can make** (section R): `copy_to` and offline tracking (section M), retention of files from `run`, the test gate's recording in the plan, MCP `outputSchema`.
+1. **Decisions only the owner can make** (section R): retention of files from `run`, the test gate's recording in the plan, MCP `outputSchema`.
 2. **Real-host checks** (sections F and K): the skill and the MCP server have been tried from Windows and work at some level; they have not been exercised thoroughly. The MCP app has not been seen in a real host (see section F: the host has to advertise MCP Apps), and the page's apply and the elicitation have not been checked against one.
 3. Lowering gaps as real models need them (section A), probing with scale and edge data (it found most of the defects of 2026-10-07), and the documentation debt (section D).
 4. Fabric verification (moved to the back by the owner, 2026-10-02): needs a real Fabric instance; otherwise Fabric stays unverified for the first release.
-5. **Parked**: `connection tests run` (its meaning was never settled; parked 2026-10-12), string comparison until it is designed as a whole (section P), change feeds (section L), and more options in a query file's head (section N). The DuckDB 2.0 CI (section H) waits for 2.0.
+5. **Parked**: `tracking.copy_to` and offline tracking, kept together (replicated tracking rows, and holding rows locally while the tracking connection is down; the problem to solve was never named, section M; parked 2026-10-12), `connection tests run` (its meaning was never settled; parked 2026-10-12), string comparison until it is designed as a whole (section P), change feeds (section L), and more options in a query file's head (section N). The DuckDB 2.0 CI (section H) waits for 2.0.
 
 ## F. Terminal interface and agents (added 2026-10-02)
 
