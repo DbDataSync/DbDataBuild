@@ -26,7 +26,7 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 | 7 | Hints | lane and disposition in every header, `Next:` blocks, `next` in JSON, one error per cause | 2 | | **partly done** (entry 136): headers, `Next:`, `next`; status lines and one-error-per-cause remain |
 | 8 | Interfaces | terminal menu groups, web tabs, MCP tool names and `next`, lane chips | 2, 6, 7 | | planned |
 | 9 | Close | templates' READMEs, skill, getting-started, operations guide, `docs/commands.md` regenerated, open items | all | | planned |
-| later | `connection inspect`, `project model create`, `project tests list`, `connection tests run` | the new commands that are not renames | 2 | | `connection inspect`, `project tests list` and `project model create` **done** (entries 139 and 141); `connection tests run` not built (its meaning was never settled) |
+| later | `connection inspect`, `project model create`, `project tests list`, `connection tests run` | the new commands that are not renames | 2 | | `connection inspect`, `project tests list` and `project model create` **done** (entries 139 and 141); `connection tests run` parked (its meaning was never settled) |
 
 ## 3. Work items in detail
 
