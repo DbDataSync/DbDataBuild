@@ -1099,7 +1099,7 @@ Operator decision: correlated subqueries are a hard requirement.
 - **Verified on a real engine**: SQL Server 2022 and PostgreSQL 17 (docker). Results: unit 1926 passed; conformance `Group=apply` 126 passed and 3 skipped, `Group=templates` 15 passed, the quick group 51 passed and 6 skipped (Oracle, Spark, BigQuery, SQL Server 2025 and scale tests need engines that were not started), `Group=release` 4 passed.
 - **Not verified**: **Fabric**; the terminal interface was not driven (`scripts/tui_drive.py` needs `pyte`, which is not installed here): the form is covered by `FormModel` and catalog tests only; the web page was not opened in a browser (its calls are covered by the tool-surface tests); the stores README's sample lines were edited, not re-run.
 
-## 144a. Merge of entries 145 and 146; the refresh-plan design
+## 147. Merge of entries 145 and 146; the refresh-plan design
 
 - **Merged**: the properties work (entry 145, tracking layout 6) and the positional connection name (entry 146). Unit suite on the merged tree: 1926 passed. Conformance had been run on each branch by the agents (SQL Server 2022 and PostgreSQL 17); not re-run after the merge.
 - **Design written, nothing built**: `docs/research/refresh-plans.md` (OPEN-ITEMS section U). `tracking.copy_to` with offline tracking and `connection tests run` are parked.
