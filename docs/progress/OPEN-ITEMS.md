@@ -184,3 +184,13 @@ Left:
 - **Wording found on the way, not changed** (`inspect` advised `init --connection <the shop system>` when the tracking tables are on another connection: fixed, it now names the tracking connection): `status` after a deploy says `Structure  pending: a deploy would run 3 step(s)` for a project with a copy (the steps are the copy's transfers and load, which every deploy repeats: data, not structure); `connection deploy` asks "what about the rows already loaded?" for a column added to a full-replace table (every load rebuilds it); `compile` and `status` print the same DDB-302 note several times when one model has the construct in several places (62 notes for `retail`).
 - **Fabric** has not been run for any template or sample (as before).
 - **DuckDB's `ENUM`**: a cast to an enum is now refused (DDB-324). Mapping an enum to a `VARCHAR` plus a check is possible but is a design question (what the engine does with a value outside the list); decide before building it.
+
+## T. Description, title, tags and properties on every object; the positional connection name (decided 2026-10-12)
+
+Today only models carry `tags`; there is no description, title or free key-value data on a project, connection, model, column, index or test (tests have a description and tags). Decided with the owner:
+
+- **Names**: `title` (short display name), `description` (free text), `tags` (list of words) and `properties` (a dictionary of key to value; the word "metadata" stays the generic term, not a key).
+- **On**: the project, each connection, each model, each column, each index, and tests and sources where they have a definition.
+- **Where it goes**: the metadata documents and the tracking tables (`connection publish` and the deploy record) must carry them, so the deployed metadata says what an object is for. **Nothing is emitted into the deployed SQL objects yet** (no `COMMENT ON`, no extended properties); that stays a later decision.
+- **Rules to settle while building**: layering of `properties` like `tags` (nearest wins, `+`/`-`/`=` suffixes), value types (text, number, boolean, list?), key names, length limits, selectors (`tag:` on connections; `property:key=value`?), JSON schema and the tracking layout (a version bump, and `init --upgrade`).
+- **Positional connection name**: `connection <verb> <c>` instead of `--connection <c>` (design: `docs/concepts.md`, `docs/research/lifecycle-implementation.md` phase 2), optional when one connection exists. Breaking, like the rest of the tree: no alias.
