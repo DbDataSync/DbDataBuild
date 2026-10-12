@@ -14,7 +14,7 @@ public sealed record TrackingStatus(TrackingState State, int? Version)
         TrackingState.Ready => null,
         TrackingState.Missing => new Diagnostic(DiagnosticCatalog.TrackingNotInitialized, new($"schema:{schema}", 0, 0), $"The tracking tables do not exist under the schema name `{schema}` on the target."),
         _ => new Diagnostic(DiagnosticCatalog.TrackingNotInitialized, new($"schema:{schema}", 0, 0),
-            $"The tracking tables under the schema name `{schema}` are at layout version {(Version?.ToString() ?? "unreadable")}; this tool knows version {TrackingSchema.Version}. A layout older than 4 has no `connection` column in its records, and layout 4 has no `lane` or `project_hash`: `connection init --upgrade --apply` adds them (every existing record is given the connection that is initialized) and replaces the views. Layout 5 only lacks the table `object_info`: `connection init --apply` creates it. Or name another schema with `tracking: {{ schema: ... }}` and run `init` there."),
+            $"The tracking tables under the schema name `{schema}` are at layout version {(Version?.ToString() ?? "unreadable")}; this tool knows version {TrackingSchema.Version}. A layout older than 4 has no `connection` column in its records, and layout 4 has no `lane` or `project_hash`: `connection init --upgrade --apply` adds them (every existing record is given the connection that is initialized) and replaces the views. Layout 5 lacks the table `object_info` and layout 6 the columns and the table of the refresh plans (layout 7): the upgrade adds them (init alone only creates tables). Or name another schema with `tracking: {{ schema: ... }}` and run `init` there."),
     };
 }
 
@@ -101,6 +101,9 @@ public static class TrackingStore
     }
 }
 
+/// <summary>What a refresh load row records about the plan it ran in: the membership, the load plan by hash, and the inputs with their sources as JSON.</summary>
+public sealed record RefreshStepRecord(string Membership, string LoadPlanHash, string InputsJson);
+
 /// <summary>What the tracking tables say about one plan, for refusing a double apply and for `apply --resume`.</summary>
 /// <param name="MigrationStatuses">Statuses of its `migration_log` rows, oldest first (started, completed, failed).</param>
 /// <param name="CompletedDdlHashes">Statement hashes of its DDL that finished `ok`.</param>
@@ -109,7 +112,7 @@ public static class TrackingStore
 public sealed record PlanProgress(IReadOnlyList<string> MigrationStatuses, IReadOnlySet<string> CompletedDdlHashes, IReadOnlySet<string> CompletedRunSteps, IReadOnlyList<(string Object, string ShapeHash)> RecordedShapes);
 
 /// <summary>Writers and readers for the audit tables (DESIGN.md 12): migration, DDL and run logs. Writes go through the gate as tracking statements.</summary>
-public static class AuditLog
+public static partial class AuditLog
 {
     private static string C(string engine, string n) => TrackingDdl.For(engine).Quote(n);
     private static string T(TrackingScope scope, string table) => $"{C(scope.Engine, scope.SchemaName)}.{C(scope.Engine, table)}";
@@ -120,15 +123,15 @@ public static class AuditLog
     private static GateParameter Fixed(string name, string? v) => new(name, DbType.AnsiStringFixedLength, v);
 
     public static Task MigrationAsync(MutationGate gate, TrackingScope scope, string stepId, string planId, string planHash, string planText, string? gitCommit, string appliedBy,
-        string status, string? hashBefore, string? hashAfter, string? lane = null, string? projectHash = null, CancellationToken ct = default)
+        string status, string? hashBefore, string? hashAfter, string? lane = null, string? projectHash = null, string? refreshPlan = null, string? selection = null, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
-        var text = $"INSERT INTO {T(scope, "migration_log")} ({c("connection")}, {c("plan_id")}, {c("plan_hash")}, {c("plan_text")}, {c("git_commit")}, {c("applied_by")}, {c("applied_utc")}, {c("hash_before")}, {c("hash_after")}, {c("status")}, {c("lane")}, {c("project_hash")}) " +
-                   "VALUES (@connection, @plan_id, @plan_hash, @plan_text, @git_commit, @applied_by, @applied_utc, @hash_before, @hash_after, @status, @lane, @project_hash)";
+        var text = $"INSERT INTO {T(scope, "migration_log")} ({c("connection")}, {c("plan_id")}, {c("plan_hash")}, {c("plan_text")}, {c("git_commit")}, {c("applied_by")}, {c("applied_utc")}, {c("hash_before")}, {c("hash_after")}, {c("status")}, {c("lane")}, {c("project_hash")}, {c("refresh_plan")}, {c("selection")}) " +
+                   "VALUES (@connection, @plan_id, @plan_hash, @plan_text, @git_commit, @applied_by, @applied_utc, @hash_before, @hash_after, @status, @lane, @project_hash, @refresh_plan, @selection)";
         return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
         [
             Connection(scope), A("plan_id", planId), Fixed("plan_hash", planHash), S("plan_text", planText), A("git_commit", gitCommit), S("applied_by", appliedBy),
-            new("applied_utc", DbType.DateTime2, TrackingClock.NextUtc()), Fixed("hash_before", hashBefore), Fixed("hash_after", hashAfter), A("status", status), A("lane", lane), Fixed("project_hash", projectHash),
+            new("applied_utc", DbType.DateTime2, TrackingClock.NextUtc()), Fixed("hash_before", hashBefore), Fixed("hash_after", hashAfter), A("status", status), A("lane", lane), Fixed("project_hash", projectHash), A("refresh_plan", refreshPlan), S("selection", selection),
         ]), ct);
     }
 
@@ -207,26 +210,37 @@ public static class AuditLog
     }
 
     public static Task BeginRunAsync(MutationGate gate, TrackingScope scope, string stepId, Guid runId, string model, string operation, string planId, string? gitCommit,
-        string? definitionHash, string? shapeStart, string? loadName, string? loadFileHash, string? resolverFileHash, string? parameters, string? watermarkUsed, CancellationToken ct = default)
+        string? definitionHash, string? shapeStart, string? loadName, string? loadFileHash, string? resolverFileHash, string? parameters, string? watermarkUsed, RefreshStepRecord? refresh = null, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
         var text = $"INSERT INTO {T(scope, "run_log")} ({c("connection")}, {c("run_id")}, {c("step_id")}, {c("model")}, {c("operation")}, {c("rows_affected")}, {c("status")}, {c("plan_id")}, {c("git_commit")}, " +
-                   $"{c("definition_hash")}, {c("shape_hash_start")}, {c("shape_hash_end")}, {c("load_name")}, {c("load_file_hash")}, {c("resolver_file_hash")}, {c("parameters")}, {c("watermark_used")}, {c("started_utc")}, {c("ended_utc")}) " +
-                   "VALUES (@connection, @run_id, @step_id, @model, @operation, NULL, 'started', @plan_id, @git_commit, @definition_hash, @shape_start, NULL, @load_name, @load_file_hash, @resolver_file_hash, @parameters, @watermark_used, @started_utc, NULL)";
+                   $"{c("definition_hash")}, {c("shape_hash_start")}, {c("shape_hash_end")}, {c("load_name")}, {c("load_file_hash")}, {c("resolver_file_hash")}, {c("parameters")}, {c("watermark_used")}, {c("started_utc")}, {c("ended_utc")}, " +
+                   $"{c("membership")}, {c("load_plan_hash")}, {c("inputs")}, {c("attempt")}, {c("duration_ms")}) " +
+                   "VALUES (@connection, @run_id, @step_id, @model, @operation, NULL, 'started', @plan_id, @git_commit, @definition_hash, @shape_start, NULL, @load_name, @load_file_hash, @resolver_file_hash, @parameters, @watermark_used, @started_utc, NULL, @membership, @load_plan_hash, @inputs, @attempt, NULL)";
         return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
         [
             Connection(scope), new("run_id", DbType.Guid, runId), A("step_id", stepId), S("model", model), A("operation", operation), A("plan_id", planId), A("git_commit", gitCommit), Fixed("definition_hash", definitionHash),
             Fixed("shape_start", shapeStart), A("load_name", loadName), Fixed("load_file_hash", loadFileHash), Fixed("resolver_file_hash", resolverFileHash), S("parameters", parameters),
             A("watermark_used", watermarkUsed), new("started_utc", DbType.DateTime2, TrackingClock.NextUtc()),
+            A("membership", refresh?.Membership), Fixed("load_plan_hash", refresh?.LoadPlanHash), S("inputs", refresh?.InputsJson), new("attempt", DbType.Int32, refresh == null ? null : 1),
         ]), ct);
     }
 
-    public static Task FinishRunAsync(MutationGate gate, TrackingScope scope, string stepId, Guid runId, string status, long? rows, string? shapeEnd, CancellationToken ct = default)
+    public static Task FinishRunAsync(MutationGate gate, TrackingScope scope, string stepId, Guid runId, string status, long? rows, string? shapeEnd, long? durationMs = null, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
-        var text = $"UPDATE {T(scope, "run_log")} SET {c("status")} = @status, {c("rows_affected")} = @rows, {c("shape_hash_end")} = @shape_end, {c("ended_utc")} = @ended_utc WHERE {c("run_id")} = @run_id AND {c("step_id")} = @step_id";
+        var text = $"UPDATE {T(scope, "run_log")} SET {c("status")} = @status, {c("rows_affected")} = @rows, {c("shape_hash_end")} = @shape_end, {c("ended_utc")} = @ended_utc, {c("duration_ms")} = @duration_ms WHERE {c("run_id")} = @run_id AND {c("step_id")} = @step_id";
         return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
-            [A("status", status), new("rows", DbType.Int64, rows), Fixed("shape_end", shapeEnd), new("ended_utc", DbType.DateTime2, TrackingClock.NextUtc()), new("run_id", DbType.Guid, runId), A("step_id", stepId)]), ct);
+            [A("status", status), new("rows", DbType.Int64, rows), Fixed("shape_end", shapeEnd), new("ended_utc", DbType.DateTime2, TrackingClock.NextUtc()), new("duration_ms", DbType.Int64, durationMs), new("run_id", DbType.Guid, runId), A("step_id", stepId)]), ct);
+    }
+
+    /// <summary>The members of the refresh plan as they were when an event ran it, in order, with whether the run's selection included each (one row per member).</summary>
+    public static Task PlanMemberAsync(MutationGate gate, TrackingScope scope, string stepId, string planId, int position, string membership, string model, string loadName, string loadPlanHash, bool selected, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var text = $"INSERT INTO {T(scope, "refresh_plan_member")} ({c("connection")}, {c("plan_id")}, {c("position")}, {c("membership")}, {c("model")}, {c("load_name")}, {c("load_plan_hash")}, {c("selected")}) VALUES (@connection, @plan_id, @position, @membership, @model, @load_name, @load_plan_hash, @selected)";
+        return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
+            [Connection(scope), A("plan_id", planId), new("position", DbType.Int32, position), A("membership", membership), S("model", model), A("load_name", loadName), Fixed("load_plan_hash", loadPlanHash), A("selected", selected ? "selected" : "not selected")]), ct);
     }
 
     public static Task IntervalAsync(MutationGate gate, TrackingScope scope, string stepId, string model, Guid runId, string? rangeStart, string? rangeEnd, string shapeHash, string operation, CancellationToken ct = default)

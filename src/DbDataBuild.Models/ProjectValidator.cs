@@ -228,6 +228,7 @@ public static class ProjectValidator
                 {
                     CheckLayout(effectiveConfig.Layout, file, def.Name, diags);
                     declared.Add((def.Name, file));
+                    CheckRefreshPlans(def, file, effectiveConfig, diags);
                     if (isCopy) copies.Add((def, file));
                     else models.Add(WithParameters(new ModelSource(def, file, stem + ".sql") { Inherited = Inherited(merged, file, stem + ".sql"), Head = head }));
                 }
@@ -418,6 +419,15 @@ public static class ProjectValidator
                     Problem($"`${{{scope}.{name}}}` has no value (`parameters:` in {(scope == "model" ? "the model's file" : scope == "connection" ? $"`connections.{connections[0]}`" : "a project file")}).");
             }
         return d with { Native = withParameters };
+    }
+
+    /// <summary>A model that names a refresh plan the project does not declare (when the project declares any; `default` is always there) is told, at the place the membership was written.</summary>
+    private static void CheckRefreshPlans(ModelDefinition def, string file, ProjectConfig config, List<Diagnostic> diags)
+    {
+        if (config.RefreshPlans.Count == 0) return;
+        foreach (var m in def.Refresh.Where(m => m.Plan != RefreshPlanSettings.DefaultName && !config.RefreshPlans.ContainsKey(m.Plan)))
+            diags.Add(new Diagnostic(DiagnosticCatalog.RefreshPlanUndeclared, new(m.File ?? file, m.Line, 1),
+                $"`{def.Name}` is in the refresh plan `{m.Plan}`, which `refresh.plans` does not declare.", $"Declared: {string.Join(", ", config.RefreshPlans.Keys.Order(StringComparer.Ordinal))}."));
     }
 
     /// <summary>What a model's effective settings took from other files: the scalars under a layered key written in a file other than the model's own.</summary>

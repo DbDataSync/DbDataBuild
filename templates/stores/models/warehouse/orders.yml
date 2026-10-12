@@ -9,6 +9,7 @@ kind:
   slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
   on_mismatch: fail            # or skip: leave out a shop system whose table has drifted from its declaration, and load the others
 connections=: [sqlserver, postgres]
+refresh: { daily: default }   # in a plan, but a refresh leaves a copy to a deploy for now: the compiled plan says so
 indexes:
   - {name: ux_orders_store_order, columns: [store_id, order_id], unique: true}   # the load replaces an origin's rows by store_id, so an index leads with it
   - {name: ix_orders_ordered_on, columns: [ordered_on]}

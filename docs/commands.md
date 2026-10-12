@@ -16,14 +16,15 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`project show loads`](#project-show-loads) | `P→` | Offline only | Print the model x connection x operation pairing table |
 | [`project show graph`](#project-show-graph) | `P→` | Offline only | Show the dependency graph (which table each model reads), column lineage, or a diagram of it; selectors pick the part to show |
 | [`project show metadata`](#project-show-metadata) | `P→` | Offline only | Print everything the tool knows about the project and its models (use --format json) |
+| [`project show refresh`](#project-show-refresh) | `P→` | Offline only | Read the compiled refresh plans (offline): the plans of each connection, or one plan with its members in the order they run, the inputs each load takes and where each default comes from, what was left out and the hashes |
 | [`project show plan`](#project-show-plan) | `P→` | Offline only | Read plan files (offline, nothing applied): list a project's plans, or show one with its steps, risk, exact statements, report and what applying it would need to be allowed |
 | [`project agent-kit`](#project-agent-kit) | `P⇒P` | Repo files only (no target connection) | Install the skill and JSON Schemas an AI coding agent needs to work in a project (lists them unless --write) |
 | [`connection inspect`](#connection-inspect) | `C→` | Target read-only | Can the tool use this connection, and if not, why: whether each login is set, connects and as whom, what it may do, whether the tracking tables are ready, which schema names the models use exist |
 | [`connection init`](#connection-init) | `P⇒T` | Tracking tables only | Create the tracking tables and their schema name (prints the script; --apply runs it) |
 | [`connection status`](#connection-status) | `C→` | Target read-only | Where a connection stands: drift, blocks, what a deploy would do |
 | [`connection deploy`](#connection-deploy) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Change a connection's structure to match the models: plan with questions, show the plan, apply it (--write-plan stops after writing the plan; --apply-plan applies a written one; --ack records a decision) |
-| [`connection refresh`](#connection-refresh) | `P⇒D` | Target writes (data only) | Run the routine loads of the refresh plan that project compile wrote, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what is not routine to a deploy |
-| [`connection monitor`](#connection-monitor) | `C→` | Target read-only | The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention |
+| [`connection refresh`](#connection-refresh) | `P⇒D` | Target writes (data only) | Run the loads of a refresh plan that project compile wrote (the plan default unless one is named, all of it or the members the selectors choose), or one load named model.load, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what a refresh cannot run to a deploy |
+| [`connection monitor`](#connection-monitor) | `C→` | Target read-only | The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention; with a refresh plan named, that plan's runs and each member's last success and failure |
 | [`connection compare`](#connection-compare) | `C→` | Target read-only | Compare the data of two tables, of one connection or across connections and engines (by digests): schemas, row counts and a key-based row diff (values are read only with --show-values) |
 | [`connection seed`](#connection-seed) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Create the seeded source tables on a connection and fill them from the seeds (prints what it would do unless --apply) |
 | [`connection publish`](#connection-publish) | `P⇒T` | Tracking tables only | Store the project and model metadata as JSON in the connection for introspection |
@@ -240,6 +241,23 @@ Usage: `dbdatabuild project show metadata [models]... [options]`
 |---|---|
 | `--project` `<path>` | Project root |
 
+## project show refresh
+
+Read the compiled refresh plans (offline): the plans of each connection, or one plan with its members in the order they run, the inputs each load takes and where each default comes from, what was left out and the hashes.
+
+Effect: Offline only. Reads and writes: `P→`.
+
+Usage: `dbdatabuild project show refresh [plan] [options]`
+
+| Argument | Meaning |
+|---|---|
+| `plan` | A refresh plan by name; omit to list the plans of every connection |
+
+| Option | Meaning |
+|---|---|
+| `--connection` `<text>` | Only the plans of this connection |
+| `--project` `<path>` | Project root |
+
 ## project show plan
 
 Read plan files (offline, nothing applied): list a project's plans, or show one with its steps, risk, exact statements, report and what applying it would need to be allowed.
@@ -318,7 +336,7 @@ Usage: `dbdatabuild connection status [connection] [models]... [options]`
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection to check (default: the project's only default connection) |
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
+| `models` (several) | A refresh plan first, to see only that plan's line (named as `connection refresh` names it), then model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
 
 | Option | Meaning |
 |---|---|
@@ -359,36 +377,39 @@ Usage: `dbdatabuild connection deploy [connection] [models]... [options]`
 
 ## connection refresh
 
-Run the routine loads of the refresh plan that project compile wrote, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what is not routine to a deploy.
+Run the loads of a refresh plan that project compile wrote (the plan default unless one is named, all of it or the members the selectors choose), or one load named model.load, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what a refresh cannot run to a deploy.
 
 Effect: Target writes (data only). Reads and writes: `P⇒D`. Lane: refresh.
 
-Usage: `dbdatabuild connection refresh [connection] [models]... [options]`
+Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [options]`
 
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection (default: the project's only default connection) |
-| `models` (several) | Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan) |
+| `plan` | The refresh plan to run (default: `default`); a load named directly as `model.load` runs on its own, in no plan |
+| `selectors` (several) | Which members of the plan to run: model names, `tag:`, `kind:`, `connection:`, `path:`, `property:`, `+model`, `model+`, `@model`, `changed:<ref>`, `exclude:<selector>`, `load:<name>`, or patterns with * and ? (default: the whole plan) |
 
 | Option | Meaning |
 |---|---|
 | `--allow-dirty` | Run from a working tree with uncommitted changes (recorded) |
 | `--check` `<text>` | The safety check before the loads, instead of the project's `refresh.check`: none (nothing; the engine's errors are the check), project (this project was deployed here), objects (each object against what was last deployed), live (each object against the catalog now) |
 | `--dry-run` | Run every check and print every statement; execute nothing |
+| `--input` `<text ...>` | `[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
 | `--project` `<path>` | Project root |
 
 ## connection monitor
 
-The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention.
+The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention; with a refresh plan named, that plan's runs and each member's last success and failure.
 
 Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
-Usage: `dbdatabuild connection monitor [connection] [options]`
+Usage: `dbdatabuild connection monitor [connection] [plan] [options]`
 
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection (default: the project's only default connection) |
+| `plan` | A refresh plan: show its runs (complete and partial apart) and each member's last success and failure, instead of the tables |
 
 | Option | Meaning |
 |---|---|

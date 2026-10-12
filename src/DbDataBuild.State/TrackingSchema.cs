@@ -15,8 +15,8 @@ public sealed record TrackingTable(string Name, string Purpose, IReadOnlyList<Tr
 /// </summary>
 public static class TrackingSchema
 {
-    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`); 6 added `object_info`, the title, description, tags and properties of the project, its connections, models, sources, columns and indexes as rows (the documents hold them as well).</summary>
-    public const int Version = 6;
+    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`); 6 added `object_info`, the title, description, tags and properties of the project, its connections, models, sources, columns and indexes as rows (the documents hold them as well); 7 recorded refresh plans: the plan, the selection and the plan's members as run on each event, and the membership, load plan, inputs with their sources, attempt and duration on each load row.</summary>
+    public const int Version = 7;
 
     private static TrackingColumn C(string n, TrackingType t, bool nullable = false) => new(n, t, nullable);
 
@@ -48,6 +48,7 @@ public static class TrackingSchema
             C("load_name", TrackingType.Short, true), C("load_file_hash", TrackingType.Hash, true), C("resolver_file_hash", TrackingType.Hash, true),
             C("parameters", TrackingType.Long, true), C("watermark_used", TrackingType.Short, true),
             C("started_utc", TrackingType.TimestampUtc), C("ended_utc", TrackingType.TimestampUtc, true),
+            C("membership", TrackingType.Short, true), C("load_plan_hash", TrackingType.Hash, true), C("inputs", TrackingType.Long, true), C("attempt", TrackingType.Int, true), C("duration_ms", TrackingType.BigInt, true),
         ], ["run_id", "step_id"]),
         new("operation_interval", "Which range of data each load or backfill produced, under which shape.",
         [
@@ -67,6 +68,7 @@ public static class TrackingSchema
             C("plan_id", TrackingType.Short), C("plan_hash", TrackingType.Hash), C("plan_text", TrackingType.Long), C("git_commit", TrackingType.Short, true),
             C("applied_by", TrackingType.Name), C("applied_utc", TrackingType.TimestampUtc), C("hash_before", TrackingType.Hash, true), C("hash_after", TrackingType.Hash, true),
             C("status", TrackingType.Short), C("lane", TrackingType.Short, true), C("project_hash", TrackingType.Hash, true),
+            C("refresh_plan", TrackingType.Short, true), C("selection", TrackingType.Long, true),
         ], ["connection", "plan_id", "applied_utc"]),
         new("plan_store", "Plans kept in the database (`plans.deploy.keep: database`): the text of a deploy plan, once per plan, for a plan made by one person or job and applied by another.",
         [
@@ -79,6 +81,12 @@ public static class TrackingSchema
             C("subject_kind", TrackingType.Short), C("subject", TrackingType.Name), C("element", TrackingType.Name), C("item", TrackingType.Short), C("item_key", TrackingType.Short),
             C("value_type", TrackingType.Short, true), C("value", TrackingType.Long, true), C("recorded_utc", TrackingType.TimestampUtc),
         ], ["connection", "subject_kind", "subject", "element", "item", "item_key"]),
+        new("refresh_plan_member", "The members of a refresh plan as they were when an event ran it, in order, and whether the run's selection included each: what was in `hourly` at that run.",
+        [
+            C("connection", TrackingType.Name),
+            C("plan_id", TrackingType.Short), C("position", TrackingType.Int), C("membership", TrackingType.Short), C("model", TrackingType.Name), C("load_name", TrackingType.Short),
+            C("load_plan_hash", TrackingType.Hash), C("selected", TrackingType.Short),
+        ], ["connection", "plan_id", "position"]),
         new("metadata_document", "Project, source, model and plan metadata as JSON documents, for introspection with SQL. Append-only; the views metadata_current and metadata_columns show the latest.",
         [
             C("connection", TrackingType.Name),
@@ -95,6 +103,18 @@ public static class TrackingSchema
 
     /// <summary>The table layout 6 added. The init script creates it when it is missing (a store of layout 5 is brought to 6 by `init`, which alters nothing), and the layout is recorded only when it is there.</summary>
     public const string AddedInLayout6 = "object_info";
+
+    /// <summary>
+    /// What layout 7 added to a store of layout 6: columns on tables it has (the init script never alters a table, so `init --upgrade` adds them), and the table of a plan's members (the init script creates it). The layout is
+    /// recorded only when the last column and the table are there.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Table, string Column)> AddedInLayout7 =
+    [
+        ("migration_log", "refresh_plan"), ("migration_log", "selection"),
+        ("run_log", "membership"), ("run_log", "load_plan_hash"), ("run_log", "inputs"), ("run_log", "attempt"), ("run_log", "duration_ms"),
+    ];
+
+    public const string TableAddedInLayout7 = "refresh_plan_member";
 
     public static TrackingTable Table(string name) => Tables.First(t => t.Name == name);
 }

@@ -197,6 +197,18 @@ public static class DiagnosticCatalog
         "a title of one line and at most 200 characters; a description of at most 4000; tags of at most 128 characters made of letters, digits, `_`, `-`, `.` and `:`; property keys of at most 128 characters of the same kind that start with a letter or `_` and do not end in `-`; property values of at most 4000 characters",
         "Shorten the text, or move the long part into the description. A property key that ends in `-`, `=` or `+` cannot be used because those suffixes change how a layer is merged.",
         "A person writes a title, a description, tags and properties on the project, a connection, a model, a column and an index (DESIGN.md 6.5.8). They are kept in the metadata documents and in the tracking tables, where a column has a length, so the limits are checked when the file is read and not when it is stored. The key shape keeps `properties-: [key]` and `properties=` unambiguous when files above a model give it properties too.");
+    public static readonly DiagnosticDescriptor RefreshPlanUndeclared = E("244", "A model is in a refresh plan the project does not declare",
+        "a plan name that `refresh.plans` in dbdatabuild.yml declares (or `default`), when the project declares any plans",
+        $"Declare the plan under `refresh: {{ plans: ... }}` in {ProductInfo.ConfigFile}, or correct the name in the model's `refresh:`.",
+        "The project lists its refresh plans (`hourly`, `daily`) so that a typo in a model's plan name is an error and not a plan nobody runs. A project that declares no plans at all accepts any name; `default` is always valid, because a model with a default load and no `refresh:` is in it.");
+    public static readonly DiagnosticDescriptor RefreshMembershipDuplicate = E("245", "A load is in a refresh plan twice under the same name",
+        "a membership name (the load's name, or `as:`) that is used once for a model within one plan",
+        "Give one of the memberships another name with `as:`, for example `{ load: backfill, as: last_year, inputs: { ... } }`.",
+        "A plan names each place a load of a model appears in it. The name is the load's name unless `as:` gives another, and it must be unique for the model within the plan, because the event, the monitor and `--input` refer to a membership by that name. The same load can be in one plan twice, with different inputs, by naming each place.");
+    public static readonly DiagnosticDescriptor RefreshMembershipInvalid = E("246", "A refresh plan membership names a load or an input the model does not have",
+        "a load of the model (or `default` when the model declares none) and, under `inputs:`, the names and values the load takes",
+        "Use a load name from the model's `loads:`, an input the load takes (`start` and `end` of a range load, `watermark` of a watermark load, or a parameter the load's query uses) and a value of that input's type.",
+        "A membership says which load runs in a plan and may give values for its inputs for that plan. A load the model does not declare, an input the load does not take, or a value that does not fit the input's type would fail only when the plan ran; the project refuses it when it is compiled.");
     public static readonly DiagnosticDescriptor TrackingNotConfigured = W("232", "Nothing is tracked for a connection",
         "a `tracking:` section naming the connection that keeps the records (`tracking: { connection: audit }`), or `tracking: none` to choose not to track",
         "Add `tracking: { connection: <name> }` to dbdatabuild.yml (a connection of the project; `dbdatabuild connection init <name> --apply` creates the tables there), or `tracking: none` if the connection is not to be tracked. A connection can say its own under `connections.<name>.tracking`.",
@@ -393,9 +405,9 @@ public static class DiagnosticCatalog
         "The warning is information, not a block: the operator decides what is a continuing concern. An acknowledgement is recorded with who made it and why, changes no data, and is tied to the one plan whose decision it is about.");
 
     public static readonly DiagnosticDescriptor RefreshPlanMissing = E("446", "There is no compiled refresh plan for the connection",
-        "A `rendered/<connection>/refresh.plan.yml` that `project compile` wrote, committed with the project.",
+        "A `rendered/<connection>/loads.yml` and a `rendered/<connection>/refresh/<plan>.yml` that `project compile` wrote, committed with the project.",
         $"Run `{ProductInfo.Cli} project compile` and commit `rendered/`.",
-        "A refresh runs the routine loads the project compiled for the connection. It reads that plan, not the models, so it can run on a machine that only has the committed files and a login. The plan is written by `project compile`; a project that was never compiled, or a connection no model declares, has none.");
+        "A refresh runs the loads of a refresh plan that the project compiled for the connection. It reads the compiled files (every load of the connection in `loads.yml`, and the plan's own file), so it can run on a machine that only has the committed files and a login. They are written by `project compile`; a project that was never compiled, a connection no model declares, or a plan name no model's `refresh:` uses, has none.");
 
     public static readonly DiagnosticDescriptor RefreshCheckFailed = E("447", "An object a refresh uses is not in the structure the project expects",
         "Every object the refresh uses has the shape the compiled project expects, as the check chosen for the refresh finds it (`refresh.check`).",
@@ -403,9 +415,18 @@ public static class DiagnosticCatalog
         "A refresh never changes structure. When an object is behind (a column was added to the model and not yet deployed, a table was never created, or something changed it outside the tool), the loads would fail or load the wrong thing, so the refresh stops before it runs anything and says which objects, with the shape expected and the shape found.");
 
     public static readonly DiagnosticDescriptor RefreshFileChanged = E("448", "A file a refresh plan names is not the one it was compiled from",
-        "Load scripts, resolvers and hook scripts with the hashes the refresh plan recorded.",
+        "Load scripts, resolvers and hook scripts with the hashes `loads.yml` recorded, and load plans with the hashes the refresh plan's file names.",
         $"Run `{ProductInfo.Cli} project compile` and commit the result.",
-        "The refresh plan names each script it runs by path and hash. A script that is missing or has another content than when the project was compiled means the committed files disagree with each other; the refresh runs nothing rather than guess which one is right.");
+        "The compiled files name each script a refresh runs by path and hash, and each member of a refresh plan names its load plan by hash. A script that is missing or has another content than when the project was compiled means the committed files disagree with each other; the refresh runs nothing rather than guess which one is right.");
+
+    public static readonly DiagnosticDescriptor RefreshInputMissing = E("449", "A refresh plan runs a load that needs a value from a person and gives none",
+        "a membership that gives a value (`inputs: { start: 2024-01-01, end: 2024-02-01 }`) for every input of its load that has no default, or a load without such inputs",
+        "Add `inputs:` with the missing values to the membership in the model's `refresh:`, or take the load out of the plan and give the values at the command (`--input name=value`).",
+        "A scheduled refresh has nobody to ask. A load whose input has no default and no resolver (the `start` and `end` of a range load) can be in `loads.yml` and be run by a person who gives the values, but it can be in a plan only if the plan's membership supplies them; otherwise the plan could not run unattended, and the project refuses it when it is compiled.");
+    public static readonly DiagnosticDescriptor RefreshPlanUnknown = E("450", "There is no refresh plan of that name for the connection",
+        "one of the plans compiled for the connection (`rendered/<connection>/refresh/<plan>.yml`)",
+        $"Run `{ProductInfo.Cli} connection refresh` without a plan to list the plans, or `{ProductInfo.Cli} project compile` if a model's `refresh:` was changed.",
+        "A plan exists when some model's `refresh:` names it, or when a model with a default load says nothing (the plan `default`). The name given is none of the plans compiled for this connection.");
 
     // 6xx: project tests (`project tests run`)
     public static readonly DiagnosticDescriptor TestFailed = E("601", "A project test failed",
@@ -457,7 +478,7 @@ public static class DiagnosticCatalog
         SqlParseFailure, NotASingleSelect, ConstructNeedsVersion, PairUnsupported, RenderedScriptInvalid, PlaceholderUndeclared, KeyColumnNullable, TypeNotMappable, IndexNotSupported, HookScriptInvalid, QueryNotLowerable,
         CollationCannotSatisfyProfile, CollationNotVerifiable, CollationNotConfigured,
         AnswerForUnknownQuestion, AnswerChoiceInvalid, AnswerValueMismatch, NoProposalToAccept, QuestionUnanswered,
-        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
+        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
         TestFailed, TestCouldNotRun, TestNotASelect,
         LoginNotConfigured, GateRefused, StatementLogUnavailable, ReadStatementRefused, TrackingNotInitialized,
         InternalError,

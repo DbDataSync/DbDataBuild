@@ -1,5 +1,6 @@
 name: marts.fct_sales_lines
 kind: {type: incremental_by_unique_key, unique_key: [order_id, line_no]}
+refresh: { hourly: default }      # added to the plan `daily` that the folder file gives every mart
 grain: [order_id, line_no]
 columns:
   - {name: order_id, type: INTEGER, nullable: false}

@@ -10,7 +10,7 @@
       "description": "Model settings every model inherits from this file; a folder's _dbdatabuild.yml has the same section and layers onto it, and a model's own file layers on top (the nearest wins). A list appends, a mapping merges by key, a scalar replaces; a key suffix changes that for the key: `key=` replaces what was inherited, `key-` removes the listed items or keys, `key+` merges (the default). The settings themselves are those of a model file (model.schema.json); they are checked where they are merged into a model.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(connections|kind|hooks|rewrites|lint_ignore|tags|properties)[=+-]?$"
+        "pattern": "^(connections|kind|hooks|rewrites|lint_ignore|tags|properties|refresh)[=+-]?$"
       },
       "properties": {
         "connections": {
@@ -1147,6 +1147,89 @@
             "block",
             "warn"
           ]
+        },
+        "plans": {
+          "description": "The refresh plans the project declares (`hourly`, `daily`), so a typo in a model's plan name is an error. Project level only. `default` always exists.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "tags": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+                }
+              },
+              "properties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "on_failure": {
+                "description": "What happens when a load of the plan fails: `stop` (nothing more starts), `continue` (the default: dependents inside the plan are skipped, the rest run) or `ignore` (dependents run on the stale data). Validated and kept in the plan file; it acts in a later step of the build.",
+                "enum": [
+                  "stop",
+                  "continue",
+                  "ignore"
+                ]
+              },
+              "on_busy": {
+                "description": "What a run does with a load another run holds: `skip` (the default), `wait` or `fail`. Validated and kept; it acts in a later step.",
+                "enum": [
+                  "skip",
+                  "wait",
+                  "fail"
+                ]
+              },
+              "expected_every": {
+                "description": "How often the plan is meant to run, for example `15m`, `1h`, `1d`, `1w`. Validated and kept; the warning that uses it is a later step.",
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,5}[mhdw]$"
+              },
+              "parallel": {
+                "description": "How many loads may run together. Validated and kept; parallelism is a later step.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "check": {
+                "description": "This plan's refresh check, instead of the connection's or the project's.",
+                "enum": [
+                  "none",
+                  "project",
+                  "objects",
+                  "live"
+                ]
+              },
+              "on_fail": {
+                "description": "What a failed check does for this plan.",
+                "enum": [
+                  "block",
+                  "warn"
+                ]
+              }
+            }
+          }
         }
       }
     }

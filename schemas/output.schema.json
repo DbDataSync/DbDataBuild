@@ -599,6 +599,25 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "project show refresh"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/data_project_show_refresh"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -1732,6 +1751,50 @@
               "type": "integer"
             }
           }
+        },
+        "plans": {
+          "description": "One entry per refresh plan compiled for the connection: its last run and how it ended.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "plan": {
+                "type": "string"
+              },
+              "last_run": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "type": "string"
+              },
+              "utc": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "complete": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "last_complete_utc": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "plan",
+              "outcome"
+            ]
+          }
         }
       }
     },
@@ -2062,7 +2125,7 @@
           ]
         },
         "loads": {
-          "description": "The routine loads the refresh plan holds for the selected models.",
+          "description": "The loads of the plan that were selected, in the order they run, with the inputs each runs with.",
           "type": "array",
           "items": {
             "type": "object",
@@ -2073,6 +2136,39 @@
               },
               "operation": {
                 "type": "string"
+              },
+              "member": {
+                "type": "string"
+              },
+              "inputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "description": "flag, membership, parameter, resolver:target or initial (resolver before the load runs)",
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "source"
+                  ]
+                }
               }
             },
             "required": [
@@ -2083,6 +2179,37 @@
         },
         "findings": {
           "description": "The codes of what the check found.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "plan": {
+          "description": "The refresh plan that ran; null for loads named directly.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan_hash": {
+          "description": "The hash of the plan's file (for loads named directly, of their load plans).",
+          "type": "string"
+        },
+        "selection": {
+          "description": "The selectors given after the plan; null when the whole plan ran.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refresh_plan": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plans": {
+          "description": "When no plan could be chosen: the plans compiled for the connection.",
           "type": "array",
           "items": {
             "type": "string"
@@ -2414,6 +2541,205 @@
             "states",
             "ddl",
             "loads"
+          ]
+        },
+        "plan": {
+          "description": "With a plan named: its runs, the last complete run and the last partial one apart, and each member's last success and failure.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "last_complete": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "started_utc": {
+                      "type": "string"
+                    },
+                    "last_utc": {
+                      "type": "string"
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "selection": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "selected": {
+                      "type": "integer"
+                    },
+                    "members": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status",
+                    "complete",
+                    "selected",
+                    "members"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_partial": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "started_utc": {
+                      "type": "string"
+                    },
+                    "last_utc": {
+                      "type": "string"
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "selection": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "selected": {
+                      "type": "integer"
+                    },
+                    "members": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status",
+                    "complete",
+                    "selected",
+                    "members"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "started_utc": {
+                    "type": "string"
+                  },
+                  "last_utc": {
+                    "type": "string"
+                  },
+                  "complete": {
+                    "type": "boolean"
+                  },
+                  "selection": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "selected": {
+                    "type": "integer"
+                  },
+                  "members": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id",
+                  "status",
+                  "complete",
+                  "selected",
+                  "members"
+                ]
+              }
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "member": {
+                    "type": "string"
+                  },
+                  "last_status": {
+                    "type": "string"
+                  },
+                  "last_success_utc": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "last_failure_utc": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "last_duration_ms": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "last_rows": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "model",
+                  "member",
+                  "last_status"
+                ]
+              }
+            }
+          },
+          "required": [
+            "name",
+            "runs",
+            "members"
           ]
         }
       }
@@ -3940,6 +4266,199 @@
           }
         }
       }
+    },
+    "data_project_show_refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plans": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "connection": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hash": {
+                "type": "string"
+              },
+              "members": {
+                "type": "integer"
+              },
+              "settings": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "on_failure": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "on_busy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "expected_every": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "parallel": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "check": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "on_fail": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "load_members": {
+                "description": "Only when a plan is named: its members in the order they run.",
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "member": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "load": {
+                          "type": "string"
+                        },
+                        "load_plan": {
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "on_failure": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string"
+                              },
+                              "source": {
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "type",
+                              "source"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "member",
+                        "model",
+                        "load",
+                        "load_plan",
+                        "inputs"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "excluded": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "member": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "model",
+                    "member",
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "connection",
+              "name",
+              "hash",
+              "members",
+              "settings",
+              "excluded"
+            ]
+          }
+        }
+      },
+      "required": [
+        "plans"
+      ],
+      "description": "The compiled refresh plans: one entry per plan and connection."
     }
   }
 }

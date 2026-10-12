@@ -6,7 +6,7 @@ namespace DbDataBuild.Models;
 /// <summary>Loads and validates one model definition (.yml). All problems are reported in one pass.</summary>
 public static class ModelDefinitionLoader
 {
-    private static readonly string[] TopKeys = ["name", "kind", "grain", "connections", "columns", "renames", "loads", "indexes", "hooks", "lint_ignore", "rewrites", "parameters", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] TopKeys = ["name", "kind", "grain", "connections", "columns", "renames", "loads", "indexes", "hooks", "lint_ignore", "rewrites", "parameters", "refresh", .. YamlFieldReader.InfoKeys];
     private static readonly string[] RenameKeys = ["from", "to"];
 
     /// <param name="file">Path shown in diagnostics.</param>
@@ -46,7 +46,7 @@ public static class ModelDefinitionLoader
     }
 
     /// <summary>The top-level keys a model inherits from the project files above it (`defaults:` in each); a model's own file may use the same names, with a suffix, to change what it inherits.</summary>
-    public static readonly IReadOnlySet<string> LayeredKeys = new HashSet<string>(["connections", "kind", "hooks", "rewrites", "lint_ignore", "tags", "properties"], StringComparer.Ordinal);
+    public static readonly IReadOnlySet<string> LayeredKeys = new HashSet<string>(["connections", "kind", "hooks", "rewrites", "lint_ignore", "tags", "properties", "refresh"], StringComparer.Ordinal);
 
     private sealed class Validator(string file, List<Diagnostic> diags, IReadOnlySet<string> connections) : YamlFieldReader(file, diags)
     {
@@ -99,6 +99,7 @@ public static class ModelDefinitionLoader
                 Add(DiagnosticCatalog.InvalidValue, code, $"`{code.Value}` is not an advisory lint code.", $"One of: {string.Join(", ", IndexAdvisorCodes)}.");
 
             var info = ReadInfo(top);
+            var refresh = ReadRefresh(top, kindType?.Value, loads);
 
             var rewrites = ReadRewrites(top);
             var modelParameters = top.Get("parameters") is { } pn ? ParameterReferences.Read(pn, "`parameters`", (d, n, f) => Add(d, n, f)) : null;
@@ -132,7 +133,7 @@ public static class ModelDefinitionLoader
             return new ModelDefinition(name.Value, kindType.Value,
                 uniqueKey?.Select(k => k.Value).ToList() ?? [], timeColumn?.Value, lookback?.Value,
                 grain?.Select(g => g.Value).ToList() ?? [], targets?.Select(t => t.Value).ToList(),
-                columns, renames, loads, indexes, hooks, lintIgnore?.Select(c => c.Value).ToList(), rewrites, from?.Value, from?.Line ?? 0, slice, onMismatch, false, watermark, modelParameters, false, info);
+                columns, renames, loads, indexes, hooks, lintIgnore?.Select(c => c.Value).ToList(), rewrites, from?.Value, from?.Line ?? 0, slice, onMismatch, false, watermark, modelParameters, false, info, refresh);
         }
 
         /// <summary>`watermark: {column, lookback}` of an incremental copy. It needs a `unique_key` (the rows it reads again replace the ones with the same key).</summary>
@@ -310,6 +311,75 @@ public static class ModelDefinitionLoader
                     Add(DiagnosticCatalog.InvalidValue, loads, $"More than one operation is the default for {target}: {string.Join(", ", defaults.Select(o => o.Name))}.", "At most one default per connection.");
             }
             return result;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex InputName = new("^[A-Za-z_][A-Za-z0-9_]*$");
+
+        /// <summary>
+        /// `refresh:` maps a refresh plan name to where the model's loads are in it: a load's name, `{ load, as, inputs, on_failure }`, or a list of either. A load that is not one of the model's, a plan name of the wrong form,
+        /// two memberships of the plan with one name, and a value that is not a single word or number are diagnostics. Whether the plan is one the project declares is checked where the project is known.
+        /// </summary>
+        private List<RefreshMembership>? ReadRefresh(YamlMapping top, string? kind, List<LoadOperation>? loads)
+        {
+            if (top.Get("refresh") is not { } node) return null;
+            if (node is not YamlMapping plans) { Add(DiagnosticCatalog.InvalidValue, node, "`refresh` must be a mapping of refresh plan names to the loads that are in them, for example `refresh: { hourly: incremental, daily: { load: backfill, inputs: { days: 60 } } }`."); return null; }
+            if (kind == ModelKinds.View) { Add(DiagnosticCatalog.InvalidValue, node, "A view has no data load, so it is in no refresh plan.", "Remove `refresh:` (or `refresh=: {}` where a folder file gives it)."); return null; }
+            var names = loads == null ? [LoadPlan.ImplicitName] : loads.Select(l => l.Name).ToList();
+            var result = new List<RefreshMembership>();
+            foreach (var plan in plans.Entries)
+            {
+                if (!RefreshPlanSettings.NameForm.IsMatch(plan.Key.Value)) { Add(DiagnosticCatalog.InvalidValue, plan.Key, $"`{plan.Key.Value}` is not a refresh plan name.", "Lowercase snake_case, such as `hourly` or `daily`."); continue; }
+                var items = plan.Value is YamlSequence seq ? seq.Items : [plan.Value];
+                if (items.Count == 0) { Add(DiagnosticCatalog.InvalidValue, plan.Value, $"`refresh.{plan.Key.Value}` is an empty list: name a load, or remove the plan."); continue; }
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var item in items)
+                {
+                    var m = ReadMembership(plan.Key.Value, item, names);
+                    if (m == null) continue;
+                    if (!seen.Add(m.Name)) Add(DiagnosticCatalog.RefreshMembershipDuplicate, item, $"The plan `{plan.Key.Value}` has the load `{m.Load}` under the name `{m.Name}` more than once.", fix: "Name the second one with `as:`.");
+                    else result.Add(m);
+                }
+            }
+            return result;
+        }
+
+        private RefreshMembership? ReadMembership(string plan, YamlNode item, IReadOnlyList<string> loadNames)
+        {
+            YamlScalar? load; YamlScalar? alias = null; var inputs = new List<KeyValuePair<string, string>>(); string? onFailure = null;
+            if (item is YamlScalar s && s.Value.Length > 0) load = s;
+            else if (item is YamlMapping m)
+            {
+                CheckKeys(m, ["load", "as", "inputs", "on_failure"], $"a membership of `refresh.{plan}`");
+                load = Scalar(m, "load", required: true, at: m);
+                alias = m.Get("as") != null ? Scalar(m, "as", required: false, at: m) : null;
+                if (alias != null && !OpName.IsMatch(alias.Value)) { Add(DiagnosticCatalog.InvalidValue, alias, $"`{alias.Value}` is not a valid membership name.", "Lowercase snake_case, such as `last_year`."); alias = null; }
+                if (m.Get("inputs") is { } inputsNode)
+                {
+                    if (inputsNode is not YamlMapping im) Add(DiagnosticCatalog.InvalidValue, inputsNode, "`inputs` must be a mapping of input names to values, for example `inputs: { days: 60 }`.");
+                    else
+                        foreach (var e in im.Entries)
+                        {
+                            if (!InputName.IsMatch(e.Key.Value)) { Add(DiagnosticCatalog.InvalidValue, e.Key, $"`{e.Key.Value}` is not an input name."); continue; }
+                            if (e.Value is not YamlScalar v || (!v.Quoted && (v.Value.Length == 0 || v.Value is "null" or "~"))) { Add(DiagnosticCatalog.InvalidValue, e.Value, $"The input `{e.Key.Value}` must be given one value."); continue; }
+                            if (v.Value.Length > InfoLimits.PropertyValueLength) { Add(DiagnosticCatalog.InfoOutOfBounds, v, $"An input value is at most {InfoLimits.PropertyValueLength} characters."); continue; }
+                            if (inputs.Any(x => x.Key == e.Key.Value)) { Add(DiagnosticCatalog.DuplicateKey, e.Key, $"The input `{e.Key.Value}` is given more than once."); continue; }
+                            inputs.Add(new(e.Key.Value, v.Value));
+                        }
+                }
+                if (m.Get("on_failure") is { } of)
+                {
+                    if (of is YamlScalar { Value: var ov } && OnFailureModes.All.Contains(ov)) onFailure = ov;
+                    else Add(DiagnosticCatalog.InvalidValue, of, $"`on_failure` is {(of is YamlScalar os ? $"`{os.Value}`" : "not a single word")}.", $"One of: {string.Join(", ", OnFailureModes.All)}.");
+                }
+            }
+            else { Add(DiagnosticCatalog.InvalidValue, item, $"A membership of `refresh.{plan}` is a load's name or a mapping with `load`.", $"The model's loads: {string.Join(", ", loadNames)}."); return null; }
+            if (load == null) return null;
+            if (!loadNames.Contains(load.Value, StringComparer.Ordinal))
+            {
+                Add(DiagnosticCatalog.RefreshMembershipInvalid, load, $"`refresh.{plan}` names the load `{load.Value}`, which the model does not have.", $"The model's loads: {string.Join(", ", loadNames)}.");
+                return null;
+            }
+            return new RefreshMembership(plan, load.Value, alias?.Value ?? load.Value, inputs, onFailure, load.Line, NodeFiles != null && NodeFiles.TryGetValue(load, out var origin) ? origin : File);
         }
 
         private static bool IsTemporal(string type) => type.Trim().ToUpperInvariant() is { } t && (t == "DATE" || t.StartsWith("TIMESTAMP", StringComparison.Ordinal));

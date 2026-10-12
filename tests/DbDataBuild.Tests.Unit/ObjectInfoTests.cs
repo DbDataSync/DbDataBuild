@@ -375,7 +375,7 @@ public class ObjectInfoTests
     [Fact]
     public void The_tracking_layout_has_the_info_table_and_the_init_script_creates_it_and_records_the_layout_only_when_it_is_there()
     {
-        Assert.Equal(6, TrackingSchema.Version);
+        Assert.Equal(7, TrackingSchema.Version);
         var info = TrackingSchema.Table("object_info");
         Assert.Equal(["connection", "subject_kind", "subject", "element", "item", "item_key"], info.PrimaryKey);
         foreach (var target in new[] { "sqlserver", "postgres" })

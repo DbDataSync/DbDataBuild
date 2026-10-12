@@ -5,6 +5,7 @@ connections=: [sqlserver, postgres]
 # the copy's column cannot say `trimmed`, so the advice (DDB-236, docs/operations.md) is silenced here. `channel` says it in pos.orders.
 lint_ignore: [DDB-236]
 grain: [store_id, ordered_on, channel]
+refresh: { hourly: default, daily: default }
 columns:
   - {name: store_id, type: "VARCHAR(10)", nullable: false}
   - {name: ordered_on, type: DATE, nullable: false}

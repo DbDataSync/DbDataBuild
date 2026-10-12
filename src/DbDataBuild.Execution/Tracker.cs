@@ -22,8 +22,11 @@ public sealed class Tracker
     public bool Enabled => gate != null;
     public TrackingScope? Scope => scope;
 
-    public Task MigrationAsync(string stepId, string planId, string planHash, string planText, string? gitCommit, string appliedBy, string status, string? hashBefore, string? hashAfter, string? lane = null, string? projectHash = null, CancellationToken ct = default) =>
-        gate == null ? Task.CompletedTask : AuditLog.MigrationAsync(gate, scope!, stepId, planId, planHash, planText, gitCommit, appliedBy, status, hashBefore, hashAfter, lane, projectHash, ct);
+    public Task MigrationAsync(string stepId, string planId, string planHash, string planText, string? gitCommit, string appliedBy, string status, string? hashBefore, string? hashAfter, string? lane = null, string? projectHash = null, string? refreshPlan = null, string? selection = null, CancellationToken ct = default) =>
+        gate == null ? Task.CompletedTask : AuditLog.MigrationAsync(gate, scope!, stepId, planId, planHash, planText, gitCommit, appliedBy, status, hashBefore, hashAfter, lane, projectHash, refreshPlan, selection, ct);
+
+    public Task PlanMemberAsync(string stepId, string planId, int position, string membership, string model, string loadName, string loadPlanHash, bool selected, CancellationToken ct = default) =>
+        gate == null ? Task.CompletedTask : AuditLog.PlanMemberAsync(gate, scope!, stepId, planId, position, membership, model, loadName, loadPlanHash, selected, ct);
 
     public Task BeginDdlAsync(string stepId, Guid ddlId, string objectName, string statementText, string statementHash, string? hashBefore, string invoker, string planId, string? gitCommit, CancellationToken ct = default) =>
         gate == null ? Task.CompletedTask : AuditLog.BeginDdlAsync(gate, scope!, stepId, ddlId, objectName, statementText, statementHash, hashBefore, invoker, planId, gitCommit, ct);
@@ -32,11 +35,11 @@ public sealed class Tracker
         gate == null ? Task.CompletedTask : AuditLog.FinishDdlAsync(gate, scope!, stepId, ddlId, status, hashAfter, ct);
 
     public Task BeginRunAsync(string stepId, Guid runId, string model, string operation, string planId, string? gitCommit, string? definitionHash, string? shapeStart, string? loadName, string? loadFileHash,
-        string? resolverFileHash, string? parameters, string? watermarkUsed, CancellationToken ct = default) =>
-        gate == null ? Task.CompletedTask : AuditLog.BeginRunAsync(gate, scope!, stepId, runId, model, operation, planId, gitCommit, definitionHash, shapeStart, loadName, loadFileHash, resolverFileHash, parameters, watermarkUsed, ct);
+        string? resolverFileHash, string? parameters, string? watermarkUsed, RefreshStepRecord? refresh = null, CancellationToken ct = default) =>
+        gate == null ? Task.CompletedTask : AuditLog.BeginRunAsync(gate, scope!, stepId, runId, model, operation, planId, gitCommit, definitionHash, shapeStart, loadName, loadFileHash, resolverFileHash, parameters, watermarkUsed, refresh, ct);
 
-    public Task FinishRunAsync(string stepId, Guid runId, string status, long? rows, string? shapeEnd, CancellationToken ct = default) =>
-        gate == null ? Task.CompletedTask : AuditLog.FinishRunAsync(gate, scope!, stepId, runId, status, rows, shapeEnd, ct);
+    public Task FinishRunAsync(string stepId, Guid runId, string status, long? rows, string? shapeEnd, long? durationMs = null, CancellationToken ct = default) =>
+        gate == null ? Task.CompletedTask : AuditLog.FinishRunAsync(gate, scope!, stepId, runId, status, rows, shapeEnd, durationMs, ct);
 
     public Task IntervalAsync(string stepId, string model, Guid runId, string? rangeStart, string? rangeEnd, string shapeHash, string operation, CancellationToken ct = default) =>
         gate == null ? Task.CompletedTask : AuditLog.IntervalAsync(gate, scope!, stepId, model, runId, rangeStart, rangeEnd, shapeHash, operation, ct);

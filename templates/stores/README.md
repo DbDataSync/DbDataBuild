@@ -23,7 +23,7 @@ dbdatabuild project tests run                # the model test gives warehouse.or
 
 ## What a refresh does and does not do
 
-Compile writes one refresh plan per connection that builds something. In `rendered/sqlserver/refresh.plan.yml` (and the same in `rendered/postgres/refresh.plan.yml`) the report is a routine load and the copy is **excluded**:
+The project declares two refresh plans, `hourly` and `daily` (`refresh.plans` in `dbdatabuild.yml`), and each model says which it is in (`refresh:` in its file): the report is in both, the copy in `daily`. Compile writes `loads.yml` and one file per plan for every connection that builds something. In `rendered/sqlserver/refresh/daily.yml` (and the same in `rendered/postgres/refresh/daily.yml`) the report is a member and the copy is **excluded**; `dbdatabuild project show refresh daily` says so:
 
 ```yaml
 loads:
@@ -37,7 +37,7 @@ excluded:
 ```
 
 A refresh rebuilds the report from what the warehouse holds; it never reads a shop system. To bring new orders in, **deploy** again: the plan has a transfer and a load per origin (`copy warehouse.orders from store_east (pos.orders)`),
-which needs the read login of every origin. `connection refresh` says so while it runs: `1 routine load(s); 1 model(s) are not routine (a deploy handles them): warehouse.orders.`
+which needs the read login of every origin. `connection refresh sqlserver daily` says so while it runs: `1 of 1 member(s); 1 left out: warehouse.orders.`
 
 ## Running the cycle on four databases
 
@@ -89,8 +89,8 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 4. **Refresh each engine, and compare them** (a comparison across engines reads only digests of the values):
 
    ```
-   dbdatabuild connection refresh sqlserver      # Refresh plan rendered/sqlserver/refresh.plan.yml: 1 routine load(s); 1 model(s) are not routine (a deploy handles them): warehouse.orders.
-   dbdatabuild connection refresh postgres
+   dbdatabuild connection refresh sqlserver daily # Refresh plan rendered/sqlserver/refresh/daily.yml: 1 of 1 member(s); 1 left out: warehouse.orders.
+   dbdatabuild connection refresh postgres daily
    dbdatabuild connection compare sqlserver marts.daily_sales --against-connection postgres
    #   matched on the key: 60   only in marts.daily_sales: 0   only in marts.daily_sales: 0
    #   matched rows whose values differ: 0

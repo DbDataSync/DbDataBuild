@@ -65,10 +65,13 @@ public partial class StoresTemplateConformanceTests
 
             foreach (var connection in new[] { "sqlserver", "postgres" })
             {
-                var refreshPlan = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh.plan.yml"));
-                Assert.Contains("model: \"marts.daily_sales\"", refreshPlan);
-                Assert.Contains("excluded:", refreshPlan);
-                Assert.Contains("a copy moves rows between connections; a deploy plans it", refreshPlan);
+                var loads = File.ReadAllText(Path.Combine(dir, "rendered", connection, "loads.yml"));
+                Assert.Contains("model: \"marts.daily_sales\"", loads);
+                Assert.Contains("excluded:", loads);
+                Assert.Contains("a copy moves rows between connections; a deploy plans it", loads);
+                Assert.Contains("marts.daily_sales", File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", "hourly.yml")));
+                var daily = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", "daily.yml"));
+                Assert.Contains("a copy moves rows between connections; a deploy plans it", daily);              // the copy is in the plan `daily` and left out of it with its reason
             }
 
             Deploy("sqlserver");
@@ -97,9 +100,9 @@ public partial class StoresTemplateConformanceTests
             await east.ExecAsync("INSERT INTO pos.orders VALUES (1000, '2024-03-02', 'web', 99.99)");
             foreach (var connection in new[] { "sqlserver", "postgres" })
             {
-                var refresh = Cli("connection", "refresh", connection);
+                var refresh = Cli("connection", "refresh", connection, "daily");
                 Ok(refresh, $"refresh {connection}");
-                Assert.Contains("warehouse.orders", refresh.Out.Split('\n').Single(l => l.Contains("not routine")));
+                Assert.Contains("warehouse.orders", refresh.Out.Split('\n').Single(l => l.Contains("left out")));
             }
             Assert.Equal(["120"], await warehouse.RowsAsync("SELECT CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders"));
             Deploy("sqlserver");

@@ -221,7 +221,7 @@ public static class CliApp
                         o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection status":
-                    var checkModels = new Argument<string[]>("models") { Description = "Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
+                    var checkModels = new Argument<string[]>("models") { Description = "A refresh plan first, to see only that plan's line (named as `connection refresh` names it), then model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
                     GuardOptionLike(checkModels, spec.Name);
                     var checkProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var checkTarget = ConnectionArgument("Connection to check", spec.Name);
@@ -230,7 +230,9 @@ public static class CliApp
                     cmd.SetAction(pr => { var (checkConn, checkRest) = SplitConnection(pr.GetValue(checkProject)!.FullName, pr.GetValue(checkTarget), pr.GetValue(checkModels) ?? []); return Reported(pr, spec, (o, e) => PlanCommand.Check(spec, pr.GetValue(checkProject)!.FullName, checkConn, checkRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection refresh":
-                    var runModels = new Argument<string[]>("models") { Description = "Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan)", Arity = ArgumentArity.ZeroOrMore };
+                    var runPlan = new Argument<string?>("plan") { Description = "The refresh plan to run (default: `default`); a load named directly as `model.load` runs on its own, in no plan", Arity = ArgumentArity.ZeroOrOne };
+                    GuardOptionLike(runPlan, spec.Name);
+                    var runModels = new Argument<string[]>("selectors") { Description = "Which members of the plan to run: model names, `tag:`, `kind:`, `connection:`, `path:`, `property:`, `+model`, `model+`, `@model`, `changed:<ref>`, `exclude:<selector>`, `load:<name>`, or patterns with * and ? (default: the whole plan)", Arity = ArgumentArity.ZeroOrMore };
                     GuardOptionLike(runModels, spec.Name);
                     var runProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var runTarget = ConnectionArgument("Connection", spec.Name);
@@ -240,9 +242,10 @@ public static class CliApp
                     runOnFail.AcceptOnlyFromAmong("block", "warn");
                     var runDirty = new Option<bool>("--allow-dirty") { Description = "Run from a working tree with uncommitted changes (recorded)" };
                     var runDry = new Option<bool>("--dry-run") { Description = "Run every check and print every statement; execute nothing" };
-                    cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runModels);
-                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry);
-                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), pr.GetValue(runModels) ?? []); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    var runInput = new Option<string[]>("--input") { Description = "`[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input", DefaultValueFactory = _ => [] };
+                    cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runPlan); cmd.Arguments.Add(runModels);
+                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry); cmd.Options.Add(runInput);
+                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), [.. pr.GetValue(runPlan) is { } rp ? [rp] : Array.Empty<string>(), .. pr.GetValue(runModels) ?? []]); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), pr.GetValue(runInput) ?? [], o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection monitor":
                     var reportProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
@@ -250,10 +253,12 @@ public static class CliApp
                     var reportLast = new Option<int>("--last") { Description = "How many recent rows of each history to show", DefaultValueFactory = _ => 10 };
                     var reportLane = new Option<string?>("--lane") { Description = "Only the events of this lane (and their DDL and loads): deploy or refresh" };
                     reportLane.AcceptOnlyFromAmong("deploy", "refresh");
+                    var reportPlan = new Argument<string?>("plan") { Description = "A refresh plan: show its runs (complete and partial apart) and each member's last success and failure, instead of the tables", Arity = ArgumentArity.ZeroOrOne };
+                    GuardOptionLike(reportPlan, spec.Name);
                     var reportEvent = new Option<string?>("--event") { Description = "One event in detail, by its id (as the first table shows it): its states, its DDL and its loads" };
                     var reportAttention = new Option<bool>("--attention") { Description = "Only what needs attention (the other tables are left out of the text; the document still has them)" };
-                    cmd.Arguments.Add(reportTarget); cmd.Options.Add(reportProject); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => ReportCommand.Run(spec, pr.GetValue(reportProject)!.FullName, pr.GetValue(reportTarget), pr.GetValue(reportLast), pr.GetValue(reportLane), pr.GetValue(reportEvent), pr.GetValue(reportAttention), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    cmd.Arguments.Add(reportTarget); cmd.Arguments.Add(reportPlan); cmd.Options.Add(reportProject); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
+                    cmd.SetAction(pr => { var (reportConn, reportRest) = SplitConnection(pr.GetValue(reportProject)!.FullName, pr.GetValue(reportTarget), pr.GetValue(reportPlan) is { } rpn ? [rpn] : []); return Reported(pr, spec, (o, e) => ReportCommand.Run(spec, pr.GetValue(reportProject)!.FullName, reportConn, pr.GetValue(reportLast), pr.GetValue(reportLane), pr.GetValue(reportEvent), pr.GetValue(reportAttention), reportRest.FirstOrDefault(), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection compare":
                     var diffTable = new Argument<string?>("table") { Description = "The table or view to compare, as schema_name.table_name (a model's table, for example). Required; the connection comes before it", Arity = ArgumentArity.ZeroOrOne };
@@ -322,6 +327,13 @@ public static class CliApp
                     var pubTarget = ConnectionArgument("Connection", spec.Name);
                     cmd.Arguments.Add(pubTarget); cmd.Arguments.Add(pubModels); cmd.Options.Add(pubProject);
                     cmd.SetAction(pr => { var (pubConn, pubRest) = SplitConnection(pr.GetValue(pubProject)!.FullName, pr.GetValue(pubTarget), pr.GetValue(pubModels) ?? []); return Reported(pr, spec, (o, e) => PublishMetadataCommand.Run(spec, pr.GetValue(pubProject)!.FullName, pubConn, pubRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    break;
+                case "project show refresh":
+                    var showRefreshPlan = new Argument<string?>("plan") { Description = "A refresh plan by name; omit to list the plans of every connection", Arity = ArgumentArity.ZeroOrOne };
+                    var showRefreshProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
+                    var showRefreshConnection = new Option<string?>("--connection") { Description = "Only the plans of this connection" };
+                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e)));
                     break;
                 case "project show plan":
                     var reviewPlan = new Argument<string?>("plan") { Description = "A plan file (plans/<connection>/<id>.plan.yml); omit to list the project's plans", Arity = ArgumentArity.ZeroOrOne };

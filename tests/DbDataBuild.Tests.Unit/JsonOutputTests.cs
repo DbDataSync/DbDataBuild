@@ -138,7 +138,7 @@ public class JsonOutputTests
 
         var render = Run("project", "compile", "--project", dir, "--content");
         Assert.Equal(0, render.Exit);
-        Assert.Equal(["rendered/lowered/marts.fct_orders/lowered.sql", "rendered/sqlserver/marts.fct_orders/load.default.sql", "rendered/sqlserver/marts.fct_orders/manifest.yml", "rendered/sqlserver/refresh.plan.yml"], render.Doc["data"]!["files"]!.AsArray().Select(f => f!["path"]!.GetValue<string>()));
+        Assert.Equal(["rendered/lowered/marts.fct_orders/lowered.sql", "rendered/sqlserver/marts.fct_orders/load.default.sql", "rendered/sqlserver/marts.fct_orders/manifest.yml", "rendered/sqlserver/loads.yml", "rendered/sqlserver/refresh/default.yml"], render.Doc["data"]!["files"]!.AsArray().Select(f => f!["path"]!.GetValue<string>()));
         var write = Run("project", "compile", "--project", dir);
         Assert.Equal(0, write.Exit);
         Assert.NotEmpty(write.Doc["data"]!["wrote"]!.AsArray());
@@ -151,7 +151,7 @@ public class JsonOutputTests
 
         var init = Run("connection", "init", "--project", dir);
         Assert.False(init.Doc["data"]!["applied"]!.GetValue<bool>());
-        Assert.Equal(14, init.Doc["data"]!["statements"]!.AsArray().Count);        // schema, ten tables, two views, the version row
+        Assert.Equal(15, init.Doc["data"]!["statements"]!.AsArray().Count);        // schema, eleven tables, two views, the version row
         Assert.Contains("CREATE TABLE", init.Doc["data"]!["statements"]![1]!["text"]!.GetValue<string>());
 
         var meta = Run("project", "show", "metadata", "--project", dir);

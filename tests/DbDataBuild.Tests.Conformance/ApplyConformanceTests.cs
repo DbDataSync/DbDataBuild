@@ -655,7 +655,7 @@ public partial class ApplyConformanceTests
             await engine.ExecAsync("INSERT INTO staging.orders VALUES (4, 40.00)");
             var routine = run.Cli("connection", "refresh");
             Ok(routine, "refresh");
-            Assert.Contains("1 routine load(s)", routine.Out);
+            Assert.Contains("1 of 1 member(s)", routine.Out);
             Assert.Contains("Next: dbdatabuild connection monitor", routine.Out);
             Assert.Equal(4, await CountAsync(run, "marts.fct_orders"));
             Assert.Equal(2, await CountAsync(run, log, "status = 'ok'"));
@@ -1050,9 +1050,9 @@ public partial class ApplyConformanceTests
             Ok(run.Cli("project", "compile"), "compile with a ddl hook");
             var refused = run.Cli("connection", "refresh");
             Ok(refused, "a refresh with nothing routine in it");
-            Assert.Contains("not routine", refused.Out);
+            Assert.Contains("has no members", refused.Out);
             Assert.Contains("Nothing to do", refused.Out);
-            Assert.Contains("marts.fct_orders", refused.Out);
+            Assert.Contains("not a safe data hook", run.Cli("project", "show", "refresh", "default").Out);       // and the plan says why it holds nothing
 
             // checked before anything is planned: a missing script, a script that does not parse, an unknown group
             run.Write("models/marts/fct_orders.yml", FctYaml + "hooks:\n  - {name: gone, event: post_create, script: hooks/nowhere.sql}\n");
@@ -1577,7 +1577,7 @@ public partial class ApplyConformanceTests
             Refused(old, "DDB-505", "planning against an older layout");
             Assert.Contains("layout version 1", old.Err);
             Ok(run.Cli("connection", "init", "--apply"), "init upgrades");
-            Assert.Equal(["1", "6"], await engine.RowsAsync($"SELECT {run.Q("version")} FROM {T("tracking_version")}"));
+            Assert.Equal(["1", DbDataBuild.State.TrackingSchema.Version.ToString()], await engine.RowsAsync($"SELECT {run.Q("version")} FROM {T("tracking_version")}"));
             Ok(run.Cli("connection", "deploy", "--write-plan"), "plan after the upgrade");
 
             // metadata.store_on_apply: a successful apply also stores the project, the models it touched and the plan

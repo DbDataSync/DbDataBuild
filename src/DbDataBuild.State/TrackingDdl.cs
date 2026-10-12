@@ -89,6 +89,12 @@ internal sealed class TSqlTrackingDdl(string target, bool unverified) : ITrackin
             list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 5) when it is not there",
                 $"IF OBJECT_ID({TrackingDdl.Literal(schema + "." + table)}, N'U') IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + table)}, {TrackingDdl.Literal(column)}) IS NULL\n  ALTER TABLE {s}.{Quote(table)} ADD {Quote(column)} {Native(c.Type)} NULL;"));
         }
+        foreach (var (table, column) in TrackingSchema.AddedInLayout7)
+        {
+            var c = TrackingSchema.Table(table).Columns.First(x => x.Name == column);
+            list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 7) when it is not there",
+                $"IF OBJECT_ID({TrackingDdl.Literal(schema + "." + table)}, N'U') IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + table)}, {TrackingDdl.Literal(column)}) IS NULL\n  ALTER TABLE {s}.{Quote(table)} ADD {Quote(column)} {Native(c.Type)} NULL;"));
+        }
         list.Add(new($"upgrade-{++n:00}", "drop the views of the older layout (the init script creates them again)",
             $"IF OBJECT_ID({TrackingDdl.Literal(schema + ".metadata_columns")}, N'V') IS NOT NULL DROP VIEW {s}.[metadata_columns];\nIF OBJECT_ID({TrackingDdl.Literal(schema + ".metadata_current")}, N'V') IS NOT NULL DROP VIEW {s}.[metadata_current];"));
         return list;
@@ -117,9 +123,10 @@ internal sealed class TSqlTrackingDdl(string target, bool unverified) : ITrackin
             list.Add(new($"init-{n++:00}", id, text));
         var v = $"{s}.{Quote("tracking_version")}";
         // the version is recorded only when the newest column of the newest layout is there: a store of an older layout is not claimed by a script that never alters it (`--upgrade` does that)
-        var last = TrackingSchema.AddedInLayout5[^1];
+        var last = TrackingSchema.AddedInLayout7[^1];
+        var layout5 = TrackingSchema.AddedInLayout5[^1];
         list.Add(new($"init-{n}", "record the layout version",
-            $"IF NOT EXISTS (SELECT 1 FROM {v} WHERE [version] = {TrackingSchema.Version}) AND COL_LENGTH({TrackingDdl.Literal(schema + "." + last.Table)}, {TrackingDdl.Literal(last.Column)}) IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}, N'U') IS NOT NULL\nINSERT INTO {v} ([version], [tool_version], [applied_utc]) VALUES ({TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, SYSUTCDATETIME());"));
+            $"IF NOT EXISTS (SELECT 1 FROM {v} WHERE [version] = {TrackingSchema.Version}) AND COL_LENGTH({TrackingDdl.Literal(schema + "." + last.Table)}, {TrackingDdl.Literal(last.Column)}) IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + layout5.Table)}, {TrackingDdl.Literal(layout5.Column)}) IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}, N'U') IS NOT NULL\nINSERT INTO {v} ([version], [tool_version], [applied_utc]) VALUES ({TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, SYSUTCDATETIME());"));
         return list;
     }
 }
@@ -167,6 +174,12 @@ internal sealed class PostgresTrackingDdl : ITrackingDdl
             list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 5) when it is not there",
                 $"ALTER TABLE IF EXISTS {s}.{Quote(table)} ADD COLUMN IF NOT EXISTS {Quote(column)} {Native(c.Type)} NULL;"));
         }
+        foreach (var (table, column) in TrackingSchema.AddedInLayout7)
+        {
+            var c = TrackingSchema.Table(table).Columns.First(x => x.Name == column);
+            list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 7) when it is not there",
+                $"ALTER TABLE IF EXISTS {s}.{Quote(table)} ADD COLUMN IF NOT EXISTS {Quote(column)} {Native(c.Type)} NULL;"));
+        }
         list.Add(new($"upgrade-{++n:00}", "drop the views of the older layout (the init script creates them again)",
             $"DROP VIEW IF EXISTS {s}.\"metadata_columns\";\nDROP VIEW IF EXISTS {s}.\"metadata_current\";"));
         return list;
@@ -187,10 +200,11 @@ internal sealed class PostgresTrackingDdl : ITrackingDdl
         foreach (var (id, text) in TrackingViews.Postgres(s))
             list.Add(new($"init-{n++:00}", id, text));
         var v = $"{s}.{Quote("tracking_version")}";
-        var last = TrackingSchema.AddedInLayout5[^1];
+        var last = TrackingSchema.AddedInLayout7[^1];
+        var layout5 = TrackingSchema.AddedInLayout5[^1];
         list.Add(new($"init-{n}", "record the layout version",
             $"INSERT INTO {v} (\"version\", \"tool_version\", \"applied_utc\")\nSELECT {TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, (now() AT TIME ZONE 'utc')\n" +
-            $"WHERE NOT EXISTS (SELECT 1 FROM {v} WHERE \"version\" = {TrackingSchema.Version}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(last.Table)} AND column_name = {TrackingDdl.Literal(last.Column)}) AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}) IS NOT NULL;"));
+            $"WHERE NOT EXISTS (SELECT 1 FROM {v} WHERE \"version\" = {TrackingSchema.Version}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(last.Table)} AND column_name = {TrackingDdl.Literal(last.Column)}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(layout5.Table)} AND column_name = {TrackingDdl.Literal(layout5.Column)}) AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}) IS NOT NULL;"));
         return list;
     }
 }
