@@ -31,6 +31,8 @@ public static class CommandReference
             sb.AppendLineLf($"{spec.Purpose}.".Replace("..", "."));
             sb.AppendLineLf();
             sb.AppendLineLf($"Effect: {spec.Effect.Describe()}. Reads and writes: `{spec.Disposition}`{(spec.Lane.Length > 0 ? $". Lane: {spec.Lane}" : "")}.");
+            sb.AppendLineLf();
+            sb.AppendLineLf($"Usage: `{ProductInfo.Cli} {spec.Name}{string.Concat(command.Arguments.Select(a => " " + (a.Arity.MinimumNumberOfValues > 0 ? $"<{a.Name}>" : $"[{a.Name}]") + (a.Arity.MaximumNumberOfValues > 1 ? "..." : "")))}{(command.Options.Count > 0 ? " [options]" : "")}`");
             if (command.Arguments.Count > 0)
             {
                 sb.AppendLineLf();

@@ -43,7 +43,7 @@ public class CrossDiffScaleTests
                 : v == LoginSettings.VariableName("postgres", Login.Read) ? right.ConnectionString : null;
             var o = new StringWriter(); var e = new StringWriter();
             var clock = Stopwatch.StartNew();
-            var exit = CliApp.Run(["connection", "compare", "big.t", "--project", dir, "--connection", "sqlserver", "--against-connection", "postgres", "--format", "json"], o, e, environment: env);
+            var exit = CliApp.Run(["connection", "compare", "sqlserver", "big.t", "--project", dir, "--against-connection", "postgres", "--format", "json"], o, e, environment: env);
             clock.Stop();
             Assert.True(o.ToString().Length > 0, "no output: " + e);
             var data = JsonNode.Parse(o.ToString())!["data"]!;

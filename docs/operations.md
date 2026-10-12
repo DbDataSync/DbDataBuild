@@ -23,7 +23,7 @@ Connection strings come from environment variables, never from files in the repo
 
 There is no fallback from one login to the other, or from one connection to another: a missing variable is an error that names it. Every command prints which variable and which user it used (never the password). Use two separate accounts; the read account should not be able to write at all.
 
-**Tracking** is a setting: `tracking: { connection: audit }` says which connection keeps the records of what the tool built for every connection it writes to (its read and write logins are used), and the tracking connection can be another one than the data's. With no `tracking:` the tool warns (DDB-232) and records nothing; `tracking: none` chooses that. Run `dbdatabuild connection init --connection <tracking connection> --apply` once.
+**Tracking** is a setting: `tracking: { connection: audit }` says which connection keeps the records of what the tool built for every connection it writes to (its read and write logins are used), and the tracking connection can be another one than the data's. With no `tracking:` the tool warns (DDB-232) and records nothing; `tracking: none` chooses that. Run `dbdatabuild connection init <tracking connection> --apply` once.
 
 **Moving data between connections** is a copy: a model of `kind: {type: copy, from: schema_name.table_name}` on the destination connection, read from a model or a mapped model on the origin (a mapped model is `kind: {type: mapped}`: a table that exists and that the tool does not build; `dbdatabuild project import` writes them from a connection's catalog). Applying a plan that contains a copy needs the origin's read login as well as the destination's. A copy of one application's table on several connections (`connections=: [store_017, store_018]`) uses a `slice` so each origin's rows are kept apart and a run replaces only its own.
 
@@ -48,7 +48,7 @@ Exit codes: `0` ok, `1` findings (a diagnostic with an error severity, a refused
 SQL Agent job step (type: operating system command, run as a proxy account that holds the two connection strings in its environment):
 
 ```
-dbdatabuild connection refresh --project D:\etl\project --connection sqlserver --format json > D:\etl\logs\run.json
+dbdatabuild connection refresh sqlserver --project D:\etl\project --format json > D:\etl\logs\run.json
 ```
 
 Make the working directory or `--project` a checkout of the repository: the tool reads the committed `rendered/` files and records the git commit with each plan.

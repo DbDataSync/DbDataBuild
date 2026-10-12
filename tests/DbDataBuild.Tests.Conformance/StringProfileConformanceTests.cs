@@ -38,7 +38,7 @@ public class StringProfileConformanceTests
             Write("models/marts/m.sql", "SELECT id FROM src.codes\n");
 
             Assert.Equal(0, Cli("project", "compile").Exit);
-            var broken = Cli("connection", "status", "--connection", name);
+            var broken = Cli("connection", "status", name);
             Assert.NotEqual(0, broken.Exit);
             Assert.Contains("DDB-237", broken.Err + broken.Out);
             Assert.Contains("`src.codes.code` is declared `trimmed: true`", broken.Err + broken.Out);
@@ -46,7 +46,7 @@ public class StringProfileConformanceTests
             Assert.DoesNotContain("'b '", broken.Err + broken.Out);                                                    // a count, never a value
 
             await engine.ExecAsync(name == "postgres" ? "UPDATE src.codes SET code = rtrim(code)" : "UPDATE src.codes SET code = RTRIM(code)");
-            var fixedUp = Cli("connection", "status", "--connection", name);
+            var fixedUp = Cli("connection", "status", name);
             Assert.DoesNotContain("DDB-237", fixedUp.Err + fixedUp.Out);
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }

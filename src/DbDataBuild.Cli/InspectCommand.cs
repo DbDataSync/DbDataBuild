@@ -113,7 +113,7 @@ internal static class InspectCommand
         output.Payload("schema_names", schemas.Select(s => new { name = s.Name, exists = s.Exists }).ToList());
         output.WriteLine(problems == 0 ? "Nothing in the way." : $"{problems} thing(s) in the way.");
         if (problems == 0) output.Next("connection status");
-        else if (trackingState == "missing" || trackingState == "other_layout") output.Next(trackingState == "missing" ? $"connection init --connection {trackingConnection} --apply" : $"connection init --connection {trackingConnection} --upgrade --apply");
+        else if (trackingState == "missing" || trackingState == "other_layout") output.Next(trackingState == "missing" ? $"connection init {trackingConnection} --apply" : $"connection init {trackingConnection} --upgrade --apply");
         return problems == 0 ? CliApp.ExitOk : CliApp.ExitFindings;
     }
 

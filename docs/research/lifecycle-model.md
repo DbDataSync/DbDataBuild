@@ -4,7 +4,7 @@ Status: **design, 2026-10-07.** Written from the owner's conceptual table and th
 
 > **As built, 2026-10-08.** Most of this is built (`docs/research/lifecycle-implementation.md` has the status per phase). Where the build differs from the text below:
 >
-> * The connection is chosen with `--connection <c>`, not as a positional argument.
+> * The connection is chosen with `--connection <c>`, not as a positional argument. *(Changed 2026-10-12, entry 146: it is the first positional argument, `connection deploy <c>`; the option is gone from the commands that work on one connection.)*
 > * `connection refresh` takes `models` (names or patterns), `--check`, `--on-fail`, `--allow-dirty` and `--dry-run`. It has no `--backfill`, `--allow-risky` or `--param`: a refresh runs routine loads only, and a backfill is a deploy (`connection deploy --backfill model=operation`).
 > * The event is the row of `migration_log` (section 6): tracking layout 5 added `lane` and `project_hash` to it and the `plan_store` table. There is no `event_log` table. `plans.deploy.keep: database` is built for deploy (a refresh plan is compiled and committed; its `keep` is not acted on). A refresh's id is `ref-<utc>-<4 hex>`; a deploy keeps the content id of its plan.
 > * `plans.deploy.require_clean_tree` is true by default (a deploy or a refresh from a tree with changes is refused unless `--allow-dirty`).
@@ -540,7 +540,7 @@ Store the project's metadata documents in the tracking tables.
 
 | Command | Disposition | Parameters | Meaning |
 |---|---|---|---|
-| `ui terminal` | `—` | `--connection <c>` | the terminal interface |
+| `ui terminal` | `—` | `[c]` (positional, since 2026-10-12) | the terminal interface |
 | `ui web` | `—` | `--port <n>`, `--allow-apply` | the web page on the loopback address; without `--allow-apply` it reads and plans only |
 | `ui mcp` | `—` | `--allow-writes`, `--allow-apply`, `--no-show` | the MCP server (tools, resources, prompts, the app); `--allow-writes` offers `deploy`, `refresh`, `init`, `seed`, `publish` to the model, each run needing the person's approval |
 | `help code <code>` | `—` | `code` (for example `DDB-214`) | the long explanation of a diagnostic |

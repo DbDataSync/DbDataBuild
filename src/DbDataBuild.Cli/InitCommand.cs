@@ -30,7 +30,7 @@ internal static class InitCommand
         {
             var elsewhere = config.TrackingOf(target).Target;
             error.WriteLine(elsewhere != null
-                ? $"`{target}` keeps no records of its own: they go to `{elsewhere.Connection}`. Initialize that one: `{ProductInfo.Cli} {spec.Name} --connection {elsewhere.Connection}`."
+                ? $"`{target}` keeps no records of its own: they go to `{elsewhere.Connection}`. Initialize that one: `{ProductInfo.Cli} {spec.Name} {elsewhere.Connection}`."
                 : $"`{target}` keeps no records: no connection has `tracking: {{ connection: {target} }}` (in {ProductInfo.ConfigFile}, for the project or for a connection), so there is nothing to initialize on it.");
             return CliApp.ExitFindings;
         }
@@ -65,8 +65,8 @@ internal static class InitCommand
         {
             output.WriteLine();
             output.Write(TrackingDdl.Render(script));
-            output.WriteLine($"Review the script above, then run `{ProductInfo.Cli} {spec.Name} --connection {target} --apply` with the write login configured.");
-            output.Next($"connection init --connection {target} --apply");
+            output.WriteLine($"Review the script above, then run `{ProductInfo.Cli} {spec.Name} {target} --apply` with the write login configured.");
+            output.Next($"connection init {target} --apply");
             return CliApp.ExitOk;
         }
 

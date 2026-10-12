@@ -280,7 +280,7 @@ internal sealed class ProjectContext
                                     (Path.GetFullPath(Path.Combine(Root, s.QueryFile)) == Path.GetFullPath(core)) || (Path.GetFullPath(Path.Combine(Root, s.DefinitionFile)) == Path.GetFullPath(core))).ToList();
         var byDir = all.Where(s => normalized.TrimEnd('/') is var d && s.QueryFile.StartsWith(d + "/", StringComparison.Ordinal)).ToList();
         var found = byName.Count > 0 ? byName : byPath.Count > 0 ? byPath : byDir;
-        if (found.Count == 0) { error.WriteLine($"`{core}` does not name a valid model, a model file, or a directory containing models."); return null; }
+        if (found.Count == 0) { error.WriteLine($"`{core}` does not name a valid model, a model file, or a directory containing models.{(System.Text.RegularExpressions.Regex.IsMatch(core, "^[A-Za-z][A-Za-z0-9_]*$") ? $" (If it was meant to be a connection: the project's are {string.Join(", ", Config.Connections.Keys.Order(StringComparer.Ordinal))}.)" : "")}"); return null; }
         return found.Select(s => s.Definition.Name).ToList();
     }
 

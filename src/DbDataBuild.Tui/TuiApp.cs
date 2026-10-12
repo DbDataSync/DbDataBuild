@@ -39,7 +39,7 @@ public sealed class TuiSession(IApplication app, ICommandHost host, TuiOptions o
 
     /// <summary>
     /// The target to work on. A project with one default target needs no question; with several, the person chooses once and the choice is kept for the session.
-    /// The commands would refuse to guess (`--connection is required`), so the TUI asks before they have to.
+    /// The commands would refuse to guess (`A connection is required`), so the TUI asks before they have to.
     /// </summary>
     public string? EnsureTarget()
     {

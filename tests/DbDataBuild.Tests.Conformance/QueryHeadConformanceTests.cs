@@ -49,9 +49,9 @@ public class QueryHeadConformanceTests
             Write("models/marts/inc.yml", cols);
             Write("models/marts/inc.sql", "CREATE TABLE marts.inc\nWITH (kind = 'incremental_by_unique_key', unique_key = (order_id))\nAS\nSELECT order_id, amount FROM src.orders\n");
 
-            Ok(Cli("connection", "init", "--connection", name, "--apply"), "init");
+            Ok(Cli("connection", "init", name, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
-            var first = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var first = Cli("connection", "deploy", name, "--write-plan");
             Ok(first, "plan");
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(first.Out)), "apply");
             string Sql(string table) => $"SELECT CAST(order_id AS VARCHAR(10)) + '|' + CAST(amount AS VARCHAR(20)) FROM {table}".Replace(" + '|' + ", name == "postgres" ? " || '|' || " : " + '|' + ");
@@ -62,7 +62,7 @@ public class QueryHeadConformanceTests
             // the source changes: the plain table is replaced, the incremental one merges by the key the head gave
             await engine.ExecAsync("UPDATE src.orders SET amount = 25.00 WHERE order_id = 1");
             await engine.ExecAsync("INSERT INTO src.orders VALUES (3, 30.00)");
-            var second = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var second = Cli("connection", "deploy", name, "--write-plan");
             Ok(second, "second plan");
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(second.Out)), "second apply");
             Assert.Equal(["1|25.00", "2|20.00", "3|30.00"], (await engine.RowsAsync(Sql("marts.plain") + " ORDER BY 1")));

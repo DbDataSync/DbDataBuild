@@ -73,7 +73,7 @@ public class CrossDiffConformanceTests
                 return (exit, o.ToString(), e.ToString());
             }
 
-            var counts = Cli("connection", "compare", "xd.items", "--connection", leftName, "--against-connection", rightName, "--exclude-columns", "fixed", "--format", "json");
+            var counts = Cli("connection", "compare", leftName, "xd.items", "--against-connection", rightName, "--exclude-columns", "fixed", "--format", "json");
             Assert.True(counts.Exit == 1, counts.Out + counts.Err);
             var data = JsonNode.Parse(counts.Out)!["data"]!;
             Assert.Equal(rightName, (string)data["against_connection"]!);
@@ -87,7 +87,7 @@ public class CrossDiffConformanceTests
             Assert.DoesNotContain("café", counts.Out);
             Assert.DoesNotContain("Straße", counts.Out);
 
-            var shown = Cli("connection", "compare", "xd.items", "--connection", leftName, "--against-connection", rightName, "--exclude-columns", "fixed", "--show-values", "--limit", "5", "--format", "json");
+            var shown = Cli("connection", "compare", leftName, "xd.items", "--against-connection", rightName, "--exclude-columns", "fixed", "--show-values", "--limit", "5", "--format", "json");
             var samples = JsonNode.Parse(shown.Out)!["data"]!["samples"]!;
             Assert.Equal("5", (string)samples["only_left"]![0]!["key"]!["id"]!);
             Assert.Equal("only left", (string)samples["only_left"]![0]!["values"]!["code"]!);
@@ -104,7 +104,7 @@ public class CrossDiffConformanceTests
             await right.ExecAsync("UPDATE xd.items SET price = 20.50 WHERE id = 2");
             await right.ExecAsync("UPDATE xd.items SET code = NULL WHERE id = 3");
             await left.ExecAsync("UPDATE xd.items SET price = 20.50 WHERE id = 2");
-            var same = Cli("connection", "compare", "xd.items", "--connection", leftName, "--against-connection", rightName);
+            var same = Cli("connection", "compare", leftName, "xd.items", "--against-connection", rightName);
             Assert.True(same.Exit == 0, same.Out + same.Err);
             Assert.Contains("The tables are identical", same.Out);
         }
@@ -136,7 +136,7 @@ public class CrossDiffConformanceTests
             (int Exit, string Out) Run(params string[] extra)
             {
                 var o = new StringWriter(); var e = new StringWriter();
-                var exit = CliApp.Run(["connection", "compare", "xd.t", "--project", dir, "--connection", "sqlserver", "--against-connection", "postgres", "--format", "json", .. extra], o, e, environment: env);
+                var exit = CliApp.Run(["connection", "compare", "sqlserver", "xd.t", "--project", dir, "--against-connection", "postgres", "--format", "json", .. extra], o, e, environment: env);
                 return (exit, o.ToString());
             }
             CrossDiffer.MaxDrillRows = 1000;

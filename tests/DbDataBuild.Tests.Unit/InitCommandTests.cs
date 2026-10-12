@@ -41,9 +41,9 @@ public class InitCommandTests
         var dir = Project("defaults: {connections: [sqlserver, postgres]}\ntracking: { connection: postgres }\nconnections:\n  sqlserver: { tracking: { connection: sqlserver } }\n");
         var (exit, _, err) = Run(null, "connection", "init", "--project", dir);
         Assert.Equal(CliApp.ExitUsage, exit);
-        Assert.Contains("--connection is required", err);
+        Assert.Contains("A connection is required", err);
 
-        var (pgExit, pgOut, _) = Run(null, "connection", "init", "--project", dir, "--connection", "postgres");
+        var (pgExit, pgOut, _) = Run(null, "connection", "init", "postgres", "--project", dir);
         Assert.Equal(0, pgExit);
         Assert.Contains("CREATE TABLE IF NOT EXISTS \"dbdatabuild\".\"run_log\"", pgOut);
         Assert.Contains("\"connection\" varchar(512) NOT NULL", pgOut);                      // every record names the connection it is about
@@ -52,7 +52,7 @@ public class InitCommandTests
     [Fact]
     public void An_unknown_target_is_a_usage_error()
     {
-        var (exit, _, err) = Run(null, "connection", "init", "--project", Project("defaults: {connections: [sqlserver]}\n"), "--connection", "oracle");
+        var (exit, _, err) = Run(null, "connection", "init", "oracle", "--project", Project("defaults: {connections: [sqlserver]}\n"));
         Assert.Equal(CliApp.ExitUsage, exit);
         Assert.Contains("Unknown connection `oracle`", err);
     }
@@ -93,7 +93,7 @@ public class InitCommandTests
     public void A_connection_that_keeps_no_records_has_nothing_to_initialize_and_is_told_where_they_go()
     {
         var dir = Project("defaults: {connections: [sqlserver, postgres]}\ntracking: { connection: postgres }\n");
-        var (exit, output, err) = Run(null, "connection", "init", "--project", dir, "--connection", "sqlserver");
+        var (exit, output, err) = Run(null, "connection", "init", "sqlserver", "--project", dir);
         Assert.Equal(CliApp.ExitFindings, exit);
         Assert.Contains("keeps no records of its own: they go to `postgres`", err);
         Assert.DoesNotContain("CREATE TABLE", output);

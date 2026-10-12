@@ -19,7 +19,7 @@ internal static class CommandTargets
     public static ConnectionConfig? Resolve(ProjectConfig config, string? arg, TextWriter error)
     {
         var name = arg ?? (config.DefaultConnections.Count == 1 ? config.DefaultConnections[0] : null);
-        if (name == null) { error.WriteLine($"--connection is required: the project has {config.DefaultConnections.Count} default connections ({string.Join(", ", config.DefaultConnections)})."); return null; }
+        if (name == null) { error.WriteLine($"A connection is required: the project has {config.DefaultConnections.Count} default connections ({string.Join(", ", config.DefaultConnections)}). Name one after the command, for example `{ProductInfo.Cli} connection status {(config.DefaultConnections.Count > 0 ? config.DefaultConnections[0] : "<connection>")}`."); return null; }
         if (!config.Connections.TryGetValue(name, out var connection)) { error.WriteLine($"Unknown connection `{name}`. One of: {string.Join(", ", config.Connections.Keys.Order(StringComparer.Ordinal))}."); return null; }
         return connection;
     }

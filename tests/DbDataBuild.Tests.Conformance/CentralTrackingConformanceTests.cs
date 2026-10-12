@@ -73,11 +73,11 @@ public partial class CentralTrackingConformanceTests
         {
             Ok(s.Cli("project", "compile"), "render");
             // the tracking tables go to the tracking connection, and the data connection gets none
-            Ok(s.Cli("connection", "init", "--connection", "postgres", "--apply"), "init on the tracking connection");
-            Assert.Contains("keeps no records of its own", s.Cli("connection", "init", "--connection", "sqlserver").Err);
+            Ok(s.Cli("connection", "init", "postgres", "--apply"), "init on the tracking connection");
+            Assert.Contains("keeps no records of its own", s.Cli("connection", "init", "sqlserver").Err);
             Assert.Empty(await data.RowsAsync("SELECT 1 FROM sys.schemas WHERE name = 'dbdatabuild'"));
 
-            var plan = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var plan = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(plan, "plan");
             Assert.DoesNotContain("Nothing is tracked", plan.Err);
             Ok(s.Cli("connection", "deploy", "--apply-plan", s.PlanFile(plan.Out)), "apply");
@@ -91,18 +91,18 @@ public partial class CentralTrackingConformanceTests
             Assert.Contains("completed", await records.RowsAsync("SELECT status FROM dbdatabuild.migration_log"));
 
             // the baseline is read from the records on the other connection: nothing left to build, and an outside change is seen
-            var again = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var again = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(again, "second plan");
             Assert.DoesNotContain("create table", File.ReadAllText(s.PlanFile(again.Out)));
             await data.ExecAsync("ALTER TABLE marts.fct_orders ADD [sneaky] INT NULL");
-            var drift = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var drift = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Assert.NotEqual(0, drift.Exit);
             Assert.Contains("DDB-430", drift.Err);
 
             // ack writes the acknowledgement to the records, and report reads them
-            Ok(s.Cli("connection", "deploy", "--ack", "drift:marts.fct_orders", "--connection", "sqlserver", "--reason", "known"), "ack");
+            Ok(s.Cli("connection", "deploy", "sqlserver", "--ack", "drift:marts.fct_orders", "--reason", "known"), "ack");
             Assert.Equal(["sqlserver"], await records.RowsAsync("SELECT DISTINCT \"connection\" FROM dbdatabuild.block_log"));
-            var report = s.Cli("connection", "monitor", "--connection", "sqlserver");
+            var report = s.Cli("connection", "monitor", "sqlserver");
             Ok(report, "report");
             Assert.Contains("completed", report.Out);
             Assert.Contains("records on postgres", report.Out);
@@ -122,7 +122,7 @@ public partial class CentralTrackingConformanceTests
         try
         {
             Ok(s.Cli("project", "compile"), "render");
-            var plan = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var plan = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(plan, "plan");
             Assert.DoesNotContain("DDB-232", plan.Err);                                                                // `none` is a choice: no warning
             Ok(s.Cli("connection", "deploy", "--apply-plan", s.PlanFile(plan.Out)), "apply");
@@ -131,7 +131,7 @@ public partial class CentralTrackingConformanceTests
             Assert.Empty(await records.RowsAsync("SELECT 1 FROM information_schema.tables WHERE table_schema = 'dbdatabuild'"));      // nothing was recorded anywhere
 
             // an object that exists is not adopted, drifted or blocked: it is judged against the declaration
-            var again = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var again = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(again, "second plan");
             Assert.DoesNotContain("create table", File.ReadAllText(s.PlanFile(again.Out)));
 
@@ -140,7 +140,7 @@ public partial class CentralTrackingConformanceTests
             s.Write("models/marts/fct_orders.sql", "SELECT order_id, amount, CAST(NULL AS VARCHAR(20)) AS note FROM staging.orders\n");
             Ok(s.Cli("project", "compile"), "render after the change");
             s.Write("answers.yml", "answers:\n  - {id: Q-history-marts.fct_orders.note, choice: not_backfilled, note: \"no history\"}\n");
-            var changed = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver", "--answers", Path.Combine(s.Dir, "answers.yml"));
+            var changed = s.Cli("connection", "deploy", "sqlserver", "--write-plan", "--answers", Path.Combine(s.Dir, "answers.yml"));
             if (changed.Exit == 0)
             {
                 var text = File.ReadAllText(s.PlanFile(changed.Out));
@@ -155,7 +155,7 @@ public partial class CentralTrackingConformanceTests
             else Assert.Fail("the plan for a new column should be a plan, with questions answered or not needed:\n" + changed.Out + changed.Err);
 
             // the commands that work on the records say there are none
-            var report = s.Cli("connection", "monitor", "--connection", "sqlserver");
+            var report = s.Cli("connection", "monitor", "sqlserver");
             Assert.NotEqual(0, report.Exit);
             Assert.Contains("is not tracked", report.Err);
         }
@@ -170,7 +170,7 @@ public partial class CentralTrackingConformanceTests
         try
         {
             Ok(s.Cli("project", "compile"), "render");
-            var plan = s.Cli("connection", "deploy", "--write-plan", "--connection", "sqlserver");
+            var plan = s.Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(plan, "plan");
             Assert.Contains("DDB-232", plan.Err);
             var applied = s.Cli("connection", "deploy", "--apply-plan", s.PlanFile(plan.Out));

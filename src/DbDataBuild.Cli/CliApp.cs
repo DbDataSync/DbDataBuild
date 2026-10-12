@@ -116,8 +116,8 @@ public static class CliApp
                     break;
                 case "ui terminal":
                     var tuiProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var tuiTarget = new Option<string?>("--connection") { Description = "Connection to work on (default: the project's only default connection)" };
-                    cmd.Options.Add(tuiProject); cmd.Options.Add(tuiTarget);
+                    var tuiTarget = ConnectionArgument("Connection to work on", spec.Name);
+                    cmd.Arguments.Add(tuiTarget); cmd.Options.Add(tuiProject);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => TuiCommand.Run(spec, pr.GetValue(tuiProject)!.FullName, pr.GetValue(tuiTarget), o.IsJson(), o, e, environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "ui mcp":
@@ -169,32 +169,33 @@ public static class CliApp
                     break;
                 case "connection seed":
                     var lsProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var lsTarget = new Option<string?>("--connection") { Description = "Connection to load (default: the project's only default connection)" };
+                    var lsTarget = ConnectionArgument("Connection to load", spec.Name);
                     var lsSeed = new Option<int>("--seed") { Description = "The variable `seed` the seeds read: the same seed and scale give the same rows", DefaultValueFactory = _ => 1 };
                     var lsScale = new Option<int?>("--scale") { Description = "The variable `scale` the seeds read, usually how many of the main entity (default: the project's own)" };
                     var lsReplace = new Option<bool>("--replace") { Description = "Drop and recreate a source table that already exists (default: stop at the first table that exists)" };
                     var lsApply = new Option<bool>("--apply") { Description = "Create and fill the tables on the write login (default: print what would happen and connect to nothing)" };
-                    cmd.Options.Add(lsProject); cmd.Options.Add(lsTarget); cmd.Options.Add(lsSeed); cmd.Options.Add(lsScale); cmd.Options.Add(lsReplace); cmd.Options.Add(lsApply);
+                    cmd.Arguments.Add(lsTarget); cmd.Options.Add(lsProject); cmd.Options.Add(lsSeed); cmd.Options.Add(lsScale); cmd.Options.Add(lsReplace); cmd.Options.Add(lsApply);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => LoadSeedsCommand.Run(spec, pr.GetValue(lsProject)!.FullName, pr.GetValue(lsTarget), pr.GetValue(lsSeed), pr.GetValue(lsScale), pr.GetValue(lsReplace), pr.GetValue(lsApply), o, e, environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "connection inspect":
                     var inspectProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var inspectTarget = new Option<string?>("--connection") { Description = "Connection to inspect (default: the project's only default connection)" };
-                    cmd.Options.Add(inspectProject); cmd.Options.Add(inspectTarget);
+                    var inspectTarget = ConnectionArgument("Connection to inspect", spec.Name);
+                    cmd.Arguments.Add(inspectTarget); cmd.Options.Add(inspectProject);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => InspectCommand.Run(spec, pr.GetValue(inspectProject)!.FullName, pr.GetValue(inspectTarget), o, e, environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "connection init":
                     var initProject = new Option<DirectoryInfo>("--project") { Description = "Project root (contains dbdatabuild.yml)", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var initTarget = new Option<string?>("--connection") { Description = "Connection to initialize (default: the project's only default connection)" };
+                    var initTarget = ConnectionArgument("Connection to initialize", spec.Name);
                     var initApply = new Option<bool>("--apply") { Description = "Run the script on the write login (default: print it for review and connect to nothing)" };
                     var initUpgrade = new Option<bool>("--upgrade") { Description = "Bring tracking tables of an older layout (before 4) to this one first: adds the `connection` column to each record table (every existing row gets the connection being initialized), puts it in the primary keys and drops the old views; the script is printed for review like the rest" };
-                    cmd.Options.Add(initProject); cmd.Options.Add(initTarget); cmd.Options.Add(initApply); cmd.Options.Add(initUpgrade);
+                    cmd.Arguments.Add(initTarget); cmd.Options.Add(initProject); cmd.Options.Add(initApply); cmd.Options.Add(initUpgrade);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => InitCommand.Run(spec, pr.GetValue(initProject)!.FullName, pr.GetValue(initTarget), pr.GetValue(initApply), pr.GetValue(initUpgrade), o, e, environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "connection deploy":
                     var planModels = new Argument<string[]>("models") { Description = "Model names, files or directories to plan (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(planModels, spec.Name);
                     var planProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var planTarget = new Option<string?>("--connection") { Description = "Connection to deploy to (default: the project's only default connection)" };
+                    var planTarget = ConnectionArgument("Connection to deploy to", spec.Name);
                     var planAnswers = new Option<FileInfo?>("--answers") { Description = "Answers file for the questions (see schemas/answers.schema.json)" };
                     var planAccept = new Option<bool>("--accept-inferred") { Description = "Accept inferred proposals marked high certainty" };
                     var planOut = new Option<DirectoryInfo?>("--output") { Description = "Where to write the plan files (default: plans/<connection>/)" };
@@ -212,50 +213,53 @@ public static class CliApp
                     var deployDry = new Option<bool>("--dry-run") { Description = "Apply: run every check and print every statement; execute nothing" };
                     var deployYes = new Option<bool>("--yes") { Description = "Apply the plan without asking (for a script; risky and destructive steps still need their allowances)" };
                     cmd.Options.Add(planOp); cmd.Options.Add(planBackfill); cmd.Options.Add(planFullRefresh); cmd.Options.Add(planParam);
-                    cmd.Arguments.Add(planModels);
-                    cmd.Options.Add(planProject); cmd.Options.Add(planTarget); cmd.Options.Add(planAnswers); cmd.Options.Add(planAccept); cmd.Options.Add(planOut);
+                    cmd.Arguments.Add(planTarget); cmd.Arguments.Add(planModels);
+                    cmd.Options.Add(planProject); cmd.Options.Add(planAnswers); cmd.Options.Add(planAccept); cmd.Options.Add(planOut);
                     cmd.Options.Add(deployWritePlan); cmd.Options.Add(deployApplyPlan); cmd.Options.Add(deployAck); cmd.Options.Add(deployReason); cmd.Options.Add(deployRisky); cmd.Options.Add(deployDestructive); cmd.Options.Add(deployDirty); cmd.Options.Add(deployDry); cmd.Options.Add(deployYes);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => DeployCommand.Run(spec, pr.GetValue(planProject)!.FullName, pr.GetValue(planTarget), pr.GetValue(planModels) ?? [], pr.GetValue(planAnswers), pr.GetValue(planAccept), pr.GetValue(planOut), pr.GetValue(planOp) ?? [], pr.GetValue(planBackfill) ?? [], pr.GetValue(planFullRefresh) ?? [], pr.GetValue(planParam) ?? [],
+                    cmd.SetAction(pr => { var (planConn, planRest) = SplitConnection(pr.GetValue(planProject)!.FullName, pr.GetValue(planTarget), pr.GetValue(planModels) ?? []); return Reported(pr, spec, (o, e) => DeployCommand.Run(spec, pr.GetValue(planProject)!.FullName, planConn, planRest, pr.GetValue(planAnswers), pr.GetValue(planAccept), pr.GetValue(planOut), pr.GetValue(planOp) ?? [], pr.GetValue(planBackfill) ?? [], pr.GetValue(planFullRefresh) ?? [], pr.GetValue(planParam) ?? [],
                         pr.GetValue(deployWritePlan), pr.GetValue(deployApplyPlan), pr.GetValue(deployAck), pr.GetValue(deployReason), pr.GetValue(deployRisky), pr.GetValue(deployDestructive) ?? [], pr.GetValue(deployDirty), pr.GetValue(deployDry), pr.GetValue(deployYes),
-                        o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)));
+                        o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection status":
                     var checkModels = new Argument<string[]>("models") { Description = "Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection)", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(checkModels, spec.Name);
                     var checkProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var checkTarget = new Option<string?>("--connection") { Description = "Connection to check (default: the project's only default connection)" };
-                    cmd.Arguments.Add(checkModels);
-                    cmd.Options.Add(checkProject); cmd.Options.Add(checkTarget);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => PlanCommand.Check(spec, pr.GetValue(checkProject)!.FullName, pr.GetValue(checkTarget), pr.GetValue(checkModels) ?? [], o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    var checkTarget = ConnectionArgument("Connection to check", spec.Name);
+                    cmd.Arguments.Add(checkTarget); cmd.Arguments.Add(checkModels);
+                    cmd.Options.Add(checkProject);
+                    cmd.SetAction(pr => { var (checkConn, checkRest) = SplitConnection(pr.GetValue(checkProject)!.FullName, pr.GetValue(checkTarget), pr.GetValue(checkModels) ?? []); return Reported(pr, spec, (o, e) => PlanCommand.Check(spec, pr.GetValue(checkProject)!.FullName, checkConn, checkRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection refresh":
                     var runModels = new Argument<string[]>("models") { Description = "Models whose loads to run: names, or patterns with * and ? (default: every routine load of the refresh plan)", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(runModels, spec.Name);
                     var runProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var runTarget = new Option<string?>("--connection") { Description = "Connection (default: the project's only default connection)" };
+                    var runTarget = ConnectionArgument("Connection", spec.Name);
                     var runCheck = new Option<string?>("--check") { Description = "The safety check before the loads, instead of the project's `refresh.check`: none (nothing; the engine's errors are the check), project (this project was deployed here), objects (each object against what was last deployed), live (each object against the catalog now)" };
                     runCheck.AcceptOnlyFromAmong("none", "project", "objects", "live");
                     var runOnFail = new Option<string?>("--on-fail") { Description = "What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run)" };
                     runOnFail.AcceptOnlyFromAmong("block", "warn");
                     var runDirty = new Option<bool>("--allow-dirty") { Description = "Run from a working tree with uncommitted changes (recorded)" };
                     var runDry = new Option<bool>("--dry-run") { Description = "Run every check and print every statement; execute nothing" };
-                    cmd.Arguments.Add(runModels);
-                    cmd.Options.Add(runProject); cmd.Options.Add(runTarget); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), pr.GetValue(runModels) ?? [], pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runModels);
+                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry);
+                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), pr.GetValue(runModels) ?? []); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection monitor":
                     var reportProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var reportTarget = new Option<string?>("--connection") { Description = "Connection (default: the project's only default connection)" };
+                    var reportTarget = ConnectionArgument("Connection", spec.Name);
                     var reportLast = new Option<int>("--last") { Description = "How many recent rows of each history to show", DefaultValueFactory = _ => 10 };
                     var reportLane = new Option<string?>("--lane") { Description = "Only the events of this lane (and their DDL and loads): deploy or refresh" };
                     reportLane.AcceptOnlyFromAmong("deploy", "refresh");
                     var reportEvent = new Option<string?>("--event") { Description = "One event in detail, by its id (as the first table shows it): its states, its DDL and its loads" };
                     var reportAttention = new Option<bool>("--attention") { Description = "Only what needs attention (the other tables are left out of the text; the document still has them)" };
-                    cmd.Options.Add(reportProject); cmd.Options.Add(reportTarget); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
+                    cmd.Arguments.Add(reportTarget); cmd.Options.Add(reportProject); cmd.Options.Add(reportLast); cmd.Options.Add(reportLane); cmd.Options.Add(reportEvent); cmd.Options.Add(reportAttention);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => ReportCommand.Run(spec, pr.GetValue(reportProject)!.FullName, pr.GetValue(reportTarget), pr.GetValue(reportLast), pr.GetValue(reportLane), pr.GetValue(reportEvent), pr.GetValue(reportAttention), o, e, environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "connection compare":
-                    var diffTable = new Argument<string>("table") { Description = "The table or view to compare, as schema_name.table_name (a model's table, for example)" };
+                    var diffTable = new Argument<string?>("table") { Description = "The table or view to compare, as schema_name.table_name (a model's table, for example). Required; the connection comes before it", Arity = ArgumentArity.ZeroOrOne };
+                    GuardOptionLike(diffTable, spec.Name);
                     var diffProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var diffTarget = new Option<string?>("--connection") { Description = "Connection (default: the project's only default connection)" };
+                    var diffTarget = ConnectionArgument("Connection", spec.Name);
                     var diffAgainst = new Option<string?>("--against") { Description = "The table or view to compare it with, as schema_name.table_name" };
                     var diffAgainstSchema = new Option<string?>("--against-schema") { Description = "Compare with the table of the same name under this schema name (a development copy, for example)" };
                     var diffAgainstConnection = new Option<string?>("--against-connection") { Description = "Compare with the table on this connection (the same table name unless --against or --against-schema says another); the connections may be on different engines, and only digests of the values are compared" };
@@ -264,10 +268,10 @@ public static class CliApp
                     var diffExcept = new Option<string[]>("--exclude-columns") { Description = "Leave these columns out of the comparison", AllowMultipleArgumentsPerToken = true };
                     var diffValues = new Option<bool>("--show-values") { Description = "Read and show values: the smallest and largest of each column and sample rows of each difference (without it only counts are read)" };
                     var diffLimit = new Option<int>("--limit") { Description = "With --show-values, how many sample rows of each kind of difference", DefaultValueFactory = _ => 10 };
-                    cmd.Arguments.Add(diffTable); cmd.Options.Add(diffProject); cmd.Options.Add(diffTarget); cmd.Options.Add(diffAgainst); cmd.Options.Add(diffAgainstSchema); cmd.Options.Add(diffAgainstConnection); cmd.Options.Add(diffKey);
+                    cmd.Arguments.Add(diffTarget); cmd.Arguments.Add(diffTable); cmd.Options.Add(diffProject); cmd.Options.Add(diffAgainst); cmd.Options.Add(diffAgainstSchema); cmd.Options.Add(diffAgainstConnection); cmd.Options.Add(diffKey);
                     cmd.Options.Add(diffOnly); cmd.Options.Add(diffExcept); cmd.Options.Add(diffValues); cmd.Options.Add(diffLimit);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => DiffCommand.Run(spec, pr.GetValue(diffProject)!.FullName, pr.GetValue(diffTable)!, pr.GetValue(diffAgainst), pr.GetValue(diffAgainstSchema), pr.GetValue(diffAgainstConnection), pr.GetValue(diffTarget),
-                        pr.GetValue(diffKey) ?? [], pr.GetValue(diffOnly) ?? [], pr.GetValue(diffExcept) ?? [], pr.GetValue(diffValues), pr.GetValue(diffLimit), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    cmd.SetAction(pr => { var (diffConn, diffTableName) = pr.GetValue(diffTable) is { } t ? (pr.GetValue(diffTarget), t) : (null, pr.GetValue(diffTarget)); if (diffTableName == null) { error.WriteLine("The table to compare is required: `connection compare [connection] <schema_name.table_name>`."); return ExitUsage; } return Reported(pr, spec, (o, e) => DiffCommand.Run(spec, pr.GetValue(diffProject)!.FullName, diffTableName, pr.GetValue(diffAgainst), pr.GetValue(diffAgainstSchema), pr.GetValue(diffAgainstConnection), diffConn,
+                        pr.GetValue(diffKey) ?? [], pr.GetValue(diffOnly) ?? [], pr.GetValue(diffExcept) ?? [], pr.GetValue(diffValues), pr.GetValue(diffLimit), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "project show graph":
                     var graphModels = new Argument<string[]>("models") { Description = "Selectors (default: every model): names, paths, `+model`, `model+`, `2+model`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:...`", Arity = ArgumentArity.ZeroOrMore };
@@ -280,12 +284,13 @@ public static class CliApp
                     break;
                 case "project import":
                     var impTables = new Argument<string[]>("tables") { Description = "Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the source descriptors the project already has)", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(impTables, spec.Name);
                     var impProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var impTarget = new Option<string?>("--connection") { Description = "Connection to read (default: the project's only default connection)" };
+                    var impTarget = ConnectionArgument("Connection to read", spec.Name);
                     var impWrite = new Option<bool>("--write") { Description = "Write the new and changed mapped models under models/ (without it the command only shows the diff)" };
                     var impCheck = new Option<bool>("--check") { Description = "CI: fail if a descriptor differs from the table it describes; writes nothing" };
-                    cmd.Arguments.Add(impTables); cmd.Options.Add(impProject); cmd.Options.Add(impTarget); cmd.Options.Add(impWrite); cmd.Options.Add(impCheck);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => ImportSourcesCommand.Run(spec, pr.GetValue(impProject)!.FullName, pr.GetValue(impTarget), pr.GetValue(impTables) ?? [], pr.GetValue(impWrite), pr.GetValue(impCheck), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    cmd.Arguments.Add(impTarget); cmd.Arguments.Add(impTables); cmd.Options.Add(impProject); cmd.Options.Add(impWrite); cmd.Options.Add(impCheck);
+                    cmd.SetAction(pr => { var (impConn, impRest) = SplitConnection(pr.GetValue(impProject)!.FullName, pr.GetValue(impTarget), pr.GetValue(impTables) ?? []); return Reported(pr, spec, (o, e) => ImportSourcesCommand.Run(spec, pr.GetValue(impProject)!.FullName, impConn, impRest, pr.GetValue(impWrite), pr.GetValue(impCheck), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "project tests list":
                     var tlistProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
@@ -312,10 +317,11 @@ public static class CliApp
                     break;
                 case "connection publish":
                     var pubModels = new Argument<string[]>("models") { Description = "Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model)", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(pubModels, spec.Name);
                     var pubProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var pubTarget = new Option<string?>("--connection") { Description = "Connection (default: the project's only default connection)" };
-                    cmd.Arguments.Add(pubModels); cmd.Options.Add(pubProject); cmd.Options.Add(pubTarget);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => PublishMetadataCommand.Run(spec, pr.GetValue(pubProject)!.FullName, pr.GetValue(pubTarget), pr.GetValue(pubModels) ?? [], o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    var pubTarget = ConnectionArgument("Connection", spec.Name);
+                    cmd.Arguments.Add(pubTarget); cmd.Arguments.Add(pubModels); cmd.Options.Add(pubProject);
+                    cmd.SetAction(pr => { var (pubConn, pubRest) = SplitConnection(pr.GetValue(pubProject)!.FullName, pr.GetValue(pubTarget), pr.GetValue(pubModels) ?? []); return Reported(pr, spec, (o, e) => PublishMetadataCommand.Run(spec, pr.GetValue(pubProject)!.FullName, pubConn, pubRest, o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "project show plan":
                     var reviewPlan = new Argument<string?>("plan") { Description = "A plan file (plans/<connection>/<id>.plan.yml); omit to list the project's plans", Arity = ArgumentArity.ZeroOrOne };
@@ -346,6 +352,40 @@ public static class CliApp
             Attach(root, spec.Path, cmd);
         }
         return root;
+    }
+
+    /// <summary>
+    /// A positional value that looks like an option is a mistake, and the parser would otherwise take it for a value (an argument that accepts anything accepts `--connection`, and the command would run on the default
+    /// connection with `--connection` as a model selector). Refused with the way it is written now.
+    /// </summary>
+    private static T GuardOptionLike<T>(T argument, string command) where T : Argument
+    {
+        argument.Validators.Add(result =>
+        {
+            foreach (var token in result.Tokens.Select(t => t.Value).Where(v => v.StartsWith('-') && v.Length > 1 && !char.IsDigit(v[1])))
+                result.AddError(token == "--connection"
+                    ? $"`--connection` is not an option of `{ProductInfo.Cli} {command}`: the connection is the first argument after the command, for example `{ProductInfo.Cli} {command} sqlserver`."
+                    : $"`{token}` is not an option of `{ProductInfo.Cli} {command}`.");
+        });
+        return argument;
+    }
+
+    /// <summary>
+    /// The connection a command works on, as its first positional argument (`connection deploy <c> [models...]`). Left out, it is the project's only default connection (<see cref="CommandTargets.Resolve"/>). The old `--connection`
+    /// option is gone, with no alias.
+    /// </summary>
+    private static Argument<string?> ConnectionArgument(string what, string command) =>
+        GuardOptionLike(new Argument<string?>("connection") { Description = $"{what} (default: the project's only default connection)", Arity = ArgumentArity.ZeroOrOne }, command);
+
+    /// <summary>
+    /// For a command that takes models, tables or patterns after the connection: the first positional is the connection when it is a connection of the project, and otherwise the first of those (so
+    /// `connection status marts.orders` works in a project with one connection). A name that is both a connection and a directory of models is the connection. A command with nothing after the connection never
+    /// calls this: whatever is first is the connection, and an unknown one is reported as such.
+    /// </summary>
+    internal static (string? Connection, string[] Remaining) SplitConnection(string projectRoot, string? first, string[] rest)
+    {
+        if (first == null) return (null, rest);
+        return CommandTargets.NamesOf(projectRoot).Contains(first, StringComparer.Ordinal) ? (first, rest) : ((string?)null, [first, .. rest]);
     }
 
     /// <summary>Puts a command under its groups (`project`, `show`), creating each group the first time it is needed.</summary>

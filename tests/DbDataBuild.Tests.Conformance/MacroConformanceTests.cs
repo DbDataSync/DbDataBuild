@@ -62,17 +62,17 @@ public class MacroConformanceTests
             Write("models/marts/snap_totals.yml", "name: marts.snap_totals\nkind: {type: full}\n" + Cols);
             Write("models/marts/snap_totals.sql", "SELECT * FROM status_totals('src.orders_snap', 'snap_date')\n");
 
-            Ok(Cli("connection", "init", "--connection", name, "--apply"), "init");
+            Ok(Cli("connection", "init", name, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
             // what each engine is given is the query for the table: no choice left in the text
             var snapScript = File.ReadAllText(Path.Combine(dir, "rendered", name, "marts.snap_totals", "load.default.sql"));
             var liveScript = File.ReadAllText(Path.Combine(dir, "rendered", name, "marts.live_totals", "load.default.sql"));
             Assert.Contains("orders_snap", snapScript); Assert.DoesNotContain("CASE", snapScript); Assert.DoesNotContain("UNION", snapScript);
             Assert.DoesNotContain("orders_snap", liveScript); Assert.DoesNotContain("snap_date", liveScript); Assert.DoesNotContain("UNION", liveScript);
-            var plan = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var plan = Cli("connection", "deploy", name, "--write-plan");
             Ok(plan, "plan");
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(plan.Out)), "apply");
-            var refresh = Cli("connection", "deploy", "--write-plan", "--connection", name, "--full-refresh", "marts.snap_totals");           // a model every load of which rebuilds it in full: nothing to refresh, and no reason to refuse
+            var refresh = Cli("connection", "deploy", name, "--write-plan", "--full-refresh", "marts.snap_totals");           // a model every load of which rebuilds it in full: nothing to refresh, and no reason to refuse
             Ok(refresh, "plan --full-refresh of a full model");
             Assert.Contains("rebuilt in full by every load", refresh.Out);
 
@@ -158,7 +158,7 @@ public class MacroConformanceTests
             Ok(Cli("project", "compile", "--check"), "render --check");
             foreach (var connection in new[] { "live", "snap" })
             {
-                var plan = Cli("connection", "deploy", "--write-plan", "--connection", connection);
+                var plan = Cli("connection", "deploy", connection, "--write-plan");
                 Ok(plan, $"plan {connection}");
                 Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(plan.Out)), $"apply {connection}");
             }

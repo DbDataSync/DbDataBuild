@@ -185,7 +185,7 @@ Left:
 - **Fabric** has not been run for any template or sample (as before).
 - **DuckDB's `ENUM`**: a cast to an enum is now refused (DDB-324). Mapping an enum to a `VARCHAR` plus a check is possible but is a design question (what the engine does with a value outside the list); decide before building it.
 
-## T. Description, title, tags and properties on every object; the positional connection name (decided 2026-10-12; first half done 2026-10-12, entry 145)
+## T. Description, title, tags and properties on every object; the positional connection name (decided 2026-10-12; done 2026-10-12, entries 145 and 146; what is left is below)
 
 Decided with the owner:
 
@@ -202,4 +202,4 @@ Decided with the owner:
 - A `property:` selector on **connections** (there is no connection selector for commands that take several), and a **list** as a property value (refused today: use `tags`).
 - `import --refresh` writes the merged `tags` and `properties` of a mapped model into its own file when a folder file gave it some (same meaning, one more place to edit; `connections` already behaves so).
 
-**Second half** (not started when entry 145 was written): the positional connection name. `connection <verb> <c>` instead of `--connection <c>` (design: `docs/concepts.md`, `docs/research/lifecycle-implementation.md` phase 2), optional when one connection exists. Breaking, like the rest of the tree: no alias.
+**Second half done (entry 146)**: `connection <verb> [c]` instead of `--connection <c>` for every command that works on one connection (and `project import`, `ui terminal`), optional with one default connection, no alias. Left as options because they take a list or filter, not the connection a command works on: `project compile --connection`, `project model create --connection`, `project show plan --connection`; the owner may want them positional or renamed (decision). The terminal and the web page were not driven by hand.

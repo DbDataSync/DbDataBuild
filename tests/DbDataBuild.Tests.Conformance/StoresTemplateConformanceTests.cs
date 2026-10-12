@@ -45,23 +45,23 @@ public partial class StoresTemplateConformanceTests
         string PlanOf(string output) => Path.Combine(dir, PlanPath().Match(output).Groups[1].Value);
         void Deploy(string connection)
         {
-            var plan = Cli("connection", "deploy", "--write-plan", "--connection", connection);
+            var plan = Cli("connection", "deploy", connection, "--write-plan");
             Ok(plan, $"plan {connection}");
-            Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(plan.Out), "--connection", connection), $"apply {connection}");
+            Ok(Cli("connection", "deploy", connection, "--apply-plan", PlanOf(plan.Out)), $"apply {connection}");
         }
         try
         {
             Ok(Cli("project", "create", "stores", dir), "create");
-            Ok(Cli("connection", "seed", "--connection", "store_east", "--seed", "1", "--apply"), "seed east");
-            Ok(Cli("connection", "seed", "--connection", "store_west", "--seed", "2", "--apply"), "seed west");
+            Ok(Cli("connection", "seed", "store_east", "--seed", "1", "--apply"), "seed east");
+            Ok(Cli("connection", "seed", "store_west", "--seed", "2", "--apply"), "seed west");
             Ok(Cli("project", "compile"), "compile");
             // a shop system keeps no records of its own: what is missing is the warehouse's tracking tables, and that is where `init` is advised
-            var before = Cli("connection", "inspect", "--connection", "store_east");
+            var before = Cli("connection", "inspect", "store_east");
             Assert.Equal(1, before.Exit);
             Assert.Contains("schema dbdatabuild on sqlserver: not there yet", before.Out);
-            Assert.Contains("connection init --connection sqlserver --apply", before.Out);
-            Ok(Cli("connection", "init", "--connection", "sqlserver", "--apply"), "init");
-            Ok(Cli("connection", "inspect", "--connection", "store_east"), "inspect once the tracking tables are there");     // the one tracking connection serves every connection of the project
+            Assert.Contains("connection init sqlserver --apply", before.Out);
+            Ok(Cli("connection", "init", "sqlserver", "--apply"), "init");
+            Ok(Cli("connection", "inspect", "store_east"), "inspect once the tracking tables are there");     // the one tracking connection serves every connection of the project
 
             foreach (var connection in new[] { "sqlserver", "postgres" })
             {
@@ -91,13 +91,13 @@ public partial class StoresTemplateConformanceTests
             var onPostgres = await reporting.RowsAsync("SELECT store_id || '|' || to_char(ordered_on, 'YYYY-MM-DD') || '|' || channel || '|' || orders || '|' || amount FROM marts.daily_sales");
             Assert.Equal(expected, onSqlServer.Order(StringComparer.Ordinal));
             Assert.Equal(expected, onPostgres.Order(StringComparer.Ordinal));
-            Ok(Cli("connection", "compare", "marts.daily_sales", "--connection", "sqlserver", "--against-connection", "postgres"), "compare the two engines");
+            Ok(Cli("connection", "compare", "sqlserver", "marts.daily_sales", "--against-connection", "postgres"), "compare the two engines");
 
             // a refresh runs what is routine and leaves the copy alone: a new order at a shop reaches the warehouse with a deploy, not before
             await east.ExecAsync("INSERT INTO pos.orders VALUES (1000, '2024-03-02', 'web', 99.99)");
             foreach (var connection in new[] { "sqlserver", "postgres" })
             {
-                var refresh = Cli("connection", "refresh", "--connection", connection);
+                var refresh = Cli("connection", "refresh", connection);
                 Ok(refresh, $"refresh {connection}");
                 Assert.Contains("warehouse.orders", refresh.Out.Split('\n').Single(l => l.Contains("not routine")));
             }

@@ -35,7 +35,7 @@ public class TrackingUpgradeConformanceTests
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{name}]}}\ntracking: {{ connection: {name}, schema: {schema} }}\n" + (name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
 
             // the layout as it was: this layout, less the column, with the keys as they were, the version recorded as 3
-            Ok(Cli("connection", "init", "--connection", name, "--apply"), "init");
+            Ok(Cli("connection", "init", name, "--apply"), "init");
             foreach (var view in new[] { "metadata_columns", "metadata_current" }) await engine.ExecAsync($"DROP VIEW {Q(schema)}.{Q(view)}");
             foreach (var t in TrackingSchema.Tables.Where(t => t.Columns.Any(c => c.Name == "connection")))
             {
@@ -48,26 +48,26 @@ public class TrackingUpgradeConformanceTests
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("migration_log")} ({Q("plan_id")}, {Q("plan_hash")}, {Q("plan_text")}, {Q("applied_by")}, {Q("applied_utc")}, {Q("status")}) VALUES ('old-plan', '{new string('a', 64)}', 'text', 'someone', '2026-01-01 00:00:00', 'completed')");
 
             // without the upgrade the tool says what to do
-            var refused = Cli("connection", "deploy", "--write-plan", "--connection", name);
+            var refused = Cli("connection", "deploy", name, "--write-plan");
             Assert.NotEqual(0, refused.Exit);
             Assert.Contains("init --upgrade", refused.Err + refused.Out);
 
             // the script is printed for review first
-            var review = Cli("connection", "init", "--connection", name, "--upgrade");
+            var review = Cli("connection", "init", name, "--upgrade");
             Ok(review, "review");
             Assert.Contains("upgrade-01", review.Out);
             Assert.Contains("This is an upgrade", review.Out);
 
-            Ok(Cli("connection", "init", "--connection", name, "--upgrade", "--apply"), "upgrade");
+            Ok(Cli("connection", "init", name, "--upgrade", "--apply"), "upgrade");
             Assert.Equal([name], await engine.RowsAsync($"SELECT {Q("connection")} FROM {Q(schema)}.{Q("migration_log")}"));        // the rows it had belong to the connection that was initialized
             Assert.Equal(["6"], await engine.RowsAsync($"SELECT CAST(MAX({Q("version")}) AS VARCHAR(10)) FROM {Q(schema)}.{Q("tracking_version")}"));
             // the key includes the connection now: another connection can have the same plan id
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("migration_log")} ({Q("connection")}, {Q("plan_id")}, {Q("plan_hash")}, {Q("plan_text")}, {Q("applied_by")}, {Q("applied_utc")}, {Q("status")}) VALUES ('other', 'old-plan', '{new string('b', 64)}', 'text', 'someone', '2026-01-01 00:00:00', 'completed')");
             Assert.Equal(2, int.Parse((await engine.RowsAsync($"SELECT CAST(COUNT(*) AS VARCHAR(10)) FROM {Q(schema)}.{Q("migration_log")}")).Single()));
-            var report = Cli("connection", "monitor", "--connection", name);
+            var report = Cli("connection", "monitor", name);
             Assert.Contains("old-plan", report.Out);                                                                          // the tool reads the upgraded tables
             Assert.DoesNotContain("DDB-505", report.Err + report.Out);
-            Ok(Cli("connection", "init", "--connection", name, "--upgrade", "--apply"), "a second upgrade changes nothing");              // safe to repeat
+            Ok(Cli("connection", "init", name, "--upgrade", "--apply"), "a second upgrade changes nothing");              // safe to repeat
             Assert.Equal(2, int.Parse((await engine.RowsAsync($"SELECT CAST(COUNT(*) AS VARCHAR(10)) FROM {Q(schema)}.{Q("migration_log")}")).Single()));
         }
         finally
@@ -98,7 +98,7 @@ public class TrackingUpgradeConformanceTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{name}]}}\ntracking: {{ connection: {name}, schema: {schema} }}\n" + (name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
 
             // the layout as it was: this layout without the two columns of layout five, recorded as four (the table of layout six is left: a store at four is not claimed whatever else it holds)
             foreach (var (table, column) in TrackingSchema.AddedInLayout5) await engine.ExecAsync($"ALTER TABLE {Q(schema)}.{Q(table)} DROP COLUMN {Q(column)}");
@@ -106,16 +106,16 @@ public class TrackingUpgradeConformanceTests
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (4, 'old', {(name == "postgres" ? "now()" : "SYSUTCDATETIME()")})");
 
             // init never alters, so it does not claim the store: the version stays four and the tool says what to do
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
             Assert.Equal(["4"], await engine.RowsAsync($"SELECT CAST(MAX({Q("version")}) AS VARCHAR(10)) FROM {Q(schema)}.{Q("tracking_version")}"));
-            var refused = Cli("connection", "monitor", "--connection", name);
+            var refused = Cli("connection", "monitor", name);
             Assert.NotEqual(0, refused.Exit);
             Assert.Contains("init --upgrade", refused.Err + refused.Out);
 
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--upgrade", "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);
             Assert.Equal(["6"], await engine.RowsAsync($"SELECT CAST(MAX({Q("version")}) AS VARCHAR(10)) FROM {Q(schema)}.{Q("tracking_version")}"));
-            Assert.Equal(0, Cli("connection", "monitor", "--connection", name).Exit);
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--upgrade", "--apply").Exit);          // safe to repeat
+            Assert.Equal(0, Cli("connection", "monitor", name).Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);          // safe to repeat
         }
         finally
         {
@@ -152,28 +152,28 @@ public class TrackingUpgradeConformanceTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{name}]}}\ntracking: {{ connection: {name}, schema: {schema} }}\n" + (name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
             Assert.Equal("6", await Version());
 
             // the layout as it was: this layout without the info table, recorded as five
             await BackToFive();
-            var refused = Cli("connection", "monitor", "--connection", name);
+            var refused = Cli("connection", "monitor", name);
             Assert.NotEqual(0, refused.Exit);
             Assert.Contains("DDB-505", refused.Err + refused.Out);
             Assert.Contains("object_info", refused.Err + refused.Out);                                  // it says what is missing and what to run
 
             // init alters nothing and creates the table, so it brings the store to six
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
             Assert.Equal("6", await Version());
             Assert.Empty(await engine.RowsAsync($"SELECT {Q("connection")} FROM {Q(schema)}.{Q(TrackingSchema.AddedInLayout6)}"));
-            Assert.Equal(0, Cli("connection", "monitor", "--connection", name).Exit);
+            Assert.Equal(0, Cli("connection", "monitor", name).Exit);
 
             // and so does the upgrade, which is also safe to repeat
             await BackToFive();
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--upgrade", "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);
             Assert.Equal("6", await Version());
-            Assert.Equal(0, Cli("connection", "init", "--connection", name, "--upgrade", "--apply").Exit);
-            Assert.Equal(0, Cli("connection", "monitor", "--connection", name).Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "monitor", name).Exit);
         }
         finally
         {

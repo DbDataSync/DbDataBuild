@@ -47,19 +47,19 @@ quintiles, the year-on-year comparison, the on-time flags.
 
 `connection seed` puts the source tables in an empty database you do not mind filling; the logins are environment variables (`DBDATABUILD_SQLSERVER_READ` and `DBDATABUILD_SQLSERVER_WRITE`, or `..._POSTGRES_...`).
 Create a SQL Server database case-sensitive (`CREATE DATABASE adventureworks COLLATE Latin1_General_100_CS_AS`) to match the project's string profile; with the server default `connection status` reports DDB-310 for a view column made of literals.
-The numbers below are from a run against SQL Server 2022 (the same cycle ran on PostgreSQL 17 with the profile in the comment at the top of `dbdatabuild.yml`: same counts, `--connection postgres`); ids and times differ in yours.
+The numbers below are from a run against SQL Server 2022 (the same cycle ran on PostgreSQL 17 with the profile in the comment at the top of `dbdatabuild.yml`: same counts, with `postgres` as the connection); ids and times differ in yours.
 
 ```
 dbdatabuild project compile                                   # offline; writes rendered/, including rendered/sqlserver/refresh.plan.yml
-dbdatabuild connection inspect --connection sqlserver         # can the tool use it? (before init: "tracking ... not there yet"; after: "Nothing in the way.")
-dbdatabuild connection seed --connection sqlserver --apply    # 23 table(s), 19531 row(s)
-dbdatabuild connection init --connection sqlserver --apply    # the tracking tables (13 statements)
-dbdatabuild connection status --connection sqlserver          # Structure  pending: a deploy would run 50 step(s) (0 risky, 0 destructive) and 24 load(s)
-dbdatabuild connection deploy --connection sqlserver --write-plan --accept-inferred    # Plan <id>: 74 step(s) (50 ddl, 24 load, ...); read plans/sqlserver/<id>.plan.md
-dbdatabuild connection deploy --connection sqlserver --apply-plan plans/sqlserver/<id>.plan.yml    # Applied plan <id>: 74 step(s) executed.
-dbdatabuild connection refresh --connection sqlserver         # Refresh plan rendered/sqlserver/refresh.plan.yml: 24 routine load(s). ... Refresh ref-<time>-<hash>: 24 step(s) ran.
-dbdatabuild connection status --connection sqlserver          # Structure  in sync: a deploy would change no structure (it would run 24 routine load(s))
-dbdatabuild connection monitor --connection sqlserver         # events (one deploy, one refresh), DDL, loads, recorded shapes; --event <id>, --lane refresh, --attention
+dbdatabuild connection inspect sqlserver         # can the tool use it? (before init: "tracking ... not there yet"; after: "Nothing in the way.")
+dbdatabuild connection seed sqlserver --apply    # 23 table(s), 19531 row(s)
+dbdatabuild connection init sqlserver --apply    # the tracking tables (14 statements)
+dbdatabuild connection status sqlserver          # Structure  pending: a deploy would run 50 step(s) (0 risky, 0 destructive) and 24 load(s)
+dbdatabuild connection deploy sqlserver --write-plan --accept-inferred    # Plan <id>: 74 step(s) (50 ddl, 24 load, ...); read plans/sqlserver/<id>.plan.md
+dbdatabuild connection deploy sqlserver --apply-plan plans/sqlserver/<id>.plan.yml    # Applied plan <id>: 74 step(s) executed.
+dbdatabuild connection refresh sqlserver         # Refresh plan rendered/sqlserver/refresh.plan.yml: 24 routine load(s). ... Refresh ref-<time>-<hash>: 24 step(s) ran.
+dbdatabuild connection status sqlserver          # Structure  in sync: a deploy would change no structure (it would run 24 routine load(s))
+dbdatabuild connection monitor sqlserver         # events (one deploy, one refresh), DDL, loads, recorded shapes; --event <id>, --lane refresh, --attention
 ```
 
 What each step is for, and the four `refresh.check` levels (`none`, `project`, `objects`, `live`) with the message each gives when it stops a refresh, are in the `retail` README (`dbdatabuild project create retail`), whose walk-through is the longest.
