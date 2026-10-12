@@ -8,7 +8,7 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 * **Fix the bugs first, then restructure, then add.** The scheduled-refresh failure and the doubled row counts are independent of the new names and are fixed in phase 1.
 * **One inner name, one outer name.** The command tree users see is new; the code keeps one `CommandSpec` per command and the JSON `command` field carries the new path (`connection deploy`). Tests use the new names.
 * **Every phase ends green**: unit suite, the real-engine suite for anything that touches a database, a progress-log entry saying what was verified where, docs regenerated (`docs/commands.md` is generated from the command tree).
-* **The tracking layout changes once** (layout 5, phase 5). Until then new facts go in existing columns.
+* **The tracking layout changes once per kind of fact** (layout 5, phase 5; layout 6, 2026-10-12, the words about objects: `object_info`). Until then new facts go in existing columns.
 
 ## 2. Phases
 
@@ -105,3 +105,4 @@ Design: `docs/research/lifecycle-model.md`. For people who use the tool: `docs/c
 | 2026-10-08 | 5, 7, 8 | `keep: ephemeral`, audit levels, statement-log retention; lane and disposition on the MCP tools and the terminal catalog; lane chips on the web page's screens |
 | 2026-10-08 | 5, later | `plans.deploy.keep: database` with the `plan_store` table; `project model create` |
 | 2026-10-08 | 6 | `monitor --lane|--event|--attention`; one header and one summary for the interactive deploy and the refresh |
+| 2026-10-12 | later | `title`, `description`, `tags` and `properties` on the project, connections, models, columns and indexes; tracking layout 6 (`object_info`, `init` and `init --upgrade` from 5); `property:key=value`; verified on SQL Server 2022 and PostgreSQL 17 (entry 145) |

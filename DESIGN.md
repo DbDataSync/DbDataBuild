@@ -431,6 +431,31 @@ connection (the text is that engine's dialect, never lowered or transpiled). The
   is reported as not checked (DDB-235, a note) and nothing is recorded for it. Read-only: one catalog query per routine on the read login.
 - **Not built**: change feeds with deletes (backlog, `OPEN-ITEMS.md` L).
 
+### 6.5.8 Title, description, tags and properties (as built; entry 145)
+
+The project, each connection, each model (built, mapped or native), each column and each index can say what they are in words, with four keys of the same names everywhere. **Nothing here changes what is built**: no rendered file, plan, shape hash or statement depends on it, and nothing is written into a deployed SQL object (no `COMMENT ON`, no extended property; that stays a later decision, `OPEN-ITEMS.md` T).
+
+| Key | Value | Limit | Inherited |
+|---|---|---|---|
+| `title` | a short display name, one line | 200 characters | no |
+| `description` | free text (a quoted or block scalar) | 4000 characters | no |
+| `tags` | a list of words: letters, digits, `_`, `-`, `.`, `:`; starting with a letter, digit or `_` | 128 characters each | models and mapped or native models, from `defaults:` above (below) |
+| `properties` | a mapping of key to one value | key 128 characters (a tag's form, starting with a letter or `_` and not ending in `-`, so `key-` and `key=` keep their merge meaning), value 4000 | the same |
+
+Where: `dbdatabuild.yml` has them at the top level for the project (`defaults:` is the model settings and a different thing) and in each `connections.<name>` entry; a model's definition has them at the top level, in each column and in each index; a mapped or native model, its columns and its indexes likewise (`foreign_keys` and the tests under `tests/` have none: a test's `description` and `tags` are comments in its own file, DESIGN.md 9.8). A value past a limit, a key or tag of the wrong shape is **DDB-243**; a value of the wrong kind (a list where a word is expected, an empty or `null` property) is DDB-106.
+
+**Property values** are text, a number or a boolean, read from how they are written and never from a declared type: `true` and `false` (lowercase, unquoted) are booleans; unquoted plain digits (`-12`, `0.5`; no exponent, no leading zero, no plus sign) are numbers; everything else, and anything in quotes, is text (`"007"`, `"1"` and `1e3` are text). A property is held as its text with a type tag beside it (`number`, `boolean` or `text`), so the digits written are the digits kept, a value compares as its text whatever its type (`property:tier=1` selects `tier: 1` and `tier: "1"` alike), and a rewrite of a file quotes a text that looks like a number or a boolean so the type survives. In the metadata documents a property is a JSON string, number (the digits as written) or boolean. A list or a mapping as a value is refused: a property is one fact; use `tags` for several words.
+
+**Layering.** `tags` and `properties` of a model are layered keys (9.4.1) with the rules `tags` already had: the project's `defaults:`, then each folder's `_dbdatabuild.yml` from `models/` down, then the model's own file, the nearest winning. A mapping merges by key (the nearer value replaces the farther for the same key), `properties=: {..}` replaces everything inherited, `properties-: [key, ...]` removes keys; for `tags` a list appends, `tags=` replaces and `tags-` removes. `title` and `description` are not layered: they describe the object whose file writes them, and either in a `defaults:` section is an unknown key (DDB-104). A connection's, a column's, an index's and the project's own words are not inherited from anything. A diagnostic about a value that came from a folder file names that file.
+
+**Selector.** `property:key=value` selects the models whose merged `properties` have that key with that value as text (a comma ends a selector term, so a value with a comma cannot be selected); `property:key` selects the models that have the key. `tag:` as before.
+
+**Where it goes.** The metadata documents carry them, leaving out what is empty (so a project that says nothing has the documents it had, byte for byte): `title`, `description`, `tags` (sorted) and `properties` (sorted by key) on the project document and on each connection in `config.connections`, on the model and source documents, and on each of their `columns` and `indexes` (`schemas/metadata.schema.json`). `connection publish` and the deploy's `metadata.store_on_apply` store the documents as before; **tracking layout 6** adds the table `object_info` and `publish` also writes what each stored document says as rows: for one subject (kind `project`, `model` or `source`, and its name) and one element (`''` for the object itself, `column:<name>`, `index:<name>` or `connection:<name>`), an `item` (`title`, `description`, `tag`, `property`), an `item_key` (the tag, or the property key) and for a property its `value_type` and `value` as text. The rows of a subject are replaced when its document changes (the old rows first, the document after, so an interrupted publish is repeated whole by the next one), and a subject that stops saying anything has none left. They can be queried with plain SQL (`SELECT ... FROM dbdatabuild.object_info WHERE item = 'property' AND item_key = 'owner'`) without opening the JSON.
+
+**Maintained by the tools.** `project model update` splices what it changes and leaves other keys and comments as they are, so words written in a model survive it; `project import --refresh` rewrites a mapped model's file from the live table and keeps what the committed file said about the table, its columns and its indexes (including, for a model in a folder with `defaults:` tags or properties, the merged result written into the file: the same meaning, one more place to edit). The definition hash of a source does not include any of it.
+
+**Not built.** Writing them into the database (`COMMENT ON`, extended properties); the same four on foreign keys, tests, hooks, loads and parameters; a `property:` selector on connections; a list as a property value.
+
 ### 6.6 Load operations: paired with targets, committed, parameterized
 
 A **load operation** is a named way to load one model on one target. A model can have several operations per target (for example a routine watermark load, a period reload, and a keyed merge). The SQL for every operation is **rendered to disk and committed**. At execution time the only unresolved things are the operation's declared runtime parameters.
@@ -820,10 +845,14 @@ A test enumerates call paths to `ExecuteNonQuery` and fails on any path not rout
 Offline settings only. Credentials never live here (section 9.2). Every key is optional; an absent key takes the built-in default, and **every command prints the effective settings in its header**, so a default is never hidden. A missing file yields the defaults and a warning (DDB-109). The schema is `schemas/config.schema.json`.
 
 ```yaml
+title: Sales analytics            # what the project is, in words (6.5.8): title, description, tags and properties; none changes what is built
+description: "Orders and customers of the shop."
+tags: [sales]
+properties: { owner: analytics, tier: 1 }
 defaults:                         # model settings every model inherits (section 9.4.1). Default connections: [sqlserver]
   connections: [sqlserver]
 connections:                      # named database endpoints; one named after an engine needs no entry (it may set the version)
-  sqlserver: { version: 16 }      # the T-SQL level to generate for (see below); resolves matrix `min_version` rows
+  sqlserver: { version: 16, title: Warehouse }      # the T-SQL level to generate for (see below); resolves matrix `min_version` rows. A connection may carry the four words too
   # warehouse: { engine: postgres }   # any other name says its engine; its logins are DBDATABUILD_WAREHOUSE_READ and _WRITE
   postgres:  { version: 17 }
 tracking:                         # where the records of what the tool built are kept (section 12). Default: nowhere, with a warning
@@ -853,7 +882,7 @@ policy:
 ### 9.4.1 Project files in folders and the merge rules (as built)
 
 `dbdatabuild.yml` is the root **project file**. A folder under `models/` may hold `_dbdatabuild.yml`: not a model (the loader and the orphan check skip it). Both files have a `defaults:` section of **model settings**
-(`connections`, `kind`, `hooks`, `rewrites`, `lint_ignore`, `tags`; `ModelDefinitionLoader.LayeredKeys`; `tags` are labels that `tag:<name>` selects by, merged like `lint_ignore`: they append, `tags=` replaces, `tags-` removes; entry 101), and for a model the layers are the root file, then each folder's file from `models/` down to the model's folder, then the
+(`connections`, `kind`, `hooks`, `rewrites`, `lint_ignore`, `tags`, `properties`; `ModelDefinitionLoader.LayeredKeys`; `tags` are labels that `tag:<name>` selects by, merged like `lint_ignore`: they append, `tags=` replaces, `tags-` removes; entry 101; `properties` is a mapping of key to value that merges by key, with `properties=` and `properties-: [key]`, 6.5.8), and for a model the layers are the root file, then each folder's file from `models/` down to the model's folder, then the
 model's own file, **the nearest winning**. A folder file has no other section yet; the project-wide sections (connections, tracking, policy, string semantics) are root-only. What is not layered (`name`, `columns`, `grain`,
 `loads`, `indexes`, `renames`) stays in the model's own file.
 
@@ -866,7 +895,7 @@ exactly that.
 Diagnostics name the file the problem is in (a bad inherited `kind` is reported at the folder file's line; each model that inherits it reports it). Provenance is not hidden: `validate` prints
 `Inherited by <model>: <path> = <value> (<file>:<line>), ...` for every model that took anything, and the model's metadata document carries the same as `inherited`.
 
-Built since: parameters in files (6.5.3), the name of a model from its definition with `model_layout` (6.5.6). Not built yet: tags, and project-wide sections in a folder file (a folder file holds `defaults:` and `parameters:`).
+Built since: parameters in files (6.5.3), the name of a model from its definition with `model_layout` (6.5.6). Not built yet: project-wide sections in a folder file (a folder file holds `defaults:` and `parameters:`).
 
 ### 9.5 Machine-readable output and its schemas (as built)
 
@@ -928,7 +957,7 @@ Projects can test themselves, with metadata rules and model tests (both built; g
 SELECT model, column_name FROM metadata_columns WHERE kind = 'model' AND logical_type = 'VARCHAR'
 ```
 
-**The views.** The metadata documents (the project, every source, every model: what `metadata --format json` prints and `publish-metadata` stores) are loaded into an in-memory DuckDB with file and network access off, and flattened into views. `metadata_current` (`kind`, `subject`, `document` JSON, `document_hash`, `tool_version`) and `metadata_columns` (`model`, `column_name`, `logical_type`, `nullable`, `collation`, `sqlserver_type`, `postgres_type`, `fabric_type`, `inferred_nullability`, `upstream`, `kind`: one row per model **or source** column) have the names and columns of the views `init` creates in a target, so a rule means the same thing against published metadata. The rest flatten the documents: `metadata_models` (kind, unique key, time column, lookback, grain, connections, files, hash, column count), `metadata_sources` (grain, file, hash, consumers), `metadata_upstream` (model, upstream, `model` or `source`), `metadata_ancestors` (every table a model depends on, with its distance), `metadata_lineage` (one row per column and upstream column, with the transform), `metadata_native_types` (one row per column and connection, with collation or the mapping error), `metadata_indexes`, `metadata_source_indexes` and `metadata_source_foreign_keys` (what an imported source table has), `metadata_loads` (connection, operation, strategy, matrix status, findings, script hash), `metadata_hooks` and `metadata_index_advice`. Lists are DuckDB lists (`len(grain)`, `list_contains(connections, 'postgres')`). The documents themselves are always there in `metadata_current.document` for anything the views leave out. The views are built from the published documents, so a rule sees exactly what is published; they are not yet created in the target (a later step).
+**The views.** The metadata documents (the project, every source, every model: what `metadata --format json` prints and `publish-metadata` stores) are loaded into an in-memory DuckDB with file and network access off, and flattened into views. `metadata_current` (`kind`, `subject`, `document` JSON, `document_hash`, `tool_version`) and `metadata_columns` (`model`, `column_name`, `logical_type`, `nullable`, `collation`, `sqlserver_type`, `postgres_type`, `fabric_type`, `inferred_nullability`, `upstream`, `kind`: one row per model **or source** column) have the names and columns of the views `init` creates in a target, so a rule means the same thing against published metadata. The rest flatten the documents: `metadata_models` (kind, unique key, time column, lookback, grain, connections, files, hash, column count, title, description, tags), `metadata_sources` (grain, file, hash, consumers, title, description, tags), `metadata_info` (the rows of the tracking table `object_info`, 6.5.8: `subject_kind`, `subject`, `element`, `item`, `item_key`, `value_type`, `value`, for the project, connections, models, sources, columns and indexes), `metadata_upstream` (model, upstream, `model` or `source`), `metadata_ancestors` (every table a model depends on, with its distance), `metadata_lineage` (one row per column and upstream column, with the transform), `metadata_native_types` (one row per column and connection, with collation or the mapping error), `metadata_indexes`, `metadata_source_indexes` and `metadata_source_foreign_keys` (what an imported source table has), `metadata_loads` (connection, operation, strategy, matrix status, findings, script hash), `metadata_hooks` and `metadata_index_advice`. Lists are DuckDB lists (`len(grain)`, `list_contains(connections, 'postgres')`). The documents themselves are always there in `metadata_current.document` for anything the views leave out. The views are built from the published documents, so a rule sees exactly what is published; they are not yet created in the target (a later step).
 
 **Running.** `dbdatabuild project tests run [names or files] [--tag t ...] [--limit n] [--strict]`, effect class offline only. A rule is parsed by DuckDB first and must be exactly one `SELECT` (DDB-603); one that DuckDB cannot run is DDB-602 whatever its severity. A rule that returns rows is DDB-601: error severity makes the run exit 1, warning severity is reported (as a warning-severity diagnostic) and exits 0 unless `--strict`. `--tag` runs the tests that have any of the given tags; a damaged file is its own finding and never stops the others. The result is one document (`data.counts`, `data.tests[]` with status `pass`, `fail`, `warn` or `error`, the violating rows up to `--limit`, and the columns).
 
@@ -968,7 +997,7 @@ These tests check a model's **logic in DuckDB**: the lowering to each engine is 
 | `model+` | the model and everything that depends on it |
 | `2+model`, `model+1` | the same, limited to that many steps |
 | `@model` | the model, everything that depends on it, and everything those need to be built (dbt's `@`) |
-| `kind:full`, `connection:postgres`, `tag:finance`, `path:models/marts` | by kind, by a connection the model is built for, by tag (`tags:` in the definition or in a `defaults:` section above it), by directory |
+| `kind:full`, `connection:postgres`, `tag:finance`, `property:owner=finance`, `path:models/marts` | by kind, by a connection the model is built for, by tag (`tags:` in the definition or in a `defaults:` section above it), by a property and its value as text (`property:owner` alone: has the property), by directory |
 | `changed:<git ref>` | the models whose `.sql` or `.yml` differs from the ref in the working tree (committed or not, and untracked files); a changed source descriptor selects the models that read it; a changed `dbdatabuild.yml` selects every model; a changed folder file (`_dbdatabuild.yml`) selects every model beneath it, a changed native text the models that read it, a changed hook script the models that run it, a changed macro file the models whose queries reach one of its macros, and a changed rendered file the model it was rendered for (entry 97). `changed:origin/main+` is the changed models and what depends on them. Nothing changed is a valid, empty selection |
 | `a,b` | the intersection of the terms: `kind:view,stg.orders+` |
 | `exclude:<selector>` | takes models out again: `marts.fct_orders+ exclude:marts.big` |
@@ -1180,6 +1209,8 @@ CREATE TABLE dbdatabuild.migration_log (
 ```
 
 **Layout 5** (`migration_log.lane`, `migration_log.project_hash`): a row of `migration_log` is an event (a deploy or a refresh run, with its own id; a refresh is `ref-<utc>-<4 hex>`). `init` never alters a table, so on a store of layout 4 it does not record version 5 until `init --upgrade --apply` has added the two columns; commands refuse the store (DDB-505) until then.
+
+**Layout 6** (the table `object_info`): the title, description, tags and properties of the project, its connections, its models and sources, their columns and indexes, one row each, written by `connection publish` (and the deploy's `metadata.store_on_apply`) from the documents it stores (6.5.8). Columns: `connection`, `subject_kind` (`project`, `model`, `source`), `subject`, `element` (`''`, `column:x`, `index:x`, `connection:x`), `item` (`title`, `description`, `tag`, `property`), `item_key` (a tag or a property key; `''` for the other two), `value_type` (`text`, `number`, `boolean`, for a property), `value` (as text), `recorded_utc`; the key is the first six. A layout 5 store lacks only this table: `init` creates it (it alters nothing, and records version 6 once the table is there), and `init --upgrade` does the same after its own steps. The deployed objects themselves carry none of it.
 
 ### 12.1 Hashes
 

@@ -35,13 +35,15 @@ SELECT m.subject AS model, m.document->'kind'->>'type' AS kind_type,
   CAST(m.document->'kind'->'unique_key' AS VARCHAR[]) AS unique_key, m.document->'kind'->>'time_column' AS time_column, m.document->'kind'->>'lookback' AS lookback,
   CAST(m.document->'grain' AS VARCHAR[]) AS grain, CAST(m.document->'connections' AS VARCHAR[]) AS connections,
   m.document->'files'->>'definition' AS definition_file, m.document->'files'->>'query' AS query_file, m.document->>'definition_hash' AS definition_hash,
-  json_array_length(m.document->'columns') AS column_count
+  json_array_length(m.document->'columns') AS column_count,
+  m.document->>'title' AS title, m.document->>'description' AS description, CAST(m.document->'tags' AS VARCHAR[]) AS tags
 FROM metadata_current m WHERE m.kind = 'model';
 
 CREATE VIEW metadata_sources AS
 SELECT m.subject AS source, CAST(m.document->'grain' AS VARCHAR[]) AS grain, m.document->>'file' AS file, m.document->>'definition_hash' AS definition_hash,
   CAST(m.document->'consumers' AS VARCHAR[]) AS consumers, json_array_length(m.document->'columns') AS column_count,
-  m.document->'native'->>'access' AS native_access, CAST(m.document->'native'->'reads' AS VARCHAR[]) AS native_reads
+  m.document->'native'->>'access' AS native_access, CAST(m.document->'native'->'reads' AS VARCHAR[]) AS native_reads,
+  m.document->>'title' AS title, m.document->>'description' AS description, CAST(m.document->'tags' AS VARCHAR[]) AS tags
 FROM metadata_current m WHERE m.kind = 'source';
 
 CREATE VIEW metadata_upstream AS
@@ -94,6 +96,28 @@ SELECT m.subject AS model, k.connection, h->>'name' AS hook_name, h->>'event' AS
 FROM metadata_current m, unnest(json_keys(m.document->'hooks')) AS k(connection),
   unnest(CAST(json_extract(m.document, '$.hooks."' || k.connection || '"') AS JSON[])) AS t(h) WHERE m.kind = 'model';
 
+CREATE VIEW metadata_info AS
+WITH parts AS (
+  SELECT m.kind AS subject_kind, m.subject AS subject, '' AS element, m.document AS d FROM metadata_current m WHERE m.kind IN ('project', 'model', 'source')
+  UNION ALL
+  SELECT m.kind, m.subject, 'column:' || (c->>'name'), c FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c) WHERE m.kind IN ('model', 'source')
+  UNION ALL
+  SELECT m.kind, m.subject, 'index:' || (i->>'name'), i FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.kind IN ('model', 'source')
+  UNION ALL
+  SELECT m.kind, m.subject, 'connection:' || k.name, json_extract(m.document, '$.config.connections."' || k.name || '"')
+  FROM metadata_current m, unnest(json_keys(m.document->'config'->'connections')) AS k(name) WHERE m.kind = 'project'
+)
+SELECT subject_kind, subject, element, 'title' AS item, '' AS item_key, CAST(NULL AS VARCHAR) AS value_type, d->>'title' AS value FROM parts WHERE d->>'title' IS NOT NULL
+UNION ALL
+SELECT subject_kind, subject, element, 'description', '', NULL, d->>'description' FROM parts WHERE d->>'description' IS NOT NULL
+UNION ALL
+SELECT subject_kind, subject, element, 'tag', x.tag, NULL, NULL FROM parts, unnest(CAST(d->'tags' AS VARCHAR[])) AS x(tag)
+UNION ALL
+SELECT subject_kind, subject, element, 'property', k.key,
+  CASE json_type(json_extract(d->'properties', '$."' || k.key || '"')) WHEN 'VARCHAR' THEN 'text' WHEN 'BOOLEAN' THEN 'boolean' ELSE 'number' END,
+  json_extract_string(d->'properties', '$."' || k.key || '"')
+FROM parts, unnest(json_keys(d->'properties')) AS k(key);
+
 CREATE VIEW metadata_index_advice AS
 SELECT m.subject AS model, a->>'code' AS code, a->>'severity' AS severity, a->>'reason' AS reason, CAST(a->'columns' AS VARCHAR[]) AS columns,
   a->>'suggested' AS suggested_name, a->>'existing_index' AS existing_index, (a->>'silenced')::BOOLEAN AS silenced
@@ -104,7 +128,7 @@ FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t
     public static readonly IReadOnlyList<string> Names =
     [
         "metadata_current", "metadata_columns", "metadata_models", "metadata_sources", "metadata_upstream", "metadata_ancestors", "metadata_lineage",
-        "metadata_native_types", "metadata_indexes", "metadata_source_indexes", "metadata_source_foreign_keys", "metadata_loads", "metadata_hooks", "metadata_index_advice",
+        "metadata_native_types", "metadata_indexes", "metadata_source_indexes", "metadata_source_foreign_keys", "metadata_loads", "metadata_hooks", "metadata_index_advice", "metadata_info",
     ];
 
     private readonly DuckDBConnection db;

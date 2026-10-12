@@ -1,0 +1,5 @@
+# Written here once, inherited by every model in this folder: its tags are added to a model's own (`tags=` replaces, `tags-: [x]` removes),
+# and a property is the model's own if it writes it, else this folder's, else the project's.
+defaults:
+  tags: [mart]
+  properties: {layer: mart}

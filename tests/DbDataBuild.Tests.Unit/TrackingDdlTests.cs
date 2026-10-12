@@ -84,7 +84,7 @@ public class TrackingDdlTests
         Assert.Equal(target != "fabric", text.Contains("VIEW [dbdatabuild].[metadata_columns]") || text.Contains("VIEW \"dbdatabuild\".\"metadata_columns\""));
         if (target == "postgres") Assert.Contains("\"document\" jsonb NOT NULL", text);
         if (target == "sqlserver") Assert.Contains("CHECK (ISJSON([document]) = 1)", text);          // SQL Server holds JSON as text, so the engine checks it
-        Assert.Equal(5, TrackingSchema.Version);
+        Assert.Equal(6, TrackingSchema.Version);
         Assert.Contains("[version], [tool_version]", TrackingDdl.Render(TrackingDdl.For("sqlserver").InitScript("d", "x")));
     }
 }

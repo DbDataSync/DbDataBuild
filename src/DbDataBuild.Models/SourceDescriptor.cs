@@ -10,8 +10,11 @@ namespace DbDataBuild.Models;
 /// </summary>
 /// <param name="DeclaredConnections">The connections the table exists on (after the project files above it were merged in); null when nothing says, which is the project's default connections.</param>
 public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<string> Grain,
-    IReadOnlyList<IndexDefinition>? DeclaredIndexes = null, IReadOnlyList<SourceForeignKey>? DeclaredForeignKeys = null, IReadOnlyList<string>? DeclaredConnections = null, bool Generated = false, NativeQuery? Native = null)
+    IReadOnlyList<IndexDefinition>? DeclaredIndexes = null, IReadOnlyList<SourceForeignKey>? DeclaredForeignKeys = null, IReadOnlyList<string>? DeclaredConnections = null, bool Generated = false, NativeQuery? Native = null, ObjectInfo? DeclaredInfo = null)
 {
+    /// <summary>The descriptor's title, description, tags and properties (tags and properties merged down the project files, as a model's are).</summary>
+    public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
+
     /// <summary>True for a **native** model: its rows are computed by a query the engine runs (a table function, an engine-native select), not read from a table. Bound by queries like any table, from its declared columns.</summary>
     public bool IsNative => Native != null;
 
@@ -57,7 +60,7 @@ public sealed record SourceForeignKey(string Name, IReadOnlyList<string> Columns
 
 public static class SourceDescriptorLoader
 {
-    private static readonly string[] Keys = ["name", "kind", "connections", "columns", "grain", "indexes", "foreign_keys", "reads", "parameters", "track_definition", "tags"];
+    private static readonly string[] Keys = ["name", "kind", "connections", "columns", "grain", "indexes", "foreign_keys", "reads", "parameters", "track_definition", .. YamlFieldReader.InfoKeys];
 
     /// <summary>The kind of a model that maps an existing table: no query, nothing built, everything declared.</summary>
     public const string MappedKind = "mapped";
@@ -116,7 +119,8 @@ public static class SourceDescriptorLoader
                     Add(DiagnosticCatalog.UnknownColumnReference, g, $"grain refers to `{g.Value}`, which is not declared in `columns`.");
             var indexes = ReadIndexes(top, columns);
             var foreignKeys = ReadForeignKeys(top, columns);
-            return name == null ? null : new SourceDescriptor(name.Value, columns, grain?.Select(g => g.Value).ToList() ?? [], indexes, foreignKeys, connections?.Select(c => c.Value).ToList(), Native: native);
+            var info = ReadInfo(top);
+            return name == null ? null : new SourceDescriptor(name.Value, columns, grain?.Select(g => g.Value).ToList() ?? [], indexes, foreignKeys, connections?.Select(c => c.Value).ToList(), Native: native, DeclaredInfo: info);
         }
 
         /// <summary>`kind: {type: native, access, query}` and the model's `reads` and `parameters`. The text is `query:` or the `.native.sql` file beside the definition, never both.</summary>
@@ -161,7 +165,7 @@ public static class SourceDescriptorLoader
             foreach (var item in seq.Items)
             {
                 if (item is not YamlMapping m) { Add(DiagnosticCatalog.InvalidValue, item, "Each index must be a mapping with `name` and `columns`."); continue; }
-                CheckKeys(m, ["name", "columns", "unique", "include"], "an index of a source");
+                CheckKeys(m, ["name", "columns", "unique", "include", .. InfoKeys], "an index of a source");
                 var name = Scalar(m, "name", required: true, at: m);
                 var cols = StringList(m, "columns", required: true, allowEmpty: false, unique: true);
                 var include = StringList(m, "include", required: false, allowEmpty: false, unique: true);
@@ -175,7 +179,7 @@ public static class SourceDescriptorLoader
                 if (name != null && !names.Add(name.Value)) Add(DiagnosticCatalog.DuplicateKey, name, $"The index name `{name.Value}` is used more than once.");
                 foreach (var c in (cols ?? []).Concat(include ?? []).Where(c => columns.Count > 0 && !declared.Contains(c.Value)))
                     Add(DiagnosticCatalog.UnknownColumnReference, c, $"Index `{name?.Value}` refers to `{c.Value}`, which is not declared in `columns`.");
-                if (name != null && cols != null) result.Add(new IndexDefinition(name.Value, cols.Select(c => c.Value).ToList(), unique, include?.Select(c => c.Value).ToList() ?? [], null, m.Line));
+                if (name != null && cols != null) result.Add(new IndexDefinition(name.Value, cols.Select(c => c.Value).ToList(), unique, include?.Select(c => c.Value).ToList() ?? [], null, m.Line, ReadInfo(m)));
             }
             return result;
         }
@@ -219,10 +223,12 @@ public static class SourceDescriptorLoader
 /// <summary>Writes a source descriptor in canonical formatting: name, grain, columns; <c>nullable</c> only when false (the same style as definitions).</summary>
 public static class SourceDescriptorWriter
 {
-    public static string Yaml(SourceDescriptor d)
+    /// <param name="withInfo">False for the text the definition hash is made of: what a person says about an object in words is not part of what the object is.</param>
+    public static string Yaml(SourceDescriptor d, bool withInfo = true)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("name: ").Append(YamlText.Scalar(d.Name)).Append('\n');
+        if (withInfo) sb.Append(YamlText.InfoLines(d.DeclaredInfo, ""));
         sb.Append("kind:\n  type: mapped\n");
         if (d.Connections is { Count: > 0 }) sb.Append("connections=: ").Append(YamlText.FlowList(d.Connections)).Append('\n');
         if (d.Grain.Count > 0) sb.Append("grain: ").Append(YamlText.FlowList(d.Grain)).Append('\n');
@@ -234,12 +240,21 @@ public static class SourceDescriptorWriter
             if (!c.Nullable) sb.Append("    nullable: false\n");
             if (c.Collation != null) sb.Append("    collation: ").Append(YamlText.Scalar(c.Collation)).Append('\n');
             if (c.Trimmed) sb.Append("    trimmed: true\n");
+            if (withInfo) sb.Append(YamlText.InfoLines(c.Info, "    "));
         }
         if (d.Indexes.Count > 0)
         {
             sb.Append("indexes:\n");
             foreach (var i in d.Indexes)
             {
+                if (withInfo && i.Info is { IsEmpty: false })
+                {
+                    sb.Append("  - name: ").Append(YamlText.Scalar(i.Name)).Append("\n    columns: ").Append(YamlText.FlowList(i.Columns)).Append('\n');
+                    if (i.Unique) sb.Append("    unique: true\n");
+                    if (i.Include.Count > 0) sb.Append("    include: ").Append(YamlText.FlowList(i.Include)).Append('\n');
+                    sb.Append(YamlText.InfoLines(i.Info, "    "));
+                    continue;
+                }
                 sb.Append("  - {name: ").Append(YamlText.FlowScalar(i.Name)).Append(", columns: ").Append(YamlText.FlowList(i.Columns));
                 if (i.Unique) sb.Append(", unique: true");
                 if (i.Include.Count > 0) sb.Append(", include: ").Append(YamlText.FlowList(i.Include));

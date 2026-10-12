@@ -7,7 +7,7 @@ namespace DbDataBuild.Models;
 /// <summary>An index a model declares (DESIGN.md 6, indexes). The operator decides what is enforced or indexed; nothing is inferred from `unique_key`.</summary>
 /// <param name="Include">Non-key (covering) columns.</param>
 /// <param name="Targets">Restricts the index to these targets; null means every target the model declares.</param>
-public sealed record IndexDefinition(string Name, IReadOnlyList<string> Columns, bool Unique, IReadOnlyList<string> Include, IReadOnlyList<string>? Targets, int Line = 0)
+public sealed record IndexDefinition(string Name, IReadOnlyList<string> Columns, bool Unique, IReadOnlyList<string> Include, IReadOnlyList<string>? Targets, int Line = 0, ObjectInfo? Info = null)
 {
     public bool AppliesTo(string target) => Targets == null || Targets.Contains(target);
 }

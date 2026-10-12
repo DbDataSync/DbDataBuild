@@ -193,7 +193,7 @@ Effect: Offline only. Reads and writes: `P→`.
 
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Selectors (default: every model): names, paths, `+model`, `model+`, `2+model`, `@model`, `kind:`, `tag:`, `connection:`, `path:`, `changed:<git ref>`, `exclude:...` |
+| `models` (several) | Selectors (default: every model): names, paths, `+model`, `model+`, `2+model`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:...` |
 
 | Option | Meaning |
 |---|---|
@@ -210,7 +210,7 @@ Effect: Offline only. Reads and writes: `P→`.
 
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model) |
 
 | Option | Meaning |
 |---|---|
@@ -277,7 +277,7 @@ Effect: Target read-only. Reads and writes: `C→`. Lane: inspect.
 
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model that declares the connection) |
 
 | Option | Meaning |
 |---|---|
@@ -395,7 +395,7 @@ Effect: Tracking tables only. Reads and writes: `P⇒T`.
 
 | Argument | Meaning |
 |---|---|
-| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `changed:<git ref>`, `exclude:...` (default: every model) |
+| `models` (several) | Model selectors: names, files, directories, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `changed:<git ref>`, `exclude:...` (default: every model) |
 
 | Option | Meaning |
 |---|---|

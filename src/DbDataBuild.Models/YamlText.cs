@@ -28,6 +28,26 @@ public static partial class YamlText
 
     public static string FlowList(IEnumerable<string> values) => "[" + string.Join(", ", values.Select(FlowScalar)) + "]";
 
+    /// <summary>
+    /// The lines of an object's title, description, tags and properties (<see cref="ObjectInfo"/>), each indented by <paramref name="indent"/> and ending in a newline; nothing when there are none. A text value
+    /// that would read back as a number or a boolean is quoted, so the type survives a rewrite.
+    /// </summary>
+    public static string InfoLines(ObjectInfo? info, string indent)
+    {
+        if (info == null || info.IsEmpty) return "";
+        var sb = new System.Text.StringBuilder();
+        if (info.Title != null) sb.Append(indent).Append("title: ").Append(Scalar(info.Title)).Append('\n');
+        if (info.Description != null) sb.Append(indent).Append("description: ").Append(Scalar(info.Description)).Append('\n');
+        if (info.Tags.Count > 0) sb.Append(indent).Append("tags: ").Append(FlowList(info.Tags)).Append('\n');
+        if (info.Properties.Count > 0)
+        {
+            sb.Append(indent).Append("properties:\n");
+            foreach (var (key, value) in info.Properties.OrderBy(p => p.Key, StringComparer.Ordinal))
+                sb.Append(indent).Append("  ").Append(Scalar(key)).Append(": ").Append(value.Type == PropertyValue.TextType ? Scalar(value.Text) : value.Text).Append('\n');
+        }
+        return sb.ToString();
+    }
+
     private static bool Plain(string value, Regex safe) =>
         value.Length > 0 && value == value.Trim() && safe.IsMatch(value) && !Reserved.Contains(value) && !NumberLike().IsMatch(value);
 

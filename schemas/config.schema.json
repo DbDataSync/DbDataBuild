@@ -10,7 +10,7 @@
       "description": "Model settings every model inherits from this file; a folder's _dbdatabuild.yml has the same section and layers onto it, and a model's own file layers on top (the nearest wins). A list appends, a mapping merges by key, a scalar replaces; a key suffix changes that for the key: `key=` replaces what was inherited, `key-` removes the listed items or keys, `key+` merges (the default). The settings themselves are those of a model file (model.schema.json); they are checked where they are merged into a model.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(connections|kind|hooks|rewrites|lint_ignore|tags)[=+-]?$"
+        "pattern": "^(connections|kind|hooks|rewrites|lint_ignore|tags|properties)[=+-]?$"
       },
       "properties": {
         "connections": {
@@ -122,6 +122,52 @@
             "refresh": {
               "description": "This connection's own refresh check; what it leaves out is the project's.",
               "$ref": "#/$defs/refreshSettings"
+            },
+            "title": {
+              "description": "A short display name, one line, at most 200 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\n]*$"
+            },
+            "description": {
+              "description": "Free text, at most 4000 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "tags": {
+              "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+              }
+            },
+            "properties": {
+              "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+              "type": "object",
+              "propertyNames": {
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+              },
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
             }
           }
         },
@@ -193,6 +239,52 @@
             "refresh": {
               "description": "This connection's own refresh check; what it leaves out is the project's.",
               "$ref": "#/$defs/refreshSettings"
+            },
+            "title": {
+              "description": "A short display name, one line, at most 200 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\n]*$"
+            },
+            "description": {
+              "description": "Free text, at most 4000 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "tags": {
+              "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+              }
+            },
+            "properties": {
+              "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+              "type": "object",
+              "propertyNames": {
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+              },
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
             }
           }
         },
@@ -264,6 +356,52 @@
             "refresh": {
               "description": "This connection's own refresh check; what it leaves out is the project's.",
               "$ref": "#/$defs/refreshSettings"
+            },
+            "title": {
+              "description": "A short display name, one line, at most 200 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\n]*$"
+            },
+            "description": {
+              "description": "Free text, at most 4000 characters. Never inherited.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "tags": {
+              "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+              }
+            },
+            "properties": {
+              "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+              "type": "object",
+              "propertyNames": {
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+              },
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
             }
           }
         }
@@ -584,6 +722,52 @@
           "minimum": 0
         }
       }
+    },
+    "title": {
+      "description": "A short display name, one line, at most 200 characters. Never inherited.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\n]*$"
+    },
+    "description": {
+      "description": "Free text, at most 4000 characters. Never inherited.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "tags": {
+      "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+      }
+    },
+    "properties": {
+      "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+      "type": "object",
+      "propertyNames": {
+        "maxLength": 128,
+        "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "maxLength": 4000
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
     }
   },
   "$defs": {
@@ -757,6 +941,52 @@
         "refresh": {
           "description": "This connection's own refresh check; what it leaves out is the project's.",
           "$ref": "#/$defs/refreshSettings"
+        },
+        "title": {
+          "description": "A short display name, one line, at most 200 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\n]*$"
+        },
+        "description": {
+          "description": "Free text, at most 4000 characters. Never inherited.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "tags": {
+          "description": "Labels: words of letters, digits, `_`, `-`, `.` and `:`, at most 128 characters each.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:\\-]*$"
+          }
+        },
+        "properties": {
+          "description": "Free key-value data. A value is text, a number or true or false (a number written as plain digits is a number, text in quotes is text); keys are at most 128 characters, values at most 4000.",
+          "type": "object",
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_]([A-Za-z0-9_.:\\-]*[A-Za-z0-9_.:])?$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
         }
       }
     },

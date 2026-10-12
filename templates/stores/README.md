@@ -113,6 +113,11 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 
 `status` may say `Structure  pending: a deploy would run 3 step(s)` after a deploy: those are the transfers and the load of the copy, which every deploy runs again (they move data; no structure changes).
 
+## Words about the connections
+
+Each of the four connections has a `title`, a `description`, `tags` and `properties` in `dbdatabuild.yml` (`role: origin` on the shop systems, `role: build` on the warehouse). They are in the project's metadata
+document and, after `dbdatabuild connection publish --connection sqlserver`, in the tracking table `object_info` under `connection:<name>`, so the records say which connection is for what. Nothing is written into the databases.
+
 ## Notes
 
 - The shop systems are only read by the tool once they are seeded; their logins need `SELECT` on `pos.orders` (and, to seed them, rights to create a schema and a table).
