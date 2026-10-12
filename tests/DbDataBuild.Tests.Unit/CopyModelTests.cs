@@ -85,6 +85,17 @@ public class CopyModelTests
         Assert.Equal(["customer_id"], result.Sources.Single(s => s.Definition.Name == "lake.recent").Definition.Columns.Select(c => c.Name));
     }
 
+    [Fact]
+    public void Model_update_leaves_a_copy_alone_since_it_has_no_query_and_its_columns_are_its_origins()
+    {
+        var dir = Project();
+        Copy(dir, "warehouse.customers", "crm.customers");
+        var o = new StringWriter(); var e = new StringWriter();
+        var exit = CliApp.Run(["project", "model", "update", "--check", "--project", dir], o, e, environment: _ => null);
+        Assert.True(exit == 0, o + "\n" + e);                                                          // not DDB-108, "has no query file"
+        Assert.DoesNotContain("DDB-108", o.ToString() + e.ToString());
+    }
+
     [Theory]
     [InlineData("crm.nothing", "", "which is not a model, a mapped model or a copy")]
     [InlineData("crm.customers", "columns:\n  - {name: a, type: INT}\n", "has no `columns`")]

@@ -61,6 +61,9 @@ public class TemplateTests
                 Assert.True(sampleExit == 0, $"{model}: {sampleOut}{sampleErr}");
             }
 
+            var (defineExit, defineOut, defineErr) = Run("project", "model", "update", "--project", dir, "--check");        // every declared column is what the query returns (a deploy refuses the model otherwise)
+            Assert.True(defineExit == 0, defineOut + defineErr);
+
             var (testExit, testOut, _) = Run("project", "tests", "run", "--project", dir);
             Assert.True(testExit == 0, testOut);
             Assert.Contains(" 0 failed", testOut);
@@ -123,6 +126,9 @@ public class TemplateTests
                     Assert.DoesNotContain(macro, script);
             }
             Assert.Contains("NUMERIC(12, 2)", Script("marts.orders"));                                     // the `money` alias is the type it stands for
+            // every definition says what its query returns, also where the query is given a table by a NAME parameter (`model update` binds the query too)
+            var define = Run("project", "model", "update", "--project", dir, "--check");
+            Assert.True(define.Exit == 0, define.Out + define.Err);
             // the name parameters reach the query as the names they hold
             var graph = Run("project", "show", "graph", "--project", dir, "--format", "json", "marts.status_totals_history");
             Assert.Contains("ledger.orders_history", graph.Out);

@@ -6,7 +6,7 @@ columns:
   - {name: customer_id, type: INTEGER, nullable: false}
   - {name: status, type: "VARCHAR(20)", nullable: false}
   - {name: status_group, type: "VARCHAR(10)", nullable: false}
-  - {name: amount, type: "DECIMAL(21, 2)", nullable: false}
+  - {name: amount, type: "DECIMAL(12, 2)", nullable: false}
   - {name: size_band, type: "VARCHAR(6)", nullable: false}
   - {name: ordered_on, type: DATE, nullable: false}
 indexes:

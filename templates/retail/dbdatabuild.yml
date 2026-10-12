@@ -13,7 +13,7 @@ tracking: { connection: sqlserver }
 # How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
 # Retail refreshes every night, so the example asks for the database to be compared before it runs and for the history to be kept in full.
 #   plans:
-#     deploy:  { keep: database, audit: full }       # the plan is kept in the tracking tables and applied by id: `connection deploy sqlserver --write-plan`, then `--apply-plan <id>`
+#     deploy:  { keep: database, audit: full }       # the plan is kept in the tracking tables and applied by its id: `connection deploy --write-plan`, then `connection deploy --apply-plan <id>`
 #     refresh: { keep: committed, audit: standard }  # the refresh plan is compiled by `project compile` into rendered/<connection>/refresh.plan.yml
 #   refresh: { check: live, on_fail: block }         # none | project | objects | live: `live` also catches a table changed outside the tool
 #   retention: { statement_logs_days: 14 }           # local statement logs older than this are removed by the next deploy or refresh

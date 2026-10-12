@@ -48,6 +48,8 @@ internal static class DefineCommand
 
         // ---- choose the models ----
         var mapped = project.FileDescriptors.Select(d => d.File.Length > 0 ? d.File[..^".yml".Length] : $"{ProjectValidator.ModelsDir}/{d.Name.Replace('.', '/')}").ToHashSet(StringComparer.Ordinal);
+        // a copy has no query and no `columns` to write: its columns are its origin's (DESIGN.md 6.5.2), so it is left out like a mapped model
+        foreach (var copy in project.Sources.Where(s => s.Definition.IsCopy && s.DefinitionFile.EndsWith(".yml", StringComparison.Ordinal))) mapped.Add(copy.DefinitionFile[..^".yml".Length]);
         var selection = Select(projectRoot, paths, mapped, error, out var selectionProblem);
         if (selectionProblem) return CliApp.ExitUsage;
 
@@ -102,7 +104,7 @@ internal static class DefineCommand
             }
             else hashes[ymlRel] = null;
             var queryText = parsedHead.Body;
-            if (project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } known) queryText = QueryParameters.Mark(queryText, known, config).Sql;      // parameter references stand as typed markers, as everywhere else
+            if (project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } known) queryText = QueryParameters.Mark(QueryParameters.ResolveNames(queryText, known, config, (known.Definition.Targets ?? config.DefaultConnections).FirstOrDefault() ?? ""), known, config).Sql;      // a name stands as the name it is (on the model's first connection, as the render reads it), a value as a typed marker
             var macroSupport = project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } macroSource ? (macroContext ??= ProjectContext.Load(projectRoot)).MacroSupportFor(macroSource, queryText) : null;
             targets.Add(new DefineTarget(name, ymlRel, sqlRel, queryText, existingText, existing, existingProblems, macroSupport, head));
         }
