@@ -34,18 +34,34 @@ dbdatabuild project tests run                           # metadata rules and mod
 `tests/metadata/` holds rules over what the project is (every model has a grain, staging reads only sources, dimensions are keyed). `tests/models/` holds cases for the
 logic that is easy to get wrong: the split of the composer text, the management chain, the roll-up of revenue, the cohort counts, the `mm:ss` text.
 
-## Trying it on a sandbox database
+## Running the cycle on a database
 
-`load-seeds` puts the source tables in an empty SQL Server (or PostgreSQL) database you do not mind filling. The logins are environment variables
-(`DBDATABUILD_SQLSERVER_WRITE` for what writes, `DBDATABUILD_SQLSERVER_READ` for what reads; see the main documentation):
+`connection seed` puts the source tables in an empty database you do not mind filling; the logins are environment variables (`DBDATABUILD_SQLSERVER_READ` and `DBDATABUILD_SQLSERVER_WRITE`, or `..._POSTGRES_...`).
+Create a SQL Server database case-sensitive (`CREATE DATABASE chinook COLLATE Latin1_General_100_CS_AS`) to match the project's string profile; with the server default `connection status` reports DDB-310 for a view column made of literals.
+The numbers below are from a run against SQL Server 2022 (the same cycle ran on PostgreSQL 17 with the profile in the comment at the top of `dbdatabuild.yml`: same counts, `--connection postgres`); ids and times differ in yours.
 
 ```
-dbdatabuild connection seed --apply         # creates the source tables and loads them (--replace drops and recreates tables that exist)
-dbdatabuild connection init --apply               # the tracking tables
-dbdatabuild project compile --check     # the rendered files are checked in against the models
-dbdatabuild connection deploy --write-plan --accept-inferred   # reads the database, writes a plan you can read
-dbdatabuild connection deploy --apply-plan plans/sqlserver/<the plan>.plan.yml
+dbdatabuild project compile                                   # offline; writes rendered/, including rendered/sqlserver/refresh.plan.yml
+dbdatabuild connection inspect --connection sqlserver         # can the tool use it? (before init: "tracking ... not there yet"; after: "Nothing in the way.")
+dbdatabuild connection seed --connection sqlserver --apply    # 11 table(s), 4557 row(s)
+dbdatabuild connection init --connection sqlserver --apply    # the tracking tables (13 statements)
+dbdatabuild connection status --connection sqlserver          # Structure  pending: a deploy would run 27 step(s) (0 risky, 0 destructive) and 13 load(s)
+dbdatabuild connection deploy --connection sqlserver --write-plan --accept-inferred    # Plan <id>: 40 step(s) (27 ddl, 13 load, ...); read plans/sqlserver/<id>.plan.md
+dbdatabuild connection deploy --connection sqlserver --apply-plan plans/sqlserver/<id>.plan.yml    # Applied plan <id>: 40 step(s) executed.
+dbdatabuild connection refresh --connection sqlserver         # Refresh plan rendered/sqlserver/refresh.plan.yml: 13 routine load(s). ... Refresh ref-<time>-<hash>: 13 step(s) ran.
+dbdatabuild connection status --connection sqlserver          # Structure  in sync: a deploy would change no structure (it would run 13 routine load(s))
+dbdatabuild connection monitor --connection sqlserver         # events (one deploy, one refresh), DDL, loads, recorded shapes; --event <id>, --lane refresh, --attention
 ```
+
+What each step is for, and the four `refresh.check` levels (`none`, `project`, `objects`, `live`) with the message each gives when it stops a refresh, are in the `retail` README (`dbdatabuild project create retail`), whose walk-through is the longest.
+In short: *deploy* changes structure and is reviewed; *refresh* repeats the loads of the committed refresh plan and never changes structure; `refresh.check` chooses whether it asks the database nothing (`none`), whether
+the project was deployed here (`project`), whether each object has the shape last deployed (`objects`, the default) or whether it still has that shape in the catalog (`live`).
+
+The lifecycle block in `dbdatabuild.yml` (commented) shows non-default settings for a small catalog that rarely changes: a deploy plan that is made and applied in one step and keeps only its hash and event
+(`plans.deploy: {keep: ephemeral, audit: minimal}`), `refresh.check: project` with `on_fail: warn`, statement logs kept 7 days. Uncommented, they act: after adding a column to `marts.agg_genre_revenue`
+(and compiling) `connection refresh` printed ``warning DDB-447  The project expects structure ..., but the last completed deploy (...) recorded ...`` and ran anyway (`warn`), and stopped at the load that needed the new column
+(`error DDB-440`, `Refresh ... did not complete. 4 step(s) ran before the stop`), which `connection monitor --event <id>` shows as a `failed` load. `connection deploy --accept-inferred --answers answers.yml --yes`
+then planned and applied in one step (`The plan was ephemeral and has been removed`), and the next refresh ran all 13 loads.
 
 ## Notes
 
