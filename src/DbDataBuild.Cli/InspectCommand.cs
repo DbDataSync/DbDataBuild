@@ -56,9 +56,11 @@ internal static class InspectCommand
         // the tracking tables, and the schema names the models use
         var tracking = config.TrackingOf(connection.Name);
         string trackingText; string trackingState;
+        var trackingConnection = connection.Name;                                             // the records may be kept on another connection (central tracking): that is where `init` has to run
         if (tracking.Target is not { } target) { trackingText = tracking.Explicit ? "none: not tracked, by choice (`tracking: none`)" : "not configured: nothing is tracked (DDB-232)"; trackingState = tracking.Explicit ? "none" : "not_configured"; }
         else
         {
+            trackingConnection = target.Connection;
             var (trackLogin, _) = LoginSettings.FromEnvironment(target.Connection, target.Engine, Login.Read, env);
             if (trackLogin == null) { trackingText = $"schema {target.SchemaName} on {target.Connection}: its read login is not set"; trackingState = "unreachable"; problems++; }
             else
@@ -111,7 +113,7 @@ internal static class InspectCommand
         output.Payload("schema_names", schemas.Select(s => new { name = s.Name, exists = s.Exists }).ToList());
         output.WriteLine(problems == 0 ? "Nothing in the way." : $"{problems} thing(s) in the way.");
         if (problems == 0) output.Next("connection status");
-        else if (trackingState == "missing" || trackingState == "other_layout") output.Next(trackingState == "missing" ? $"connection init --connection {connection.Name} --apply" : $"connection init --connection {connection.Name} --upgrade --apply");
+        else if (trackingState == "missing" || trackingState == "other_layout") output.Next(trackingState == "missing" ? $"connection init --connection {trackingConnection} --apply" : $"connection init --connection {trackingConnection} --upgrade --apply");
         return problems == 0 ? CliApp.ExitOk : CliApp.ExitFindings;
     }
 

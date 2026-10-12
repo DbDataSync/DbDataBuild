@@ -5,7 +5,7 @@ This walks from nothing to a model built on a database. The first part needs onl
 ## 1. Look at a project offline
 
 ```
-dbdatabuild project create starter cafe       # 28 files: a small cafe, sources through staging to two marts (also: retail, chinook, adventureworks)
+dbdatabuild project create starter cafe       # 28 files: a small cafe, sources through staging to two marts (also: retail, chinook, adventureworks, stores, macros)
 cd cafe
 dbdatabuild project compile                # checks config and models, shows how each query lowers ("OK: 5 model(s) valid"), and writes the load scripts (rendered/) to read and commit
 dbdatabuild project show graph --columns   # what reads what, and where each column comes from
