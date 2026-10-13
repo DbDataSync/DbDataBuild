@@ -282,7 +282,9 @@ internal static class ApplyCommand
                 output.WriteLine($"  {group.Key}: {string.Join("; ", group.Select(l => $"{l.Unit.Display}{(l.Reason != null ? $" ({l.Reason})" : "")}"))}");
             foreach (var note in summary.Loads.Where(l => l.Note != null)) output.WriteLine($"  {note.Unit.Display} ran: {note.Note}");
             foreach (var w in summary.Warnings) output.WriteLine($"  warning: {w}");
-            if (summary.Outcome != RefreshSummary.Completed)
+            if (summary.Loads.Any(l => l.Status == LoadStatus.FailedCheck))
+                output.Next("connection deploy", $"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed");
+            else if (summary.Outcome != RefreshSummary.Completed)
                 output.Next($"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed", $"connection monitor {plan.Connection}{PlanArgument(mode)}");
             else if (summary.Loads.Any(l => l.Status == LoadStatus.SkippedBusy)) output.Next($"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed", $"connection monitor {plan.Connection}{PlanArgument(mode)}");
             else output.Next($"connection monitor {plan.Connection}{PlanArgument(mode)}");

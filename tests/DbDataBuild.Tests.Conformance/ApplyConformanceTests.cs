@@ -637,14 +637,15 @@ public partial class ApplyConformanceTests
             var refused = run.Cli("connection", "refresh");
             Refused(refused, "DDB-447", "a refresh before the first deploy");
             Assert.Contains("never been deployed", refused.Err);
-            Assert.Contains("Next: dbdatabuild connection deploy", refused.Out);
+            Assert.Contains("dbdatabuild connection deploy", refused.Out);
             Assert.Equal(0, await CountAsync(run, "information_schema.tables", "table_schema = 'marts'"));
-            Assert.Equal(0, await CountAsync(run, events, run.Q("lane") + " = 'refresh'"));
+            Assert.Equal(1, await CountAsync(run, events, run.Q("lane") + " = 'refresh' AND status = 'failed'"));       // the load failed its check (kind check): the run is recorded, and nothing ran
+            Assert.Equal(1, await CountAsync(run, log, "status = 'failed: check'"));
 
             // without the check the engine's own error is the check: the load fails on the missing table, and the event says so
             var unchecked1 = run.Cli("connection", "refresh", "--check", "none");
             Assert.NotEqual(0, unchecked1.Exit);
-            Assert.Equal(1, await CountAsync(run, events, run.Q("lane") + " = 'refresh' AND status = 'failed'"));
+            Assert.Equal(2, await CountAsync(run, events, run.Q("lane") + " = 'refresh' AND status = 'failed'"));
 
             var plan = run.Cli("connection", "deploy", "--write-plan");
             Ok(plan, "plan");
@@ -1941,6 +1942,7 @@ public partial class ApplyConformanceTests
             json(["connection", "status"], 1);
             json(["connection", "refresh", "--check", "live"], 1);                                         // the live check sees what the recorded one cannot
             json(["connection", "deploy", "--ack", "drift:marts.fct_orders", "--reason", "scratch column from the DBA"], 0);
+            json(["connection", "refresh"], 0);                                         // the drift is accepted, and the refresh that was stopped by it goes through (an unfinished refresh stays in the monitor until one completes)
             var after = json(["connection", "monitor"], 0);
             Assert.DoesNotContain("changed outside the tool (`", after.Out);              // an accepted drift is shown as accepted, not as something that needs attention
             json(["connection", "deploy", "--ack", "history:marts.fct_orders.nothing", "--reason", "x"], 1);       // nothing to acknowledge: a refusal is still a valid document

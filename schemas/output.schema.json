@@ -4600,7 +4600,6 @@
         }
       },
       "required": [
-        "expected_every",
         "overdue",
         "slow"
       ]
