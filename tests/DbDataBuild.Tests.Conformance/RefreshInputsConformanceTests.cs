@@ -120,4 +120,107 @@ public partial class ApplyConformanceTests
         }
         finally { DbDataBuild.Cli.RefreshCommand.Now = previousClock; if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
     }
+
+    [SkippableTheory, MemberData(nameof(Engines))]
+    public async Task A_deploy_shows_the_inputs_it_computed_and_stops_when_one_moved_until_the_deployer_approves_or_gives_the_values(string name)
+    {
+        var run = await DaysProject(name);
+        await using var engine = run.Engine;
+        var previousClock = DbDataBuild.Cli.RefreshCommand.Now;
+        try
+        {
+            var T = (string t) => $"{run.Q("dbdatabuild")}.{run.Q(t)}";
+            DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 1, 23, 30, 15, TimeSpan.Zero);
+            Ok(run.Cli("connection", "init", "--apply"), "init");
+            Ok(run.Cli("project", "compile"), "compile");
+            var first = run.Cli("connection", "deploy", "--write-plan"); Ok(first, "plan");
+            Ok(run.Cli("connection", "deploy", "--apply-plan", run.PlanFile(first.Out)), "apply");
+            await engine.ExecAsync("UPDATE staging.days SET n = 2");
+
+            // the plan: the window is computed now and shown, on screen and in the file
+            var plan = run.Cli("connection", "deploy", "--write-plan", "--op", "marts.fct_days=window");
+            Ok(plan, "plan window");
+            Assert.Contains("input marts.fct_days.window `start` = 2026-02-26  [resolver:expression]", plan.Out);
+            Assert.Contains("input marts.fct_days.window `end` = 2026-03-02", plan.Out);
+            var planFile = run.PlanFile(plan.Out);
+            Assert.Contains("planned_value: \"2026-02-26\"", File.ReadAllText(planFile));
+            Assert.Contains("`start` (DATE) = 2026-02-26  [resolver:expression]", File.ReadAllText(planFile.Replace(".plan.yml", ".plan.md")));
+
+            // apply on the same day: nothing moved, and the plan is not applied by this: a dry run computes them again too
+            Ok(run.Cli("connection", "deploy", "--apply-plan", planFile, "--dry-run"), "dry run on the same day");
+
+            // midnight passes: the clock-based inputs are other values. The apply stops before anything runs, shows both, and prints each override as it would be typed
+            DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 2, 0, 10, 0, TimeSpan.Zero);
+            var before = await DaysAsync(run);
+            var stopped = run.Cli("connection", "deploy", "--apply-plan", planFile);
+            Assert.Equal(1, stopped.Exit);
+            Assert.Contains("DDB-454", stopped.Err);
+            Assert.Contains("marts.fct_days.window  start: planned 2026-02-26, now 2026-02-27", stopped.Out);
+            Assert.Contains("marts.fct_days.window  end: planned 2026-03-02, now 2026-03-03", stopped.Out);
+            Assert.Contains("--input marts.fct_days.window.start=2026-02-27 --input marts.fct_days.window.end=2026-03-03", stopped.Out);
+            Assert.Equal(before, await DaysAsync(run));
+            Assert.Equal(0, await CountAsync(run, T("run_log"), $"{run.Q("load_name")} = 'window'"));
+            // --yes is for scripts and does not say yes to this
+            var yes = run.Cli("connection", "deploy", "--apply-plan", planFile, "--yes");
+            Assert.Equal(1, yes.Exit);
+            Assert.Contains("DDB-454", yes.Err);
+            var json = run.Cli("connection", "deploy", "--apply-plan", planFile, "--format", "json");
+            Assert.Equal(1, json.Exit);
+            Assert.Contains("\"moved_inputs\"", json.Out);
+
+            // the overrides appended to the same command are the explicit yes: those values load, the plan's are recorded beside them
+            var again = run.Cli("connection", "deploy", "--apply-plan", planFile, "--input", "marts.fct_days.window.start=2026-02-27", "--input", "marts.fct_days.window.end=2026-03-03");
+            Ok(again, "apply with the overrides");
+            var rows = await DaysAsync(run);
+            Assert.Equal(["2026-02-26=1", "2026-02-27=2", "2026-03-02=2"], new[] { rows[6], rows[7], rows[10] });                        // [02-27, 03-03) was reloaded, 02-26 was not
+            var parameters = Assert.Single(await engine.RowsAsync($"SELECT {run.Q("parameters")} FROM {T("run_log")} WHERE {run.Q("load_name")} = 'window' AND status = 'ok'"));
+            Assert.Contains("\"Value\":\"2026-02-27\"", parameters);
+            Assert.Contains("\"Planned\":\"2026-02-26\"", parameters);
+            Assert.Contains("\"Source\":\"flag\"", parameters);
+        }
+        finally { DbDataBuild.Cli.RefreshCommand.Now = previousClock; if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
+    }
+
+    [SkippableTheory, MemberData(nameof(Engines))]
+    public async Task An_interactive_deployer_can_approve_the_new_values_and_an_input_pinned_when_planning_cannot_move(string name)
+    {
+        var run = await DaysProject(name);
+        await using var engine = run.Engine;
+        var previousClock = DbDataBuild.Cli.RefreshCommand.Now;
+        try
+        {
+            var T = (string t) => $"{run.Q("dbdatabuild")}.{run.Q(t)}";
+            DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 1, 23, 30, 15, TimeSpan.Zero);
+            Ok(run.Cli("connection", "init", "--apply"), "init");
+            Ok(run.Cli("project", "compile"), "compile");
+            var first = run.Cli("connection", "deploy", "--write-plan"); Ok(first, "plan");
+            Ok(run.Cli("connection", "deploy", "--apply-plan", run.PlanFile(first.Out)), "apply");
+            await engine.ExecAsync("UPDATE staging.days SET n = 2");
+
+            // pinned when planning: not computed, so the apply has nothing to compare for it; the end is still computed and moves
+            var plan = run.Cli("connection", "deploy", "--write-plan", "--op", "marts.fct_days=window", "--input", "marts.fct_days.window.start=2026-02-27");
+            Ok(plan, "plan with a pinned start");
+            Assert.Contains("input marts.fct_days.window `start` = 2026-02-27  [flag]", plan.Out);
+            var planFile = run.PlanFile(plan.Out);
+            DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 2, 0, 10, 0, TimeSpan.Zero);
+            var stopped = run.Cli("connection", "deploy", "--apply-plan", planFile);
+            Assert.Equal(1, stopped.Exit);
+            Assert.DoesNotContain("start: planned", stopped.Out);
+            Assert.Contains("end: planned 2026-03-02, now 2026-03-03", stopped.Out);
+
+            // a person at the keyboard says no, then yes
+            var no = run.CliAsking("n", "connection", "deploy", "--apply-plan", planFile);
+            Assert.Equal(1, no.Exit);
+            Assert.Contains("Continue with the new values? [y/N]", no.Out);
+            Assert.Equal(0, await CountAsync(run, T("run_log"), $"{run.Q("load_name")} = 'window'"));
+            var yes = run.CliAsking("y", "connection", "deploy", "--apply-plan", planFile);
+            Ok(yes, "approved");
+            var rows = await DaysAsync(run);
+            Assert.Equal(["2026-02-26=1", "2026-02-27=2", "2026-03-02=2"], new[] { rows[6], rows[7], rows[10] });
+            var parameters = Assert.Single(await engine.RowsAsync($"SELECT {run.Q("parameters")} FROM {T("run_log")} WHERE {run.Q("load_name")} = 'window' AND status = 'ok'"));
+            Assert.Contains("\"Planned\":\"2026-03-02\"", parameters);
+            Assert.Contains("\"Value\":\"2026-03-03\"", parameters);
+        }
+        finally { DbDataBuild.Cli.RefreshCommand.Now = previousClock; if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
+    }
 }

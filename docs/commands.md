@@ -367,13 +367,14 @@ Usage: `dbdatabuild connection deploy [connection] [models]... [options]`
 | `--backfill` `<text ...>` | model=operation: plan that operation as a backfill (risky; needs --allow-risky to apply); the model has no routine load in this plan (repeatable) |
 | `--dry-run` | Apply: run every check and print every statement; execute nothing |
 | `--full-refresh` `<text ...>` | model: read an incremental copy's origins from the start instead of from the newest value the destination holds (the merge by unique key makes it safe to repeat; it does not see rows deleted at the origin; repeatable) |
+| `--input` `<text ...>` | `[model.load.]name=value`: the value of an input of a load, instead of the one a resolver computes (repeatable). With the plan it pins the input: it is not computed, so it cannot move. With --apply-plan it is how a deployer says "yes, with this value" to an input that moved (the stop prints each override as it would be typed) |
 | `--op` `<text ...>` | model=operation: load this model with a non-default operation (repeatable) |
 | `--output` `<path>` | Where to write the plan files (default: plans/<connection>/) |
 | `--param` `<text ...>` | model.operation.parameter=value: the value of a runtime parameter of a load operation, instead of an answers file (repeatable) |
 | `--project` `<path>` | Project root |
 | `--reason` `<text>` | With --ack: why the change is accepted (required; recorded with your login) |
 | `--write-plan` | Plan and write the plan files, then stop: nothing is applied |
-| `--yes` | Apply the plan without asking (for a script; risky and destructive steps still need their allowances) |
+| `--yes` | Apply the plan without asking (for a script; risky and destructive steps still need their allowances, and it does not approve computed inputs that moved since the plan: `--input` does) |
 
 ## connection refresh
 

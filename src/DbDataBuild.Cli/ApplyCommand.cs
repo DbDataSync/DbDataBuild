@@ -81,8 +81,15 @@ internal static class ApplyCommand
         catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); return null; }
     }
 
+    /// <summary>The computed inputs that moved since the plan, one line each, with the value the plan was made with and the value now.</summary>
+    internal static void WriteMoved(IReadOnlyList<MovedInput> moved, TextWriter output)
+    {
+        output.WriteLine($"{moved.Count} computed input(s) are not what the plan was made with:");
+        foreach (var m in moved) output.WriteLine($"  {m.Model}.{m.Operation}  {m.Name}: planned {m.Planned ?? "NULL"}, now {m.Now ?? "NULL"}");
+    }
+
     public static int Run(CommandSpec spec, string planPath, string root, bool dryRun, bool allowRisky, string[] allowDestructive, bool allowDirty,
-        TextWriter output, TextWriter error, Func<string, string?> env, string? connectionArg = null, bool afterPlan = false)
+        TextWriter output, TextWriter error, Func<string, string?> env, string? connectionArg = null, bool afterPlan = false, IReadOnlyList<InputPin>? pins = null, Func<IReadOnlyList<MovedInput>, bool>? approveMoved = null)
     {
         string planText, label;
         var fromDatabase = !File.Exists(planPath) && StoredPlanId.IsMatch(Path.GetFileName(planPath));
@@ -104,7 +111,7 @@ internal static class ApplyCommand
             foreach (var d in diags) error.Diag(d);
             return CliApp.ExitFindings;
         }
-        var exit = RunPlan(spec, plan, planText, label, root, dryRun, allowRisky, allowDestructive, allowDirty, new ApplyMode(Header: !afterPlan, Summary: !afterPlan), output, error, env);
+        var exit = RunPlan(spec, plan, planText, label, root, dryRun, allowRisky, allowDestructive, allowDirty, new ApplyMode(Header: !afterPlan, Summary: !afterPlan, InputPins: pins, ApproveMoved: approveMoved), output, error, env);
         // a plan kept only for the moment (`plans.deploy.keep: ephemeral` puts it under .dbdatabuild/plans/) goes when it has been applied
         if (exit == CliApp.ExitOk && !dryRun && !fromDatabase && Path.GetFullPath(planPath).StartsWith(Path.GetFullPath(Path.Combine(root, PlanCommand.EphemeralPlansDir)) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
         {
@@ -126,7 +133,7 @@ internal static class ApplyCommand
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
     /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
     /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false);
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -209,7 +216,8 @@ internal static class ApplyCommand
         if (audit != AuditLevel.Full) planText = "";
         var options = new ApplyOptions(dryRun, allowRisky, allowDestructive.ToHashSet(StringComparer.Ordinal), audit == AuditLevel.Minimal ? null : commit, dirty, audit == AuditLevel.Minimal ? "" : write?.User ?? Environment.UserName, stopRequested,
             (name, token) => originLogins.TryGetValue(name, out var login) ? ReadSession.OpenAsync(login, token) : throw new InvalidOperationException($"no read login for connection {name}"),
-            Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run, Execution: mode.Execution);
+            Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run, Execution: mode.Execution,
+            InputPins: mode.InputPins, ApproveMoved: mode.ApproveMoved, Timezone: config.TimezoneOf(plan.Connection), Clock: RefreshCommand.Now);
 
         // refusals that need no connection come first
         var offline = new List<Diagnostic>(ApplyEngine.CheckAllowances(plan, options));
@@ -264,6 +272,13 @@ internal static class ApplyCommand
             output.Payload("outcome", refreshed.Outcome);
             output.Payload("results", refreshed.Loads.Select(l => new { model = l.Unit.Model, member = l.Unit.Membership, load = l.Unit.Load, state = l.State, reason = l.Reason, status = l.Status, rows = l.Rows, duration_ms = l.DurationMs, detail = l.Detail, note = l.Note }).ToList());
             output.Payload("warnings", refreshed.Warnings.ToList());
+        }
+        if (result.Moved is { Count: > 0 } movedInputs)
+        {
+            output.Payload("moved_inputs", movedInputs.Select(m => new { model = m.Model, operation = m.Operation, name = m.Name, planned = m.Planned, now = m.Now, @override = m.Override }).ToList());
+            WriteMoved(movedInputs, output);
+            output.WriteLine("Nothing was executed. To continue with the new values, run the same command again with these added (an interactive apply asks instead; `--yes` does not approve them):");
+            output.WriteLine("  " + string.Join(" ", movedInputs.Select(m => m.Override)));
         }
         output.Payload("statement_log", logPath?.Replace('\\', '/'));
         output.Payload("success", result.Success);

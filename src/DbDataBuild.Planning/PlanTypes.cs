@@ -10,7 +10,38 @@ public enum RiskClass { Safe, Risky, Destructive }
 
 /// <param name="Source">runtime (a person supplied it) or resolver (read from the target).</param>
 /// <param name="Value">Invariant-culture text of the value in the parameter's logical type, or null for SQL NULL.</param>
-public sealed record PlanParameter(string Name, string Type, string Source, string? Value);
+/// <param name="Planned">Only while a plan is applied: the value the plan was made with, when apply bound another (a moved input the deployer approved, or a value given with `--input` at apply). Recorded in `run_log`; never written to a plan file.</param>
+public sealed record PlanParameter(string Name, string Type, string Source, string? Value, string? Planned = null);
+
+/// <summary>An `--input [model[.load].]name=value`: the value replaces the input's resolver, which is then not run (and a value that is not computed cannot move between a plan and its apply).</summary>
+public sealed record InputPin(string? Target, string Name, string Value, string Text)
+{
+    /// <summary>Reads `[model[.load].]name=value`; null (with a message) when it is not that.</summary>
+    public static InputPin? Parse(string text, out string? problem)
+    {
+        problem = null;
+        var eq = text.IndexOf('=');
+        if (eq <= 0 || eq == text.Length - 1) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
+        var key = text[..eq]; var dot = key.LastIndexOf('.');
+        var (target, name) = dot < 0 ? ((string?)null, key) : (key[..dot], key[(dot + 1)..]);
+        if (name.Length == 0 || (target != null && target.Length == 0)) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
+        return new InputPin(target, name, text[(eq + 1)..], text);
+    }
+
+    /// <summary>Whether the pin is meant for the load of this model (`model`, or `model.load`; the model's own name may have dots).</summary>
+    public bool Matches(string model, string load) => Target == null || Target == model || Target == $"{model}.{load}";
+}
+
+/// <summary>A computed input whose value at apply is not the value in the plan.</summary>
+/// <param name="Planned">The value in the plan (null: NULL).</param>
+/// <param name="Now">The value computed again when the plan is applied.</param>
+public sealed record MovedInput(string StepId, string Model, string Operation, string Name, string? Planned, string? Now)
+{
+    /// <summary>The override as it would be typed to say "yes, with this value": appended to the same command.</summary>
+    public string Override => Quote($"--input {Model}.{Operation}.{Name}={Now}");
+
+    private static string Quote(string arg) { var space = arg.IndexOf(' ', "--input ".Length); return space < 0 ? arg : $"--input \"{arg["--input ".Length..].Replace("\"", "\\\"")}\""; }
+}
 
 /// <summary>
 /// One input of a planned load: how it is defined (the compiled input, with the resolver's text inline so the plan is self-contained), and the value this plan was made with, its source
@@ -23,7 +54,7 @@ public sealed record PlannedInput(RefreshParameter Def, string Source, string? V
     public string Type => Def.Type;
 
     /// <summary>Whether the value is computed (a resolver found it), which is what can move between a plan and its apply.</summary>
-    public bool IsComputed => Source.StartsWith("resolver:", StringComparison.Ordinal);
+    public bool IsComputed => Source.StartsWith("resolver:", StringComparison.Ordinal) || Source == "initial";
 }
 
 /// <summary>What resolving the inputs of one load at plan time came to: the inputs, or why the load cannot be planned (<see cref="Failure"/>), or that an input found NULL and says `skip_load`.</summary>

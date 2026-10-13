@@ -1,3 +1,4 @@
+using DbDataBuild.Apply;
 using DbDataBuild.Core;
 using DbDataBuild.Execution;
 using DbDataBuild.Models;
@@ -5,25 +6,6 @@ using DbDataBuild.Planning;
 using DbDataBuild.Targets.Rendering;
 
 namespace DbDataBuild.Cli;
-
-/// <summary>An `--input [model[.load].]name=value` the person gave: the value replaces the input's resolver, which is then not run (and a value that is not computed cannot move between a plan and its apply).</summary>
-internal sealed record InputPin(string? Target, string Name, string Value, string Text)
-{
-    /// <summary>Reads `[model[.load].]name=value`; null (with a message) when it is not that.</summary>
-    public static InputPin? Parse(string text, out string? problem)
-    {
-        problem = null;
-        var eq = text.IndexOf('=');
-        if (eq <= 0 || eq == text.Length - 1) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
-        var key = text[..eq]; var dot = key.LastIndexOf('.');
-        var (target, name) = dot < 0 ? ((string?)null, key) : (key[..dot], key[(dot + 1)..]);
-        if (name.Length == 0 || (target != null && target.Length == 0)) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
-        return new InputPin(target, name, text[(eq + 1)..], text);
-    }
-
-    /// <summary>Whether the pin is meant for the load of this model (`model`, or `model.load`, or the model's name with dots when the model has them).</summary>
-    public bool Matches(string model, string load) => Target == null || Target == model || Target == $"{model}.{load}";
-}
 
 /// <summary>
 /// The inputs of the loads a deploy plans (docs/research/refresh-plans.md, section 8): resolved when the plan is made, in dependency order, with one instant for the plan: an expression is computed, a `target` resolver runs
@@ -112,11 +94,4 @@ internal static class InputPlanning
         if (login == null) throw new GateRefusedException(missing!);
         return await ReadSession.OpenAsync(login, ct);
     }
-}
-
-/// <summary>Sends a `source` resolver to the origin's session and every other resolver to the load's own.</summary>
-internal sealed class SourceOrTargetRunner(IInputQueryRunner target, IInputQueryRunner origin) : IInputQueryRunner
-{
-    public Task<InputQueryResult> RunAsync(RefreshInputResolver resolver, string text, string? where, CancellationToken ct) =>
-        resolver.Kind == InputResolverKinds.Source ? origin.RunAsync(resolver, text, where, ct) : target.RunAsync(resolver, text, where, ct);
 }
