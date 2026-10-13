@@ -156,7 +156,7 @@ Usage: `dbdatabuild project sample [models]... [options]`
 | `--limit` `<number>` | Rows of each result to show (the row count is always complete) |
 | `--project` `<path>` | Project root (contains models/) |
 | `--rows` `<number>` | Rows generated for each source table |
-| `--scale` `<nullable`1>` | For sources that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own) |
+| `--scale` `<number>` | For sources that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own) |
 | `--seed` `<number>` | Seed of the generator: the same seed gives the same rows |
 | `--sources` | Also show the source tables the models read |
 
@@ -172,7 +172,7 @@ Usage: `dbdatabuild project seed [options]`
 |---|---|
 | `--out` `<file>` | The DuckDB file to write (default: .dbdatabuild/seed.duckdb) |
 | `--project` `<path>` | Project root |
-| `--scale` `<nullable`1>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
+| `--scale` `<number>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
 | `--seed` `<number>` | The variable `seed` the seeds read: the same seed and scale give the same rows |
 
 ## project import
@@ -399,7 +399,7 @@ Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [optio
 | `--input` `<text ...>` | `[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
 | `--only-failed` | Run only the loads of the plan that did not end done in its last run: failed, skipped or not run (a full run again is also safe, loads are idempotent). Needs a plan and its recorded runs |
-| `--parallel` `<nullable`1>` | How many loads may run at once, instead of the plan's `parallel` (1 to 64; default 1, one after another). A load starts when the loads of the plan that it reads are done; `max_parallel` on the connection caps it |
+| `--parallel` `<number>` | How many loads may run at once, instead of the plan's `parallel` (1 to 64; default 1, one after another). A load starts when the loads of the plan that it reads are done; `max_parallel` on the connection caps it |
 | `--project` `<path>` | Project root |
 
 ## connection monitor
@@ -465,7 +465,7 @@ Usage: `dbdatabuild connection seed [connection] [options]`
 | `--apply` | Create and fill the tables on the write login (default: print what would happen and connect to nothing) |
 | `--project` `<path>` | Project root |
 | `--replace` | Drop and recreate a source table that already exists (default: stop at the first table that exists) |
-| `--scale` `<nullable`1>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
+| `--scale` `<number>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
 | `--seed` `<number>` | The variable `seed` the seeds read: the same seed and scale give the same rows |
 
 ## connection publish

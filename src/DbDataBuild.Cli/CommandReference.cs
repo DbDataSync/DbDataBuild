@@ -45,7 +45,7 @@ public static class CommandReference
                 sb.AppendLineLf();
                 sb.AppendLineLf("| Option | Meaning |");
                 sb.AppendLineLf("|---|---|");
-                foreach (var o in command.Options.OrderBy(o => o.Name, StringComparer.Ordinal)) sb.AppendLineLf($"| `{o.Name}`{(o.ValueType == typeof(bool) ? "" : $" `<{o.ValueType.Name.ToLowerInvariant().Replace("string", "text").Replace("int32", "number").Replace("directoryinfo", "path").Replace("fileinfo", "file").Replace("[]", " ...")}>`")} | {Cell(o.Description)} |");
+                foreach (var o in command.Options.OrderBy(o => o.Name, StringComparer.Ordinal)) sb.AppendLineLf($"| `{o.Name}`{(o.ValueType == typeof(bool) ? "" : $" `<{(Nullable.GetUnderlyingType(o.ValueType) ?? o.ValueType).Name.ToLowerInvariant().Replace("string", "text").Replace("int32", "number").Replace("directoryinfo", "path").Replace("fileinfo", "file").Replace("[]", " ...")}>`")} | {Cell(o.Description)} |");
             }
         }
         return sb.ToString();
