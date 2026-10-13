@@ -35,6 +35,9 @@ internal static class RefreshCommand
     /// <summary>The frozen instant of a run, to the second. A test sets it to prove the clock a resolver sees is the run's.</summary>
     internal static Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>For tests only: told the limits of each run when it starts, so a test can read how many sessions an origin had open at once.</summary>
+    internal static Action<SessionLimits>? LimitsObserver { get; set; }
+
     internal sealed record InputFlag(string? Target, string Name, string Value, string Text);
 
     public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, bool onlyFailed, int? parallelArg, TextWriter output, TextWriter error, Func<string, string?> env)
@@ -341,6 +344,7 @@ internal static class RefreshCommand
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
         var limits = new SessionLimits(config.Connections.Where(c => c.Value.MaxParallel != null).ToDictionary(c => c.Key, c => c.Value.MaxParallel!.Value, StringComparer.Ordinal));
+        LimitsObserver?.Invoke(limits);
         var originAccess = new OriginAccess(config, env, limits);
         var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, originAccess, dryRun ? output.WriteLine : null, ct), Downstream);
 

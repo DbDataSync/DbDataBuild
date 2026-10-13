@@ -23,14 +23,14 @@ public sealed class SessionLimits
     private readonly Dictionary<string, int> inUse = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> mostInUse = new(StringComparer.Ordinal);
 
-    /// <summary>The most places of a connection that were ever held at once (a test proves that the cap held; the log of a run does not need it).</summary>
+    /// <summary>The most places of a connection that were ever held at once, capped or not (a test proves that the cap held, and that without it there was something to hold back).</summary>
     public int MostInUse(string connection) { lock (inUse) return mostInUse.GetValueOrDefault(connection); }
 
-    /// <summary>Waits for a place at the connection and returns it; disposing the lease gives it back. Without a cap there is nothing to wait for.</summary>
+    /// <summary>Waits for a place at the connection and returns it; disposing the lease gives it back. Without a cap there is nothing to wait for, but the use is still counted.</summary>
     public async Task<IDisposable> AcquireAsync(string connection, CancellationToken ct)
     {
-        if (!gates.TryGetValue(connection, out var gate)) return NoLease.Instance;
-        await gate.WaitAsync(ct);
+        gates.TryGetValue(connection, out var gate);
+        if (gate != null) await gate.WaitAsync(ct);
         lock (inUse)
         {
             var now = inUse[connection] = inUse.GetValueOrDefault(connection) + 1;
@@ -52,20 +52,14 @@ public sealed class SessionLimits
         catch { lease.Dispose(); throw; }
     }
 
-    private sealed class NoLease : IDisposable
-    {
-        public static readonly NoLease Instance = new();
-        public void Dispose() { }
-    }
-
-    private sealed class Lease(SessionLimits owner, string connection, SemaphoreSlim gate) : IDisposable
+    private sealed class Lease(SessionLimits owner, string connection, SemaphoreSlim? gate) : IDisposable
     {
         private int released;
         public void Dispose()
         {
             if (Interlocked.Exchange(ref released, 1) == 1) return;
             lock (owner.inUse) owner.inUse[connection]--;
-            gate.Release();
+            gate?.Release();
         }
     }
 }

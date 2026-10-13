@@ -296,7 +296,8 @@ public class RefreshParallelTests
         Assert.Equal(2, limits.MostInUse("shop"));
         Assert.Equal(2, limits.CapOf("shop"));
         Assert.Null(limits.CapOf("other"));
-        using (await limits.AcquireAsync("other", CancellationToken.None)) { }                      // no cap, no wait
+        using (await limits.AcquireAsync("other", CancellationToken.None)) { }                      // no cap, no wait, still counted
+        Assert.Equal(1, limits.MostInUse("other"));
     }
 
     [Fact]
