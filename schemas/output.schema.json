@@ -2206,6 +2206,12 @@
             "warn"
           ]
         },
+        "parallel": {
+          "description": "How many loads ran at once at most: the flag, else the plan's setting, else 1, capped by the destination's max_parallel (1 in a dry run).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
         "loads": {
           "description": "The loads of the plan that were selected, in the order they run, with the inputs each runs with.",
           "type": "array",

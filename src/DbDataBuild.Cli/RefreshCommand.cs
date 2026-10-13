@@ -35,9 +35,12 @@ internal static class RefreshCommand
     /// <summary>The frozen instant of a run, to the second. A test sets it to prove the clock a resolver sees is the run's.</summary>
     internal static Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>For tests only: told the limits of each run when it starts, so a test can read how many sessions an origin had open at once.</summary>
+    internal static Action<SessionLimits>? LimitsObserver { get; set; }
+
     internal sealed record InputFlag(string? Target, string Name, string Value, string Text);
 
-    public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, bool onlyFailed, TextWriter output, TextWriter error, Func<string, string?> env)
+    public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, bool onlyFailed, int? parallelArg, TextWriter output, TextWriter error, Func<string, string?> env)
     {
         var configDiags = new List<Diagnostic>();
         var config = ProjectConfigLoader.LoadFromProject(root, configDiags);
@@ -49,6 +52,7 @@ internal static class RefreshCommand
         var settings = config.LifecycleOf(connection.Name);
         if (checkArg != null && !Enum.TryParse<RefreshCheck>(checkArg, ignoreCase: true, out _)) { error.WriteLine($"--check is none, project, objects or live, not `{checkArg}`."); return CliApp.ExitUsage; }
         if (onFailArg != null && !Enum.TryParse<OnFail>(onFailArg, ignoreCase: true, out _)) { error.WriteLine($"--on-fail is block or warn, not `{onFailArg}`."); return CliApp.ExitUsage; }
+        if (parallelArg is < 1 or > 64) { error.WriteLine($"--parallel is a whole number from 1 to 64, not {parallelArg}."); return CliApp.ExitUsage; }
         var flags = new List<InputFlag>();
         foreach (var text in inputArgs)
         {
@@ -293,6 +297,14 @@ internal static class RefreshCommand
         output.Payload("selection", selection.Length == 0 ? null : selection);
         output.Payload("check", LifecycleSettings.Name(check));
         output.Payload("on_fail", LifecycleSettings.Name(onFail));
+        // how many loads run together: the flag, else the plan's `parallel`, else 1; the destination's `max_parallel` caps it, and a dry run executes nothing so it goes one at a time
+        var requestedParallel = parallelArg ?? plan?.Settings.Parallel ?? 1;
+        var parallel = dryRun ? 1 : Math.Min(requestedParallel, connection.MaxParallel ?? requestedParallel);
+        output.Payload("parallel", parallel);
+        if (requestedParallel > 1)
+            output.WriteLine(dryRun ? $"parallel {requestedParallel} asked for; a dry run goes one load at a time."
+                : parallel < requestedParallel ? $"parallel {requestedParallel} asked for; {parallel} load(s) at a time (`max_parallel: {connection.MaxParallel}` on `{connection.Name}`)."
+                : $"parallel {parallel}: up to {parallel} loads at a time, each when the loads it reads are done.");
         output.Payload("loads", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }).ToList() }).ToList());
         output.Payload("findings", findings.Select(f => f.Code).ToList());
         if (wholeConnection.Count > 0)
@@ -331,7 +343,10 @@ internal static class RefreshCommand
             try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
-        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, new OriginAccess(config, env), dryRun ? output.WriteLine : null, ct), Downstream);
+        var limits = new SessionLimits(config.Connections.Where(c => c.Value.MaxParallel != null).ToDictionary(c => c.Key, c => c.Value.MaxParallel!.Value, StringComparer.Ordinal));
+        LimitsObserver?.Invoke(limits);
+        var originAccess = new OriginAccess(config, env, limits);
+        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, originAccess, dryRun ? output.WriteLine : null, ct), Downstream);
 
         var run = new RefreshRunInfo(planName, selection, members);
         // the transfers of a copy are not in the plan the engine opens up front: an origin that cannot be reached fails its own load (`failed: origin`), it does not refuse the refresh
@@ -339,7 +354,7 @@ internal static class RefreshCommand
         var originNames = items.SelectMany(i => i.Entry.Copy?.Origins.Select(o => o.Connection) ?? []).Distinct(StringComparer.Ordinal).ToList();
         var audit = settings.Refresh.Audit;
         var exit = ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
-            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed, Origins: originNames), output, error, env);
+            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed, Origins: originNames, Parallel: parallel, Limits: limits), output, error, env);
         // a dry run resolved the inputs (the resolvers ran, read-only): the values it would have used, and where each came from
         if (dryRun)
             output.Payload("resolved_inputs", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value, resolver_hash = x.ResolverHash }).ToList() }).ToList());
@@ -602,14 +617,14 @@ internal static class RefreshCommand
 /// How a refresh reaches the origins of its copies: each by its connection name, on its read login from the environment (`DBDATABUILD_&lt;ORIGIN&gt;_READ`), through <see cref="ReadSession"/> only. A failure is described by its
 /// type and error number, never by the driver's message.
 /// </summary>
-internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> Env)
+internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> Env, SessionLimits? Limits = null)
 {
     public async Task<ReadSession> OpenAsync(string name, CancellationToken ct)
     {
         if (!Config.Connections.TryGetValue(name, out var connection)) throw new InvalidOperationException($"no connection {name}");
         var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, Env);
         if (login == null) throw new GateRefusedException(missing!);
-        return await ReadSession.OpenAsync(login, ct);
+        return await (Limits ?? SessionLimits.None).OpenAsync(name, () => ReadSession.OpenAsync(login, ct), ct);
     }
 
     /// <summary>Null when the origin answers on its read login; otherwise what is wrong, in words that quote nothing a driver said.</summary>

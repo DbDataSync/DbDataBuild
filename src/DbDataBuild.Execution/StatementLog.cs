@@ -30,8 +30,11 @@ public sealed class FileStatementLog : IStatementLog, IDisposable
             parameters = entry.Parameters?.Select(p => new { p.Name, p.Value }), outcome = entry.Outcome,
         }, Json);
         var bytes = Encoding.UTF8.GetBytes(line + "\n");
-        stream.Write(bytes);
-        stream.Flush(flushToDisk: true);
+        lock (stream)                                      // sessions that run side by side write whole lines, one at a time
+        {
+            stream.Write(bytes);
+            stream.Flush(flushToDisk: true);
+        }
     }
 
     public void Dispose() => stream.Dispose();
@@ -41,5 +44,5 @@ public sealed class FileStatementLog : IStatementLog, IDisposable
 public sealed class MemoryStatementLog : IStatementLog
 {
     public List<StatementLogEntry> Entries { get; } = [];
-    public void Append(StatementLogEntry entry) => Entries.Add(entry);
+    public void Append(StatementLogEntry entry) { lock (Entries) Entries.Add(entry); }
 }

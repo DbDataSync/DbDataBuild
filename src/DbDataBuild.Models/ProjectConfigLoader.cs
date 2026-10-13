@@ -8,7 +8,7 @@ public static class ProjectConfigLoader
 {
     private static readonly string[] TopKeys = ["defaults", "parameters", "connections", "tracking", "string_semantics", "policy", "hook_groups", "metadata", "lowering", "lint", "rewrites", "model_layout", "tests", "plans", "refresh", "retention", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] SemanticsKeys = ["case", "accent", "trailing_space", "collations"];
-    private static readonly string[] ConnectionKeys = ["engine", "version", "parameters", "tracking", "allow_native_commands", "string_semantics", "plans", "refresh", "timezone", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] ConnectionKeys = ["engine", "version", "parameters", "tracking", "allow_native_commands", "max_parallel", "string_semantics", "plans", "refresh", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] CollationEngines = ["duckdb", "sqlserver", "fabric", "postgres"];
 
     /// <summary>Loads the project's config. A missing file yields the defaults and a DDB-109 warning; a bad file yields errors and the defaults.</summary>
@@ -357,7 +357,13 @@ public static class ProjectConfigLoader
                     if (ac is YamlScalar { Value: "true" or "false" } acs) allowCommands = acs.Value == "true";
                     else Add(DiagnosticCatalog.InvalidValue, ac, "`allow_native_commands` is `true` or `false` (lowercase).");
                 }
-                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`") };
+                int? maxParallel = null;
+                if (settings.Get("max_parallel") is { } mp)
+                {
+                    if (mp is YamlScalar mps && int.TryParse(mps.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap is >= 1 and <= 64) maxParallel = cap;
+                    else Add(DiagnosticCatalog.InvalidValue, mp, $"`connections.{name}.max_parallel` must be a whole number from 1 to 64.");
+                }
+                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel };
             }
             return result;
         }

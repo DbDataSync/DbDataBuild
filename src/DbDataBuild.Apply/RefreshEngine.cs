@@ -72,12 +72,52 @@ public sealed record RefreshSummary(string Outcome, IReadOnlyList<LoadOutcome> L
 }
 
 /// <summary>
-/// Runs the loads of a refresh one after another (docs/research/refresh-plans.md, section 6): a lock per load instead of one for the connection, the failure rule of each load, a busy load by its `on_busy`, a load past its
-/// `max_runtime` cancelled, and one row in `run_log` for every load whether it ran or not.
+/// The sessions one load of a refresh runs on: a read session, the gate of a write session, and the tracker that writes the load's records. A refresh that runs one load at a time uses the run's own; one that runs loads
+/// together gives each concurrent load a worker of its own, since a connection runs one statement at a time.
+/// </summary>
+public sealed class RefreshWorker(ReadSession reader, MutationGate gate, Tracker tracker, IReadOnlyList<IAsyncDisposable>? owned = null) : IAsyncDisposable
+{
+    public ReadSession Reader { get; } = reader;
+    public MutationGate Gate { get; } = gate;
+    public Tracker Tracker { get; } = tracker;
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var o in owned ?? []) { try { await o.DisposeAsync(); } catch (Exception) { /* closing */ } }
+    }
+}
+
+/// <summary>Hands the workers of a run out and takes them back; opens one more only when none is idle (a run never has more workers than loads running at once).</summary>
+internal sealed class WorkerPool(RefreshWorker first, Func<CancellationToken, Task<RefreshWorker>>? open) : IAsyncDisposable
+{
+    private readonly Stack<RefreshWorker> idle = new(open == null ? [first] : []);
+    private readonly List<RefreshWorker> opened = [];
+
+    public async Task<RefreshWorker> TakeAsync(CancellationToken ct)
+    {
+        lock (idle) { if (idle.Count > 0) return idle.Pop(); }
+        if (open == null) throw new InvalidOperationException("This run has one session and it is in use.");
+        var worker = await open(ct);
+        lock (idle) opened.Add(worker);
+        return worker;
+    }
+
+    public void Return(RefreshWorker worker) { lock (idle) idle.Push(worker); }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var w in opened) await w.DisposeAsync();
+    }
+}
+
+/// <summary>
+/// Runs the loads of a refresh (docs/research/refresh-plans.md, section 6): a lock per load instead of one for the connection, the failure rule of each load, a busy load by its `on_busy`, a load past its
+/// `max_runtime` cancelled, and one row in `run_log` for every load whether it ran or not. A load starts when the loads of the plan that it reads have finished, with at most `parallel` running at once
+/// (<see cref="RefreshScheduler"/>); with 1 that is one after another, in the order of the plan, exactly as before there was a `parallel`.
 /// </summary>
 internal static class RefreshEngine
 {
-    public static async Task<ApplyResult> RunAsync(Plan plan, string planText, string planHash, ReadSession reader, Tracker tracker, MutationGate gate, ApplyOptions o, Guid runId, string connectionLock, Action<string> progress, CancellationToken ct)
+    public static async Task<ApplyResult> RunAsync(Plan plan, string planText, string planHash, ReadSession reader, Tracker tracker, MutationGate gate, Func<CancellationToken, Task<RefreshWorker>>? openWorker, ApplyOptions o, Guid runId, string connectionLock, Action<string> progress, CancellationToken ct)
     {
         var exec = o.Execution!;
         if (!gate.DryRun)
@@ -87,12 +127,16 @@ internal static class RefreshEngine
                 await tracker.PlanMemberAsync($"member:{m.Position}", plan.Id, m.Position, m.Membership, m.Model, m.Load, m.LoadPlanHash, m.Selected, ct);
         }
 
-        var results = new List<LoadOutcome>();
-        var warnings = new List<string>();
-        var preparedSteps = new List<PlanStep>();
+        var units = exec.Units;
+        // a dry run executes nothing and prints what it resolved: one load at a time keeps that text in the order of the plan
+        var parallel = gate.DryRun || openWorker == null ? 1 : Math.Max(1, Math.Min(o.Parallel, units.Count));
+        await using var pool = new WorkerPool(new RefreshWorker(reader, gate, tracker), parallel > 1 ? openWorker : null);
+
+        var results = new LoadOutcome?[units.Count];
+        var preparedSteps = new List<PlanStep>?[units.Count];
         var refusals = new List<Diagnostic>();
         var failedModels = new List<string>();                  // loads that failed under `continue`: what reads them is skipped
-        var skippedModels = new Dictionary<string, string>(StringComparer.Ordinal);      // loads skipped because they were busy or an input found nothing and said skip_load: what reads them runs, and says so
+        var skippedModels = new List<(int Index, string Model, string Reason)>();      // loads skipped because they were busy or an input found nothing and said skip_load: what reads them runs, and says so
         var halted = false; var stopTriggered = false; var operatorStopped = false;
 
         bool Reads(IEnumerable<string> upstream, string model) => upstream.Any(u => exec.DownstreamOf(u).Contains(model));
@@ -104,52 +148,85 @@ internal static class RefreshEngine
             return new LoadOutcome(unit, status, null, null, detail, null);
         }
 
-        foreach (var unit in exec.Units)
+        // what a load waits for. One at a time: the load before it. Together: the loads that it reads (the project graph, read when this is asked), and an earlier load of the same model, since a model's loads
+        // exclude each other through its lock
+        IReadOnlyList<int> Dependencies(int i)
         {
-            LoadOutcome result;
-            if (halted) result = await NoRunAsync(unit, operatorStopped ? LoadStatus.SkippedStopped : LoadStatus.NotRun, operatorStopped ? "the operator stopped the refresh" : "an earlier load failed under on_failure stop");
-            else if (o.StopRequested?.Invoke() == true)
+            if (parallel == 1) return Enumerable.Range(0, i).ToList();
+            return Enumerable.Range(0, i).Where(j => string.Equals(units[j].Model, units[i].Model, StringComparison.OrdinalIgnoreCase) || Reads([units[j].Model], units[i].Model)).ToList();
+        }
+
+        async Task<Func<Task>?> Admit(int i)
+        {
+            var unit = units[i];
+            if (halted) { results[i] = await NoRunAsync(unit, operatorStopped ? LoadStatus.SkippedStopped : LoadStatus.NotRun, operatorStopped ? "the operator stopped the refresh" : "an earlier load failed under on_failure stop"); return null; }
+            if (o.StopRequested?.Invoke() == true)
             {
                 halted = operatorStopped = true;
                 refusals.Add(new Diagnostic(DiagnosticCatalog.ApplyStopped, new($"load:{unit.Display}", 0, 0), $"The refresh was stopped before {unit.Display}. The loads before it finished; it and the later loads did not run."));
-                result = await NoRunAsync(unit, LoadStatus.SkippedStopped, "the operator stopped the refresh");
+                results[i] = await NoRunAsync(unit, LoadStatus.SkippedStopped, "the operator stopped the refresh");
+                return null;
             }
-            else if (Reads(failedModels, unit.Model)) result = await NoRunAsync(unit, LoadStatus.SkippedUpstreamFailed, "a load it reads failed");
-            else
-            {
-                progress($"load {unit.Position}/{exec.Units.Count}: {unit.Display}");
-                var upstreamSkipped = skippedModels.FirstOrDefault(kv => exec.DownstreamOf(kv.Key).Contains(unit.Model));
-                result = await RunUnitAsync(unit, upstreamSkipped.Key != null ? $"upstream skipped: {upstreamSkipped.Value}" : null, plan, reader, tracker, gate, o, runId, connectionLock, preparedSteps, progress, ct);
-            }
-            results.Add(result);
+            if (Reads(failedModels, unit.Model)) { results[i] = await NoRunAsync(unit, LoadStatus.SkippedUpstreamFailed, "a load it reads failed"); return null; }
 
+            progress($"load {unit.Position}/{units.Count}: {unit.Display}");
+            var upstreamSkipped = skippedModels.OrderBy(k => k.Index).FirstOrDefault(k => exec.DownstreamOf(k.Model).Contains(unit.Model));
+            var note = upstreamSkipped.Model != null ? $"upstream skipped: {upstreamSkipped.Reason}" : null;
+            RefreshWorker worker;
+            try { worker = await pool.TakeAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // the connection would not give another session: the load fails, the failure rules apply
+                results[i] = await NoRunAsync(unit, LoadStatus.Failed, $"a session for it could not be opened ({ex.GetType().Name}{SessionNumber(ex)})");
+                return null;
+            }
+            return async () =>
+            {
+                try { results[i] = await RunUnitAsync(unit, note, plan, worker.Reader, worker.Tracker, worker.Gate, o, runId, connectionLock, preparedSteps, i, ct); }
+                finally { pool.Return(worker); }
+            };
+        }
+
+        Task Finished(int i)
+        {
+            var unit = units[i]; var result = results[i]!;
             if (result.State == "failed")
             {
                 switch (unit.OnFailure)
                 {
                     case OnFailureModes.Stop: halted = stopTriggered = true; break;
-                    case OnFailureModes.Ignore: warnings.Add($"{unit.Display}: {result.Status}{(result.Detail != null ? " (" + result.Detail + ")" : "")}; ignored (on_failure: ignore), what reads it runs on the data it had"); break;
+                    case OnFailureModes.Ignore: break;                            // a warning, written from the results at the end
                     default: failedModels.Add(unit.Model); break;
                 }
             }
-            else if (result.Status == LoadStatus.SkippedBusy) skippedModels[unit.Model] = "busy";
-            else if (result.Status == LoadStatus.SkippedNoValue) skippedModels[unit.Model] = "no value";
+            else if (result.Status == LoadStatus.SkippedBusy) skippedModels.Add((i, unit.Model, "busy"));
+            else if (result.Status == LoadStatus.SkippedNoValue) skippedModels.Add((i, unit.Model, "no value"));
+            return Task.CompletedTask;
         }
 
+        await RefreshScheduler.RunAsync(units.Count, parallel, Dependencies, () => halted, Admit, Finished, ct);
+
+        var all = results.Select(r => r!).ToList();                      // in the order of the plan, whichever order the loads ended in
+        var warnings = all.Where(r => r.State == "failed" && r.Unit.OnFailure == OnFailureModes.Ignore)
+            .Select(r => $"{r.Unit.Display}: {r.Status}{(r.Detail != null ? " (" + r.Detail + ")" : "")}; ignored (on_failure: ignore), what reads it runs on the data it had").ToList();
+
         // how it ended: a stop wins; an ignored failure is a warning and nothing more; a busy skip is not a failure
-        var problems = results.Where(r => r.State is "failed" or "not run" || (r.State == "skipped" && r.Status is not (LoadStatus.SkippedBusy or LoadStatus.SkippedNoValue))).ToList();
-        var ignored = results.Where(r => r.State == "failed" && r.Unit.OnFailure == OnFailureModes.Ignore).ToList();
+        var problems = all.Where(r => r.State is "failed" or "not run" || (r.State == "skipped" && r.Status is not (LoadStatus.SkippedBusy or LoadStatus.SkippedNoValue))).ToList();
+        var ignored = all.Where(r => r.State == "failed" && r.Unit.OnFailure == OnFailureModes.Ignore).ToList();
         var counted = problems.Except(ignored).ToList();
         var outcome = stopTriggered || operatorStopped ? RefreshSummary.Stopped
             : counted.Count == 0 ? RefreshSummary.Completed
-            : results.Any(r => r.State == "done") ? RefreshSummary.CompletedWithFailures : RefreshSummary.Failed;
+            : all.Any(r => r.State == "done") ? RefreshSummary.CompletedWithFailures : RefreshSummary.Failed;
         if (!gate.DryRun) await tracker.MigrationAsync("migration:" + outcome, plan.Id, planHash, planText, o.GitCommit, o.Invoker, outcome, null, null, o.Lane, o.ProjectHash, o.Run?.PlanName, ApplyEngine.SelectionOf(o), CancellationToken.None);
 
-        var stepOutcomes = results.Select(r => new StepOutcome(r.Unit.LoadStepId, $"load {r.Unit.Display}", gate.DryRun && r.State == "done" ? "dry-run" : r.State == "done" ? "ok" : r.State == "failed" ? "failed" : r.State, r.Status == LoadStatus.Done ? r.Note : r.Detail is { } d ? $"{r.Status}: {d}" : r.Status)).ToList();
-        return new ApplyResult(stepOutcomes, refusals, new RefreshSummary(outcome, results, warnings), preparedSteps);
+        var stepOutcomes = all.Select(r => new StepOutcome(r.Unit.LoadStepId, $"load {r.Unit.Display}", gate.DryRun && r.State == "done" ? "dry-run" : r.State == "done" ? "ok" : r.State == "failed" ? "failed" : r.State, r.Status == LoadStatus.Done ? r.Note : r.Detail is { } d ? $"{r.Status}: {d}" : r.Status)).ToList();
+        return new ApplyResult(stepOutcomes, refusals, new RefreshSummary(outcome, all, warnings), preparedSteps.Where(p => p != null).SelectMany(p => p!).ToList());
     }
 
-    private static async Task<LoadOutcome> RunUnitAsync(RefreshUnit unit, string? note, Plan plan, ReadSession reader, Tracker tracker, MutationGate gate, ApplyOptions o, Guid runId, string connectionLock, List<PlanStep> preparedSteps, Action<string> progress, CancellationToken ct)
+    /// <summary>`, error 1234` for a database exception, else nothing: what went wrong without the driver's message, which can quote data.</summary>
+    private static string SessionNumber(Exception ex) => ex is System.Data.Common.DbException { ErrorCode: var code } && code != 0 ? $", error {code}" : "";
+
+    private static async Task<LoadOutcome> RunUnitAsync(RefreshUnit unit, string? note, Plan plan, ReadSession reader, Tracker tracker, MutationGate gate, ApplyOptions o, Guid runId, string connectionLock, List<PlanStep>?[] preparedSteps, int index, CancellationToken ct)
     {
         var exec = o.Execution!;
         var clock = Stopwatch.StartNew();
@@ -182,7 +259,7 @@ internal static class RefreshEngine
             try { prepared = await exec.Prepare(unit, reader, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return await Ended(LoadStatus.FailedInput, $"its inputs could not be resolved ({ex.GetType().Name})"); }
             if (prepared.Problem != null) return await Ended(prepared.ProblemStatus, prepared.Problem, prepared.InputsJson);
-            preparedSteps.AddRange(prepared.Steps);
+            preparedSteps[index] = [.. prepared.Steps];
 
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
             if (unit.MaxRuntime is { } span) limit.CancelAfter(span);

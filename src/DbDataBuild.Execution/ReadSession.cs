@@ -183,7 +183,16 @@ public sealed class ReadSession : IAsyncDisposable
         catch { await cmd.DisposeAsync(); await transaction.RollbackAsync(CancellationToken.None); await transaction.DisposeAsync(); throw; }
     }
 
-    public ValueTask DisposeAsync() => connection.DisposeAsync();
+    private IDisposable? lease;
+
+    /// <summary>Ties a slot of a <see cref="SessionLimits"/> to this session: it is given back when the session is disposed.</summary>
+    internal void HoldLease(IDisposable held) => lease = held;
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await connection.DisposeAsync(); }
+        finally { lease?.Dispose(); lease = null; }
+    }
 }
 
 /// <summary>The rows of one streaming read. <see cref="Names"/> are the columns the query returned, in order.</summary>

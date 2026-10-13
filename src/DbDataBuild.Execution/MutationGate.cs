@@ -184,15 +184,35 @@ public sealed class MutationGate : IAsyncDisposable
     private readonly IStatementLog log;
     private readonly string command;
     private readonly StatementKind permitted;
-    private int ordinal;
+    private readonly Sequence sequence;
 
     public Guid RunId { get; }
     public bool DryRun { get; }
 
-    private MutationGate(IWriteExecutor? executor, IStatementLog log, string command, StatementKind permitted, bool dryRun, Guid runId)
+    /// <summary>
+    /// What gates of one run share when a refresh runs loads side by side (each load on a session of its own): the ordinal of the statement log and the lock that keeps an ordinal and its line together, so the log of a run
+    /// stays one ordered sequence whichever session wrote a line.
+    /// </summary>
+    private sealed class Sequence { public readonly object Lock = new(); public int Value; }
+
+    private MutationGate(IWriteExecutor? executor, IStatementLog log, string command, StatementKind permitted, bool dryRun, Guid runId, Sequence? sequence = null)
     {
-        this.executor = executor; this.log = log; this.command = command; this.permitted = permitted; DryRun = dryRun; RunId = runId;
+        this.executor = executor; this.log = log; this.command = command; this.permitted = permitted; DryRun = dryRun; RunId = runId; this.sequence = sequence ?? new Sequence();
     }
+
+    /// <summary>
+    /// Another gate of the same run: its own write session, the same command, permissions, statement log and ordinal. A refresh with `parallel` above 1 gives each concurrent load one, because a connection runs one
+    /// statement at a time. Each sibling is still the only handle on its connection.
+    /// </summary>
+    public async Task<MutationGate> OpenSiblingAsync(LoginSettings write, StatementKind? permittedKinds = null, CancellationToken ct = default)
+    {
+        if (DryRun) throw new InvalidOperationException("A dry-run gate has no session to open a sibling of.");
+        if (write.Login != Login.Write) throw new ArgumentException("The mutation gate needs the write login.", nameof(write));
+        return new MutationGate(new AdoWriteExecutor(await write.OpenAsync(ct), write.Engine == "postgres"), log, command, permittedKinds ?? permitted, dryRun: false, RunId, sequence);
+    }
+
+    /// <summary>For tests: a gate of the same run on another executor, sharing the log and the ordinal.</summary>
+    internal MutationGate SiblingForTesting(IWriteExecutor executor) => new(executor, log, command, permitted, DryRun, RunId, sequence);
 
     /// <summary>Opens the write login and wraps it. The returned gate is the only handle on the connection.</summary>
     public static async Task<MutationGate> OpenAsync(LoginSettings write, string command, StatementKind permitted, IStatementLog log, Guid runId, CancellationToken ct = default)
@@ -214,8 +234,7 @@ public sealed class MutationGate : IAsyncDisposable
             throw new GateRefusedException(new Diagnostic(DiagnosticCatalog.GateRefused, new($"step:{statement.StepId}", 0, 0),
                 $"`{command}` permits {Describe(permitted)} statements; step `{statement.StepId}` is a {statement.Kind.ToString().ToLowerInvariant()} statement. Nothing was executed."));
 
-        var n = Interlocked.Increment(ref ordinal);
-        Record(n, DryRun ? "dry-run" : "begin", statement, includeText: true, outcome: null);
+        var n = Begin(DryRun ? "dry-run" : "begin", statement);
         if (DryRun) return 0;
 
         try
@@ -243,8 +262,7 @@ public sealed class MutationGate : IAsyncDisposable
         if ((permitted & statement.Kind) == 0)
             throw new GateRefusedException(new Diagnostic(DiagnosticCatalog.GateRefused, new($"step:{statement.StepId}", 0, 0),
                 $"`{command}` permits {Describe(permitted)} statements; step `{statement.StepId}` is a {statement.Kind.ToString().ToLowerInvariant()} statement. Nothing was executed."));
-        var n = Interlocked.Increment(ref ordinal);
-        Record(n, DryRun ? "dry-run" : "begin", statement, includeText: true, outcome: null);
+        var n = Begin(DryRun ? "dry-run" : "begin", statement);
         if (DryRun) return 0;
         try
         {
@@ -266,9 +284,8 @@ public sealed class MutationGate : IAsyncDisposable
     {
         try
         {
-            var n = Interlocked.Increment(ref ordinal);
             var rollback = GateStatement.Tracking(stepId + ":rollback", "ROLLBACK (leave no transaction open)");
-            Record(n, "recover", rollback, includeText: true, outcome: null);
+            Begin("recover", rollback);
             await executor!.RecoverAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { /* the connection is unusable; the next statement will fail and say so */ }
@@ -286,9 +303,8 @@ public sealed class MutationGate : IAsyncDisposable
     /// </summary>
     public async Task<bool> AcquireApplicationLockAsync(string resource, bool shared, TimeSpan maxWait, CancellationToken ct = default)
     {
-        var n = Interlocked.Increment(ref ordinal);
         var s = GateStatement.Tracking("lock", $"acquire application lock {resource}{(shared ? " (shared)" : "")}");
-        Record(n, DryRun ? "dry-run" : "begin", s, includeText: true, outcome: null);
+        var n = Begin(DryRun ? "dry-run" : "begin", s);
         if (DryRun) return true;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         bool granted;
@@ -303,11 +319,21 @@ public sealed class MutationGate : IAsyncDisposable
     public async Task ReleaseApplicationLockAsync(string resource, bool shared, CancellationToken ct = default)
     {
         if (DryRun) return;
-        var n = Interlocked.Increment(ref ordinal);
         var s = GateStatement.Tracking("unlock", $"release application lock {resource}{(shared ? " (shared)" : "")}");
-        Record(n, "begin", s, includeText: true, outcome: null);
+        var n = Begin("begin", s);
         await executor!.UnlockAsync(resource, shared, ct);
         Record(n, "end", s, includeText: false, outcome: "released");
+    }
+
+    /// <summary>Takes the next ordinal of the run and writes the opening line with it, as one step, so lines of sessions that run side by side stay in ordinal order.</summary>
+    private int Begin(string phase, GateStatement s)
+    {
+        lock (sequence.Lock)
+        {
+            var n = ++sequence.Value;
+            Record(n, phase, s, includeText: true, outcome: null);
+            return n;
+        }
     }
 
     private void Record(int n, string phase, GateStatement s, bool includeText, string? outcome)

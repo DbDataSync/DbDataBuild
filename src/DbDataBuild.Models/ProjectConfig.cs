@@ -49,6 +49,9 @@ public sealed record ConnectionConfig(string Name, string Engine, int? Version =
     /// <summary>The connection's own `timezone:` (an IANA name), which wins over the project's for the clock of its resolvers.</summary>
     public string? Timezone { get; init; }
 
+    /// <summary>How many sessions a refresh may have open at this connection at once (1 to 64); null is no limit. At an origin it counts the sessions that read rows for a copy, at the destination the loads that run together.</summary>
+    public int? MaxParallel { get; init; }
+
     /// <summary>The connection's title, description, tags and properties (its own: the project's are not inherited).</summary>
     public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
 
