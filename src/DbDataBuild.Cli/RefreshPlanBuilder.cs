@@ -143,6 +143,24 @@ internal static class RefreshPlanBuilder
         return ok;
     }
 
+    /// <summary>The staging table of a copy, its columns, and for each origin the read in that origin's dialect (with and without the watermark bound): what a refresh needs to run the transfers without the project.</summary>
+    private static RefreshCopy CopyOf(ProjectContext ctx, string connection, DdlGenerator ddl, ModelDefinition def, IReadOnlyList<CopyOrigin> origins)
+    {
+        var (stagingSchema, stagingTable) = (CopyModels.StagingSchema(ctx.Config), CopyModels.StagingTable(def.Name));
+        var list = new List<RefreshCopyOrigin>();
+        string create = "";
+        foreach (var origin in origins)
+        {
+            var (createText, spec) = Planner.CopyTransfer(ctx.Config, def, ddl, origin);
+            create = createText;
+            string? incremental = null;
+            if (def.Watermark != null) incremental = Planner.CopyTransfer(ctx.Config, def, ddl, origin with { WatermarkValue = "0" }).Spec.ReadText;
+            list.Add(new(origin.Connection, origin.Engine, origin.Table, spec.ReadText, incremental, spec.Slice?.Column, spec.Slice?.Value, spec.Slice?.Added ?? false, []));
+        }
+        var watermark = def.Watermark == null ? null : new RefreshCopyWatermark(def.Watermark.Column, def.Columns.First(x => string.Equals(x.Name, def.Watermark.Column, StringComparison.OrdinalIgnoreCase)).Type, def.Watermark.Lookback);
+        return new RefreshCopy($"{stagingSchema}.{stagingTable}", create, ddl.DropTableIfExists(stagingSchema, stagingTable), def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), watermark, list);
+    }
+
     /// <param name="models">Every model of the project that declares <paramref name="connection"/>, with its query as that connection reads it, and its rendering for the connection.</param>
     public static CompiledRefresh Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, List<Diagnostic> diags)
     {
@@ -173,7 +191,14 @@ internal static class RefreshPlanBuilder
                 if (op == null) { excluded.Add(new(def.Name, reason)); foreach (var o in ops) excludedLoads[(def.Name, o.Operation)] = reason; }
                 else { excluded.Add(new(def.Name, $"the load `{op.Operation}`: {reason}")); excludedLoads[(def.Name, op.Operation)] = reason; }
             }
-            if (def.IsCopy && !def.LocalCopy) { Skip(null, "a copy moves rows between connections; a deploy plans it"); continue; }
+            RefreshCopy? copy = null;
+            if (def.IsCopy && !def.LocalCopy)
+            {
+                var origins = ctx.OriginsOf(def, connection);
+                if (origins.Count == 0) { Skip(null, "the copy has no origin on another connection"); continue; }
+                if (origins.Any(o => o.Native != null)) { Skip(null, "its origin is a native model (a deploy plans a copy of one); a refresh copies from tables and views"); continue; }
+                copy = CopyOf(ctx, connection, ddl, def, origins);
+            }
             var shape = ExpectedShape(ddl, def);
             if (shape.StartsWith("unsupported:", StringComparison.Ordinal)) { Skip(null, $"its declared columns have no type on {connection} ({shape[12..]})"); continue; }
             var hooks = model.HookList.Where(h => h.Hook.Event is "pre_load" or "post_load").ToList();
@@ -184,10 +209,26 @@ internal static class RefreshPlanBuilder
             foreach (var op in ops)
             {
                 var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
-                var (inputs, skipReason) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, diags);
+                var (inputs, skipReason) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, diags, copy?.Origins[0].Engine);
                 if (inputs == null) { Skip(op, skipReason!); continue; }
+                var opCopy = copy;
+                if (copy != null && inputs.Any(i => i.Resolver?.Kind == InputResolverKinds.Source))
+                {
+                    // a `source` resolver is lowered for the engine of each origin: each origin carries the inputs as its own engine runs them
+                    var first = true;
+                    var perOrigin = new List<RefreshCopyOrigin>();
+                    foreach (var o in copy.Origins)
+                    {
+                        var (its, why) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, first ? diags : [], o.Engine);
+                        first = false;
+                        if (its == null) { Skip(op, why!); perOrigin.Clear(); break; }
+                        perOrigin.Add(o with { Inputs = its });
+                    }
+                    if (perOrigin.Count == 0) continue;
+                    opCopy = copy with { Origins = perOrigin };
+                }
                 loads.Add(new(def.Name, op.Operation, op.Strategy, op.IsDefault, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
-                    shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text));
+                    shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text, opCopy));
             }
         }
         var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList());

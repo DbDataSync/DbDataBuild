@@ -318,7 +318,7 @@ internal sealed class PlanningSession
     }
 
     /// <summary>The lower bound of an incremental copy: the newest value the destination holds, less the lookback for a date or a time (rows that arrive late or change). Null (no row yet) reads everything.</summary>
-    private static string? WatermarkBound(string? newest, string type, string? lookback)
+    internal static string? WatermarkBound(string? newest, string type, string? lookback)
     {
         if (newest == null) return null;
         if (lookback == null || LoadDuration.TryParse(lookback) is not { } duration || !duration.FitsColumnType(type)) return newest;

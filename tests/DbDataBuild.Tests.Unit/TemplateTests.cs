@@ -78,7 +78,7 @@ public class TemplateTests
     }
 
     [Fact]
-    public void The_stores_template_compiles_a_refresh_plan_per_engine_that_leaves_the_copy_to_a_deploy()
+    public void The_fan_in_template_compiles_a_refresh_plan_per_engine_in_which_the_copy_is_a_load_before_the_report()
     {
         var dir = Path.Combine(Path.GetTempPath(), "ddb-template-" + Guid.NewGuid().ToString("N"));
         try
@@ -90,7 +90,17 @@ public class TemplateTests
             {
                 var loads = File.ReadAllText(Path.Combine(dir, "rendered", connection, "loads.yml"));
                 Assert.Contains("model: \"marts.daily_sales\"", loads);                                       // the fan-out model is a load on both engines
-                Assert.Matches("excluded:\\s*\n\\s*- model: \"warehouse.orders\"\\s*\n\\s*reason: \"a copy moves rows between connections; a deploy plans it\"", loads);
+                Assert.DoesNotContain("excluded:", loads);                                                    // the copy is a load like any other
+                Assert.Contains("model: \"warehouse.orders\"", loads);
+                Assert.Contains("origins:", loads);
+                Assert.Contains("connection: \"store_east\"", loads);
+                Assert.Contains("connection: \"store_west\"", loads);
+                Assert.Contains("read_incremental:", loads);                                                  // the copy is incremental: its read has the watermark bound
+                foreach (var plan in new[] { "hourly", "daily" })
+                {
+                    var text = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", plan + ".yml"));
+                    Assert.True(text.IndexOf("warehouse.orders", StringComparison.Ordinal) is var copyAt and >= 0 && text.IndexOf("marts.daily_sales", StringComparison.Ordinal) > copyAt, plan + ": the copy comes before the report that reads it\n" + text);
+                }
             }
             Assert.False(File.Exists(Path.Combine(dir, "rendered", "store_east", "loads.yml")));     // a shop system is only read: nothing is built on it
         }

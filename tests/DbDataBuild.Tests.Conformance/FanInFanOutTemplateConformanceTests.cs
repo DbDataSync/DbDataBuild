@@ -9,7 +9,7 @@ namespace DbDataBuild.Tests.Conformance;
 /// <summary>
 /// The `fan_in_fan_out` template on four real databases, through the commands a person would type: two PostgreSQL shop systems (store_east, store_west) seeded on their own, a SQL Server warehouse and a PostgreSQL
 /// reporting database. The fan-in copy lands both shops in `warehouse.orders` on both engines, the fan-out model `marts.daily_sales` is built on both, and its rows are what the origin tables give when they are
-/// grouped here (not by either engine under test). The refresh plan of each engine leaves the copy to a deploy, and a refresh does not move rows between connections.
+/// grouped here (not by either engine under test). A refresh moves the rows too: the copy is a member of `hourly` and `daily`, before the report that reads it.
 /// </summary>
 [Trait("Group", "templates")]
 public partial class FanInFanOutTemplateConformanceTests
@@ -67,11 +67,13 @@ public partial class FanInFanOutTemplateConformanceTests
             {
                 var loads = File.ReadAllText(Path.Combine(dir, "rendered", connection, "loads.yml"));
                 Assert.Contains("model: \"marts.daily_sales\"", loads);
-                Assert.Contains("excluded:", loads);
-                Assert.Contains("a copy moves rows between connections; a deploy plans it", loads);
-                Assert.Contains("marts.daily_sales", File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", "hourly.yml")));
-                var daily = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", "daily.yml"));
-                Assert.Contains("a copy moves rows between connections; a deploy plans it", daily);              // the copy is in the plan `daily` and left out of it with its reason
+                Assert.DoesNotContain("excluded:", loads);                                                       // the copy is a load like any other
+                Assert.Contains("origins:", loads);
+                foreach (var plan in new[] { "hourly", "daily" })
+                {
+                    var text = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", plan + ".yml"));
+                    Assert.True(text.IndexOf("warehouse.orders", StringComparison.Ordinal) is var at and >= 0 && text.IndexOf("marts.daily_sales", StringComparison.Ordinal) > at, plan + ": the copy comes before the report");
+                }
             }
 
             Deploy("sqlserver");
@@ -96,18 +98,32 @@ public partial class FanInFanOutTemplateConformanceTests
             Assert.Equal(expected, onPostgres.Order(StringComparer.Ordinal));
             Ok(Cli("connection", "compare", "sqlserver", "marts.daily_sales", "--against-connection", "postgres"), "compare the two engines");
 
-            // a refresh runs what is routine and leaves the copy alone: a new order at a shop reaches the warehouse with a deploy, not before
-            await east.ExecAsync("INSERT INTO pos.orders VALUES (1000, '2024-03-02', 'web', 99.99)");
-            foreach (var connection in new[] { "sqlserver", "postgres" })
-            {
-                var refresh = Cli("connection", "refresh", connection, "daily");
-                Ok(refresh, $"refresh {connection}");
-                Assert.Contains("warehouse.orders", refresh.Out.Split('\n').Single(l => l.Contains("left out")));
-            }
-            Assert.Equal(["120"], await warehouse.RowsAsync("SELECT CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders"));
-            Deploy("sqlserver");
+            // a refresh moves rows between connections too: a new order at a shop reaches the warehouse with the `hourly` refresh, and the report built on it follows in the same run
+            await east.ExecAsync("INSERT INTO pos.orders VALUES (1000, '2024-03-20', 'web', 99.99)");
+            var hourly = Cli("connection", "refresh", "sqlserver", "hourly");
+            Ok(hourly, "refresh sqlserver hourly");
+            Assert.Contains("completed", hourly.Out);
             Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));
-            Assert.Equal(["E01|60", "W01|60"], await reporting.RowsAsync("SELECT store_id || '|' || COUNT(*) FROM warehouse.orders GROUP BY store_id"));    // the other engine waits for its own deploy
+            Assert.Equal(["E01|60", "W01|60"], await reporting.RowsAsync("SELECT store_id || '|' || COUNT(*) FROM warehouse.orders GROUP BY store_id"));    // the other engine waits for its own refresh
+            Assert.Contains("2024-03-20", string.Join(",", await warehouse.RowsAsync("SELECT CONVERT(VARCHAR(10), ordered_on, 23) FROM marts.daily_sales")));
+            Assert.Empty(await warehouse.RowsAsync("SELECT 1 FROM information_schema.tables WHERE table_name LIKE 'stg_warehouse%'"));                           // the staging table is gone
+            // the event: each origin was read, and the transfer rows say which
+            var origins = await warehouse.RowsAsync("SELECT load_name FROM dbdatabuild.run_log WHERE operation = 'transfer' AND plan_id = (SELECT MAX(plan_id) FROM dbdatabuild.run_log WHERE membership IS NOT NULL) ORDER BY load_name");
+            Assert.Contains("from store_east", origins);
+            Assert.Contains("from store_west", origins);
+            var daily = Cli("connection", "refresh", "postgres", "daily");
+            Ok(daily, "refresh postgres daily");
+            Assert.Equal(["E01|61", "W01|60"], await reporting.RowsAsync("SELECT store_id || '|' || COUNT(*) FROM warehouse.orders GROUP BY store_id"));
+
+            // a shop that cannot be reached fails the copy (`failed: origin`) and the report that reads it is skipped; the rest of the plan goes on
+            string? Broken(string v) => v == "DBDATABUILD_STORE_WEST_READ" ? null : Env(v);
+            var o = new StringWriter(); var e = new StringWriter();
+            var exit = CliApp.Run(["connection", "refresh", "sqlserver", "hourly", "--project", dir], o, e, environment: Broken);
+            Assert.Equal(1, exit);
+            Assert.Contains("failed", o.ToString());
+            Assert.Contains("origin", o.ToString() + e.ToString());
+            Assert.Contains("skipped", o.ToString());
+            Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // nothing was half-written
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }

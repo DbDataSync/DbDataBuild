@@ -19,6 +19,7 @@ public static class LoadStatus
     public const string FailedMaxRuntime = "failed: max runtime";
     public const string FailedBusy = "failed: busy";
     public const string FailedInput = "failed: input";
+    public const string FailedOrigin = "failed: origin";
     public const string SkippedUpstreamFailed = "skipped: upstream failed";
     public const string SkippedBusy = "skipped: busy";
     public const string SkippedStopped = "skipped: stopped";

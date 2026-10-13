@@ -260,7 +260,7 @@ internal static class RefreshCommand
             if (l.ResolverFile != null && ReadFile(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
             foreach (var h in l.Before.Concat(l.After))
                 if (ReadFile(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
-            foreach (var r in l.Inputs.Select(i => i.Resolver).Where(r => r?.File != null))
+            foreach (var r in l.Inputs.Concat(l.Copy?.Origins.SelectMany(o => o.Inputs) ?? []).Select(i => i.Resolver).Where(r => r?.File != null))
                 if (ReadFile(r!.File!, r.FileHash ?? "", "input resolver") is { } text) scripts[r.File!] = text;
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
@@ -331,13 +331,15 @@ internal static class RefreshCommand
             try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
-        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, dryRun ? output.WriteLine : null, ct), Downstream);
+        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, new OriginAccess(config, env), dryRun ? output.WriteLine : null, ct), Downstream);
 
         var run = new RefreshRunInfo(planName, selection, members);
-        var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps, []);
+        // the transfers of a copy are not in the plan the engine opens up front: an origin that cannot be reached fails its own load (`failed: origin`), it does not refuse the refresh
+        var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps.Where(s => s.Transfer == null).ToList(), []);
+        var originNames = items.SelectMany(i => i.Entry.Copy?.Origins.Select(o => o.Connection) ?? []).Distinct(StringComparer.Ordinal).ToList();
         var audit = settings.Refresh.Audit;
         var exit = ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
-            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed), output, error, env);
+            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed, Origins: originNames), output, error, env);
         // a dry run resolved the inputs (the resolvers ran, read-only): the values it would have used, and where each came from
         if (dryRun)
             output.Payload("resolved_inputs", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value, resolver_hash = x.ResolverHash }).ToList() }).ToList());
@@ -450,29 +452,106 @@ internal static class RefreshCommand
         PlanStep Hook(RefreshHook h) => new("", StepType.Hook, l.Model, $"hook {h.Name} ({h.Event})", scripts[h.File], RiskClass.Safe, ["hook.fired", $"event {h.Event}"], null, [], Operation: h.Event, FileHash: h.FileHash, Hook: h.Name, Effect: h.Effect);
         var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Load}{suffix})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, l.ResolverFile == null ? null : scripts[l.ResolverFile], null, HasResolver: l.ResolverFile != null,
             FileHash: l.FileHash, Operation: l.Load, DefinitionHash: l.DefinitionHash);
-        return l.Before.Select(Hook).Append(load).Concat(l.After.Select(Hook)).ToList();
+        if (l.Copy is not { } copy) return l.Before.Select(Hook).Append(load).Concat(l.After.Select(Hook)).ToList();
+        // a copy, as a deploy plans it: for each origin the rows are staged on the destination and then loaded from there (the hooks around each load), and the staging table is dropped at the end
+        var all = new List<PlanStep>();
+        foreach (var origin in copy.Origins)
+        {
+            var slice = origin.SliceColumn != null ? new PlanSlice(origin.SliceColumn, origin.SliceValue ?? "", origin.SliceAdded) : null;
+            var spec = new TransferSpec(origin.Connection, origin.ReadText, copy.Staging, copy.Columns, slice);
+            all.Add(new PlanStep("", StepType.Transfer, l.Model, $"copy {l.Model} from {origin.Connection} ({origin.Table})", copy.CreateStaging, RiskClass.Safe, [slice == null ? "copy.transfer" : "copy.transfer.slice"], null, [], Transfer: spec));
+            all.AddRange(l.Before.Select(Hook));
+            all.Add(load);
+            all.AddRange(l.After.Select(Hook));
+        }
+        all.Add(new PlanStep("", StepType.Ddl, copy.Staging, $"drop staging table of {l.Model}", copy.DropStaging, RiskClass.Safe, ["copy.staging.drop"], null, []));
+        return all;
     }
 
     /// <summary>
     /// A load made ready just before its turn: its computed inputs are resolved now (an expression in the tool, a `target` resolver on the connection), in dependency order, with the run's frozen instant, so a load sees what the
     /// loads before it wrote; a person's `--input` or a membership's value replaces the resolver, which is not run. Then the watermark is read from the connection. An input that cannot be resolved fails the load (`failed: input`) with a
-    /// message that names the input and the resolver; one that finds NULL goes to its `on_null`.
+    /// message that names the input and the resolver; one that finds NULL goes to its `on_null`. A copy is also checked against its origins first (`failed: origin`), reads the bound of an incremental copy from the destination, and
+    /// resolves its inputs once for each origin (a `source` resolver runs at that origin).
     /// </summary>
-    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, ReadSession read, Action<string>? report, CancellationToken ct)
+    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, ReadSession read, OriginAccess origins, Action<string>? report, CancellationToken ct)
+    {
+        var l = item.Entry;
+        if (l.Copy is not { } copy)
+        {
+            var one = await ResolveLoadInputsAsync(item, l.Inputs, inputs, scripts, context, new SessionInputRunner(read), read, report, "", ct);
+            if (one.Problem != null) return new PreparedLoad(skeleton, InputsJson([(null, inputs)], context, one.UsedClock), one.Problem, one.ProblemStatus);
+            var steps = skeleton.Select(s => s.Type == StepType.Load ? s with { Parameters = one.Parameters!, ResolverResult = one.ResolverResult } : s).ToList();
+            return new PreparedLoad(steps, InputsJson([(null, inputs)], context, one.UsedClock));
+        }
+
+        // the origin check: every origin of the copy must have its read login and answer, before anything is written (a failure is the load's: `failed: origin`, and the failure rules apply)
+        foreach (var o in copy.Origins)
+            if (await origins.CheckAsync(o.Connection, ct) is { } why)
+                return new PreparedLoad(skeleton, InputsJson([(null, inputs)], context, false), $"origin `{o.Connection}`: {why}", LoadStatus.FailedOrigin);
+
+        // an incremental copy reads each origin from the newest value the destination holds for it, less the lookback; nothing there yet reads everything
+        var bounds = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (copy.Watermark is { } w)
+            foreach (var o in copy.Origins)
+            {
+                var newest = await TargetSnapshotReader.MaxAsync(read, read.Engine, l.Model, w.Column, w.Type, o.SliceColumn, o.SliceValue, ct);
+                if (newest.Error != null) return new PreparedLoad(skeleton, InputsJson([(null, inputs)], context, false), $"the newest `{w.Column}` in the destination {newest.Error}");
+                bounds[o.Connection] = PlanningSession.WatermarkBound(newest.Value, w.Type, w.Lookback);
+            }
+
+        var sets = new List<(string? Origin, List<EffectiveInput> Inputs)>();
+        var outcomes = new List<LoadInputOutcome>();
+        var usedClock = false;
+        foreach (var o in copy.Origins)
+        {
+            var mine = inputs.ToList();
+            await using var originRunner = new OriginInputRunner(origins.OpenAsync, o.Connection);
+            var r = await ResolveLoadInputsAsync(item, o.Inputs.Count > 0 ? o.Inputs : l.Inputs, mine, scripts, context, new SourceOrTargetRunner(new SessionInputRunner(read), originRunner), read, report, copy.Origins.Count > 1 ? $"[{o.Connection}] " : "", ct);
+            usedClock |= r.UsedClock;
+            sets.Add((copy.Origins.Count > 1 ? o.Connection : null, mine));
+            if (r.Problem != null) return new PreparedLoad(skeleton, InputsJson(sets, context, usedClock), copy.Origins.Count > 1 ? $"origin `{o.Connection}`: {r.Problem}" : r.Problem, r.ProblemStatus);
+            outcomes.Add(r);
+        }
+        inputs.Clear(); inputs.AddRange(sets[0].Inputs);                                    // what a dry run and the document show
+
+        var prepared = new List<PlanStep>();
+        var at = -1;
+        foreach (var s in skeleton)
+        {
+            if (s.Type == StepType.Transfer)
+            {
+                at++;
+                var o = copy.Origins[at];
+                var spec = s.Transfer!;
+                if (copy.Watermark is { } mark && bounds.GetValueOrDefault(o.Connection) is { } bound && o.ReadWithWatermark != null)
+                    spec = spec with { ReadText = o.ReadWithWatermark, Watermark = new PlanWatermark(mark.Column, mark.Type, bound) };
+                prepared.Add(s with { Transfer = spec });
+            }
+            else if (s.Type == StepType.Load) prepared.Add(s with { Parameters = outcomes[at].Parameters!, ResolverResult = outcomes[at].ResolverResult });
+            else prepared.Add(s);
+        }
+        return new PreparedLoad(prepared, InputsJson(sets, context, usedClock));
+    }
+
+    /// <summary>What resolving the inputs of a load (for one origin, when it is a copy) came to: the values to bind, or why the load cannot run.</summary>
+    private sealed record LoadInputOutcome(List<PlanParameter>? Parameters, string? ResolverResult, string? Problem, string ProblemStatus, bool UsedClock);
+
+    private static async Task<LoadInputOutcome> ResolveLoadInputsAsync(RunItem item, IReadOnlyList<RefreshParameter> defs, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, IInputQueryRunner runner, ReadSession read, Action<string>? report, string prefix, CancellationToken ct)
     {
         var l = item.Entry;
         var usedClock = false;
-        if (l.Inputs.Any(d => d.Source is RefreshParameter.Computed or RefreshParameter.Provided))
+        if (defs.Any(d => d.Source is RefreshParameter.Computed or RefreshParameter.Provided))
         {
             var given = inputs.Where(x => x.Source is "flag" or "membership").ToDictionary(x => x.Name, x => (x.Value!, x.Source), StringComparer.Ordinal);
-            var resolution = await InputResolution.ResolveAsync(item.Display, l.Inputs.Where(d => d.Source != RefreshParameter.FromResolver).ToList(), given, context, new SessionInputRunner(read),
+            var resolution = await InputResolution.ResolveAsync(item.Display, defs.Where(d => d.Source != RefreshParameter.FromResolver).ToList(), given, context, runner,
                 r => r.File != null && scripts.TryGetValue(r.File, out var text) ? text : null, ct);
             usedClock = resolution.UsedClock;
             foreach (var r in resolution.Inputs)
                 if (inputs.FindIndex(x => x.Name == r.Name) is var at and >= 0 && inputs[at].Source == "computed")
                     inputs[at] = inputs[at] with { Source = r.Source, Value = r.Value, ResolverHash = r.ResolverHash, DurationMs = r.DurationMs };
-            if (resolution.Failure != null) return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), resolution.Failure);
-            if (resolution.SkipLoad) return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), "an input found NULL and its `on_null` is `skip_load`, so the load did not run", LoadStatus.SkippedNoValue);
+            if (resolution.Failure != null) return new(null, null, resolution.Failure, LoadStatus.FailedInput, usedClock);
+            if (resolution.SkipLoad) return new(null, null, "an input found NULL and its `on_null` is `skip_load`, so the load did not run", LoadStatus.SkippedNoValue, usedClock);
         }
         var parameters = new List<PlanParameter>();
         string? resolverResult = null;
@@ -483,37 +562,68 @@ internal static class RefreshCommand
             if (p.Source != "resolver") { parameters.Add(new(p.Name, p.Type, p.Source, p.Value)); continue; }
             var found = await TargetSnapshotReader.RunResolverAsync(read, scripts[l.ResolverFile!], p.Type, ct);
             if (found.Error != null)
-                return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark.");
+                return new(null, null, $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark.", LoadStatus.FailedInput, usedClock);
             resolverResult = found.Value;
             var value = found.Value;
             var source = "resolver:target";
             if (value == null)
             {
                 if (l.OnNull == WatermarkSpec.InitialLiteral && l.Initial != null) (value, source) = (l.Initial, "initial");
-                else return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`.");
+                else return new(null, null, $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`.", LoadStatus.FailedInput, usedClock);
             }
             parameters.Add(new(p.Name, p.Type, source, value));
             inputs[i] = p with { Source = source, Value = value };                         // what the event records
         }
-        var steps = skeleton.Select(s => s.Type == StepType.Load ? s with { Parameters = parameters, ResolverResult = resolverResult } : s).ToList();
         // a dry run says which values the load would run with, and where each came from (the resolvers were run, read-only, to know)
         if (report != null)
             foreach (var x in inputs)
-                report($"    input {x.Name} = {x.Value ?? "NULL"}  [{x.Source}]{(x.ResolverHash != null ? $"  resolver {x.ResolverHash[..12]}" : "")}{(x.Free ? "  (no script binds it)" : "")}");
-        return new PreparedLoad(steps, InputsJson(inputs, context, usedClock));
+                report($"    {prefix}input {x.Name} = {x.Value ?? "NULL"}  [{x.Source}]{(x.ResolverHash != null ? $"  resolver {x.ResolverHash[..12]}" : "")}{(x.Free ? "  (no script binds it)" : "")}");
+        return new(parameters, resolverResult, null, LoadStatus.FailedInput, usedClock);
     }
 
-    /// <summary>The inputs as the event records them: each with where its value came from, the hash of the resolver that found it and how long that took; and, when an expression read the clock, the run's instant.</summary>
-    private static string InputsJson(IEnumerable<EffectiveInput> inputs, InputRunContext context, bool usedClock)
+    /// <summary>The inputs as the event records them: each with where its value came from, the hash of the resolver that found it and how long that took (and, for a copy of several origins, the origin it was resolved for); and, when an expression read the clock, the run's instant.</summary>
+    private static string InputsJson(IEnumerable<(string? Origin, List<EffectiveInput> Inputs)> sets, InputRunContext context, bool usedClock)
     {
-        var rows = inputs.Select(x =>
-        {
-            var row = new Dictionary<string, object?> { ["name"] = x.Name, ["type"] = x.Type, ["source"] = x.Source, ["value"] = x.Value };
-            if (x.ResolverHash != null) { row["resolver_hash"] = x.ResolverHash; row["duration_ms"] = x.DurationMs; }
-            return row;
-        }).ToList();
+        var rows = new List<Dictionary<string, object?>>();
+        foreach (var (origin, inputs) in sets)
+            foreach (var x in inputs)
+            {
+                var row = new Dictionary<string, object?> { ["name"] = x.Name, ["type"] = x.Type, ["source"] = x.Source, ["value"] = x.Value };
+                if (origin != null) row["origin"] = origin;
+                if (x.ResolverHash != null) { row["resolver_hash"] = x.ResolverHash; row["duration_ms"] = x.DurationMs; }
+                rows.Add(row);
+            }
         if (usedClock) rows.Add(new() { ["name"] = "run_started", ["type"] = "TIMESTAMP", ["source"] = "run", ["value"] = context.RunStartedText });
         return JsonSerializer.Serialize(rows, Json);
+    }
+}
+
+/// <summary>
+/// How a refresh reaches the origins of its copies: each by its connection name, on its read login from the environment (`DBDATABUILD_&lt;ORIGIN&gt;_READ`), through <see cref="ReadSession"/> only. A failure is described by its
+/// type and error number, never by the driver's message.
+/// </summary>
+internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> Env)
+{
+    public async Task<ReadSession> OpenAsync(string name, CancellationToken ct)
+    {
+        if (!Config.Connections.TryGetValue(name, out var connection)) throw new InvalidOperationException($"no connection {name}");
+        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, Env);
+        if (login == null) throw new GateRefusedException(missing!);
+        return await ReadSession.OpenAsync(login, ct);
+    }
+
+    /// <summary>Null when the origin answers on its read login; otherwise what is wrong, in words that quote nothing a driver said.</summary>
+    public async Task<string?> CheckAsync(string name, CancellationToken ct)
+    {
+        if (!Config.Connections.ContainsKey(name)) return "it is not a connection of this project.";
+        try
+        {
+            await using var session = await OpenAsync(name, ct);
+            await session.QueryFirstRowsAsync("SELECT 1", 1, 30, ct);
+            return null;
+        }
+        catch (GateRefusedException ex) { return ex.Diagnostic.Found; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return $"it could not be reached ({ex.GetType().Name}{CliApp.DriverNumber(ex)})."; }
     }
 }
 
