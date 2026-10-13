@@ -211,7 +211,8 @@ public static class ModelDefinitionLoader
             return (type, uniqueKey, timeColumn, lookback, kind);
         }
 
-        private static readonly string[] LoadKeys = ["default", "strategy", "key", "column", "watermark", "params", "max_span", "connections", "max_runtime"];
+        private static readonly string[] LoadKeys = ["default", "strategy", "key", "column", "watermark", "params", "max_span", "connections", "max_runtime", "inputs"];
+        private static readonly string[] InputKeys = ["type", "default", "resolver", "on_null", "provides"];
         private static readonly string[] WatermarkKeys = ["column", "resolver", "lookback", "on_null", "initial", "overridable"];
         private static readonly System.Text.RegularExpressions.Regex OpName = new("^[a-z][a-z0-9_]*$");
 
@@ -281,6 +282,18 @@ public static class ModelDefinitionLoader
                         var colName = own?.Value ?? timeColumn?.Value;
                         if (colName == null) { Add(DiagnosticCatalog.MissingKey, op, $"Strategy `{strategy.Value}` needs `column:`, and the model's kind has no time_column to default to.", fix: "Add `column: <column>`."); break; }
                         var def = Column(colName);
+                        if (def == null && columns.Count == 0 && kind == ModelKinds.Copy)
+                        {
+                            // a copy has the columns of the model it copies, so the types of the range are the ones `params:` gives
+                            column = colName;
+                            parameters = ReadCopyRangeParams(op);
+                            if (Scalar(op, "max_span", required: false, at: op) is { } cms)
+                            {
+                                maxSpan = LoadDuration.TryParse(cms.Value);
+                                if (maxSpan == null) Add(DiagnosticCatalog.InvalidValue, cms, $"max_span is `{cms.Value}`.", "A number and a unit, for example `400 days`.");
+                            }
+                            break;
+                        }
                         if (def == null) { if (columns.Count > 0) Add(DiagnosticCatalog.UnknownColumnReference, (YamlNode?)own ?? op, $"The range column `{colName}` is not declared in `columns`."); break; }
                         if (!IsRangeType(def.Type)) { Add(DiagnosticCatalog.InvalidValue, (YamlNode?)own ?? op, $"The range column `{def.Name}` is {def.Type}.", "DATE, TIMESTAMP or an integer type."); break; }
                         column = def.Name;
@@ -307,7 +320,8 @@ public static class ModelDefinitionLoader
                     maxRuntime = EveryDuration.TryParse(mr.Value);
                     if (maxRuntime == null) Add(DiagnosticCatalog.InvalidValue, mr, $"max_runtime is `{mr.Value}`.", "A whole number and a unit, for example `30s`, `15m` or `2h`.");
                 }
-                result.Add(new LoadOperation(entry.Key.Value, isDefault, strategy.Value, key, column, watermark, parameters, maxSpan, targets?.Select(t => t.Value).ToList(), Declared: true, entry.Key.Line, maxRuntime));
+                var inputs = ReadInputs(op, strategy.Value, kind, parameters);
+                result.Add(new LoadOperation(entry.Key.Value, isDefault, strategy.Value, key, column, watermark, parameters, maxSpan, targets?.Select(t => t.Value).ToList(), Declared: true, entry.Key.Line, maxRuntime, inputs));
             }
 
             foreach (var target in connections.Order(StringComparer.Ordinal))
@@ -317,6 +331,107 @@ public static class ModelDefinitionLoader
                     Add(DiagnosticCatalog.InvalidValue, loads, $"More than one operation is the default for {target}: {string.Join(", ", defaults.Select(o => o.Name))}.", "At most one default per connection.");
             }
             return result;
+        }
+
+
+        /// <summary>
+        /// `inputs:` of a load (docs/research/refresh-plans.md, section 8): each entry is a value the load needs, with a type, a default and/or a resolver (`expression`, `target`, `source`), what to do when the resolver finds
+        /// NULL (`on_null`), or a resolver that computes several inputs from one row (`provides`). The name of a range load's `start` or `end` is that parameter; any other name is a value only resolvers and memberships use.
+        /// The text of a resolver is checked where the project is compiled (it needs DuckDB).
+        /// </summary>
+        private List<LoadInput> ReadInputs(YamlMapping op, string strategy, string? kind, IReadOnlyList<LoadParameter> rangeParameters)
+        {
+            var result = new List<LoadInput>();
+            if (op.Get("inputs") is not { } node) return result;
+            if (node is not YamlMapping map) { Add(DiagnosticCatalog.InvalidValue, node, "`inputs` must map input names to their definitions, for example `inputs: { days: { type: INTEGER, default: 7 } }`."); return result; }
+            var rangeNames = strategy == LoadStrategies.DeleteInsertByRange ? rangeParameters.ToDictionary(p => p.Name, p => p.Type, StringComparer.Ordinal) : new Dictionary<string, string>();
+            var nodes = new Dictionary<string, YamlMapping>(StringComparer.Ordinal);
+            foreach (var entry in map.Entries)
+            {
+                var name = entry.Key.Value;
+                if (!OpName.IsMatch(name)) { Add(DiagnosticCatalog.InvalidValue, entry.Key, $"`{name}` is not a valid input name.", "Lowercase snake_case, such as `days` or `start`."); continue; }
+                if (strategy == LoadStrategies.WatermarkAppend && name == "watermark") { Add(DiagnosticCatalog.InvalidValue, entry.Key, "The input `watermark` is declared by the `watermark:` block of the load, not by `inputs:`."); continue; }
+                if (entry.Value is not YamlMapping m) { Add(DiagnosticCatalog.InvalidValue, entry.Value, $"The input `{name}` must be a mapping: `{{ type: INTEGER, default: 7 }}`, or with `resolver:`."); continue; }
+                CheckKeys(m, InputKeys, $"the input `{name}`");
+
+                string? type = null;
+                if (Scalar(m, "type", required: false, at: m) is { } t)
+                {
+                    type = InputValues.Normalize(t.Value);
+                    if (type == null) Add(DiagnosticCatalog.InvalidValue, t, $"An input cannot be {t.Value}.", $"One of: {string.Join(", ", InputValues.Types)}.");
+                }
+                var @default = Scalar(m, "default", required: false, at: m);
+                var resolver = ReadInputResolver(m, name, kind);
+                var onNull = InputOnNull.Fail;
+                if (Scalar(m, "on_null", required: false, at: m) is { } on)
+                {
+                    if (InputOnNull.All.Contains(on.Value)) onNull = on.Value;
+                    else Add(DiagnosticCatalog.InvalidValue, on, $"on_null is `{on.Value}`.", $"One of: {string.Join(", ", InputOnNull.All)}.");
+                }
+                var provides = StringList(m, "provides", required: false, allowEmpty: false, unique: true);
+                foreach (var p in provides ?? [])
+                    if (!OpName.IsMatch(p.Value)) Add(DiagnosticCatalog.InvalidValue, p, $"`{p.Value}` is not a valid input name.");
+                if (provides != null && provides.Any(p => p.Value == name)) Add(DiagnosticCatalog.InvalidValue, provides.First(p => p.Value == name), $"The input `{name}` cannot provide itself.");
+
+                var isGroup = provides is { Count: > 0 };
+                if (isGroup)
+                {
+                    if (resolver == null) Add(DiagnosticCatalog.MissingKey, m, $"`{name}` provides inputs, so it needs a `resolver:` that returns them as named columns.");
+                    if (m.Get("type") != null) Add(DiagnosticCatalog.InvalidValue, m.Get("type")!, $"`{name}` provides inputs, so it has no type of its own: each provided input is declared with its type.");
+                    if (@default != null) Add(DiagnosticCatalog.InvalidValue, m.Get("default")!, $"`{name}` provides inputs, so it has no default of its own.");
+                    if (onNull != InputOnNull.Fail) Add(DiagnosticCatalog.InvalidValue, m.Get("on_null")!, $"`{name}` provides inputs: say `on_null` on each of them (a NULL column falls to the input it is for).");
+                }
+                else
+                {
+                    if (type == null && !rangeNames.ContainsKey(name) && m.Get("type") == null) Add(DiagnosticCatalog.MissingKey, m, $"The input `{name}` needs a `type:`.", fix: $"Add `type: {InputValues.Types[0]}`.");
+                    if (type != null && rangeNames.TryGetValue(name, out var rangeType) && !ColumnTypes.Equivalent(type, rangeType))
+                        Add(DiagnosticCatalog.InvalidValue, m.Get("type")!, $"The input `{name}` is {type}, but the range column makes `{name}` a {rangeType}.");
+                    type ??= rangeNames.GetValueOrDefault(name) is { } rt ? InputValues.Normalize(rt) ?? rt : null;
+                    if (onNull != InputOnNull.Fail && resolver == null) Add(DiagnosticCatalog.InvalidValue, m.Get("on_null")!, $"`on_null: {onNull}` says what to do when the resolver finds NULL, and `{name}` has no resolver.");
+                    if (onNull == InputOnNull.Initial && @default == null) Add(DiagnosticCatalog.MissingKey, m, $"`on_null: initial` for `{name}` needs a `default:` to fall back to.");
+                    if (resolver != null && @default != null && onNull != InputOnNull.Initial) Add(DiagnosticCatalog.InvalidValue, m.Get("default")!, $"`{name}` has a resolver, so its `default` is only used with `on_null: initial`.", "Remove the default, or add `on_null: initial`.");
+                    if (@default != null && type != null && !@default.Value.Contains("${", StringComparison.Ordinal) && !InputValues.Fits(type, @default.Value))
+                        Add(DiagnosticCatalog.InvalidValue, @default, $"`{@default.Value}` is not a valid {type} for the input `{name}`.");
+                }
+                nodes[name] = m;
+                result.Add(new LoadInput(name, type, @default?.Value, resolver, onNull, provides?.Select(p => p.Value).ToList() ?? [], entry.Key.Line));
+            }
+
+            // a provided input is declared (with its type) and has nothing of its own to compute it
+            var provided = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var group in result.Where(i => i.Provides.Count > 0))
+                foreach (var p in group.Provides)
+                {
+                    var target = result.FirstOrDefault(i => i.Name == p);
+                    if (provided.TryGetValue(p, out var other)) Add(DiagnosticCatalog.InvalidValue, nodes[group.Name], $"`{p}` is provided by both `{other}` and `{group.Name}`.");
+                    else provided[p] = group.Name;
+                    if (target == null && !rangeNames.ContainsKey(p)) Add(DiagnosticCatalog.InvalidValue, nodes[group.Name], $"`{group.Name}` provides `{p}`, which is not declared: add `{p}: {{ type: ... }}` to `inputs`.");
+                    else if (target != null && (target.Resolver != null || target.Provides.Count > 0)) Add(DiagnosticCatalog.InvalidValue, nodes[p], $"`{p}` is provided by `{group.Name}`, so it has no resolver of its own.");
+                }
+            return result;
+        }
+
+        private InputResolverSpec? ReadInputResolver(YamlMapping input, string name, string? kind)
+        {
+            if (input.Get("resolver") is not { } node) return null;
+            if (node is YamlScalar s)
+            {
+                Add(DiagnosticCatalog.InvalidValue, node, s.Value == "target_max" ? "`target_max` is the resolver of a watermark (`watermark: { resolver: target_max }`); an input's resolver is `expression`, `target` or `source`." : $"The resolver of `{name}` must be a mapping with one of: {string.Join(", ", InputResolverKinds.All)}.");
+                return null;
+            }
+            if (node is not YamlMapping m) { Add(DiagnosticCatalog.InvalidValue, node, $"The resolver of `{name}` must be a mapping with one of: {string.Join(", ", InputResolverKinds.All)}."); return null; }
+            CheckKeys(m, InputResolverKinds.All, $"the resolver of `{name}`");
+            var present = m.Entries.Where(e => InputResolverKinds.All.Contains(e.Key.Value)).ToList();
+            if (present.Count != 1) { Add(present.Count == 0 ? DiagnosticCatalog.MissingKey : DiagnosticCatalog.InvalidValue, m, $"The resolver of `{name}` is exactly one of: {string.Join(", ", InputResolverKinds.All)}."); return null; }
+            var text = Scalar(m, present[0].Key.Value, required: true, at: m);
+            if (text == null) return null;
+            if (text.Value.Length > 4000) { Add(DiagnosticCatalog.InvalidValue, text, "A resolver is at most 4000 characters."); return null; }
+            if (present[0].Key.Value == InputResolverKinds.Source && kind != ModelKinds.Copy)
+            {
+                Add(DiagnosticCatalog.InvalidValue, present[0].Key, "A `source` resolver runs at the origin of a copy, so only a copy has one.", "Use `target` to read this connection, or `expression` to compute the value.");
+                return null;
+            }
+            return new InputResolverSpec(present[0].Key.Value, text.Value);
         }
 
         private static readonly System.Text.RegularExpressions.Regex InputName = new("^[A-Za-z_][A-Za-z0-9_]*$");
@@ -406,6 +521,22 @@ public static class ModelDefinitionLoader
                 if (p.Get(name) is not YamlScalar t || t.Value.Length == 0) { Add(DiagnosticCatalog.MissingKey, p, $"`params` needs `{name}:` with a type."); continue; }
                 if (!ColumnTypes.Equivalent(t.Value, column.Type))
                     Add(DiagnosticCatalog.InvalidValue, t, $"Parameter `{name}` is {t.Value}, but the range column `{column.Name}` is {column.Type}.", "The parameter types must match the range column.");
+                result.Add(new LoadParameter(name, t.Value));
+            }
+            return result;
+        }
+
+        /// <summary>`params: {start: DATE, end: DATE}` of a range load on a copy, whose range column is not declared in the file (a copy takes its columns from the model it copies).</summary>
+        private IReadOnlyList<LoadParameter> ReadCopyRangeParams(YamlMapping op)
+        {
+            if (op.Get("params") is not { } node) { Add(DiagnosticCatalog.MissingKey, op, "A range load of a copy needs `params:` with the types of `start` and `end`: a copy has the columns of the model it copies, so the range column's type is not known here.", fix: "Add `params: {start: DATE, end: DATE}`."); return []; }
+            if (node is not YamlMapping p) { Add(DiagnosticCatalog.InvalidValue, node, "`params` must map `start` and `end` to types."); return []; }
+            CheckKeys(p, ["start", "end"], "`params`");
+            var result = new List<LoadParameter>();
+            foreach (var name in new[] { "start", "end" })
+            {
+                if (p.Get(name) is not YamlScalar t || t.Value.Length == 0) { Add(DiagnosticCatalog.MissingKey, p, $"`params` needs `{name}:` with a type."); continue; }
+                if (!IsRangeType(t.Value)) Add(DiagnosticCatalog.InvalidValue, t, $"Parameter `{name}` is {t.Value}.", "DATE, TIMESTAMP or an integer type.");
                 result.Add(new LoadParameter(name, t.Value));
             }
             return result;

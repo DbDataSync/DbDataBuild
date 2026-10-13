@@ -108,6 +108,12 @@
                 }
               ]
             },
+            "timezone": {
+              "description": "An IANA time zone name (for example `Europe/Berlin`). It decides what `current_date` and `now()` mean in an `expression` resolver of a load on this connection; it wins over the project's. Default: the project's, else UTC. The machine's own zone is never used.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
             "allow_native_commands": {
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
               "type": "boolean"
@@ -225,6 +231,12 @@
                 }
               ]
             },
+            "timezone": {
+              "description": "An IANA time zone name (for example `Europe/Berlin`). It decides what `current_date` and `now()` mean in an `expression` resolver of a load on this connection; it wins over the project's. Default: the project's, else UTC. The machine's own zone is never used.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
             "allow_native_commands": {
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
               "type": "boolean"
@@ -341,6 +353,12 @@
                   }
                 }
               ]
+            },
+            "timezone": {
+              "description": "An IANA time zone name (for example `Europe/Berlin`). It decides what `current_date` and `now()` mean in an `expression` resolver of a load on this connection; it wins over the project's. Default: the project's, else UTC. The machine's own zone is never used.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
             },
             "allow_native_commands": {
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
@@ -707,6 +725,12 @@
       "description": "How the project is meant to operate: what is kept of a plan and what is recorded of each event, per lane. Defaults: deploy `committed`/`full`, refresh `committed`/`standard`.",
       "$ref": "#/$defs/planSettings"
     },
+    "timezone": {
+      "description": "An IANA time zone name (for example `Europe/Berlin`). It decides what `current_date` and `now()` mean in an `expression` resolver of a load (docs/research/refresh-plans.md, section 8); a connection may set its own. Default UTC. The machine's own zone is never used.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "refresh": {
       "description": "The safety check before a refresh and what a failed check does. A refresh can run without querying the connection's metadata (`check: none`).",
       "$ref": "#/$defs/refreshSettings"
@@ -926,6 +950,12 @@
               }
             }
           ]
+        },
+        "timezone": {
+          "description": "An IANA time zone name (for example `Europe/Berlin`). It decides what `current_date` and `now()` mean in an `expression` resolver of a load on this connection; it wins over the project's. Default: the project's, else UTC. The machine's own zone is never used.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         },
         "allow_native_commands": {
           "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",

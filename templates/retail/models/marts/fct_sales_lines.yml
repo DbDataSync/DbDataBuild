@@ -1,7 +1,26 @@
 name: marts.fct_sales_lines
 kind: {type: incremental_by_unique_key, unique_key: [order_id, line_no]}
-refresh: { hourly: default }      # added to the plan `daily` that the folder file gives every mart
+# The routine load adds the lines that arrived. A line can also change after it was loaded (a return, a corrected price), so the plan `daily` also runs `reconcile`:
+# it reloads the last `days` days by their `date_key`, and the window is computed by a resolver (a DuckDB expression, evaluated by the tool on the day the refresh runs,
+# in UTC unless `timezone:` in dbdatabuild.yml says another). The keys are whole numbers (20260301), so the expressions cast to BIGINT. A person can ask for another window:
+#   dbdatabuild connection refresh sqlserver marts.fct_sales_lines.reconcile --input days=400
+#   dbdatabuild project show refresh daily --resolve     # what the window is right now, without a database
+loads:
+  default:
+    default: true
+    strategy: delete_insert_by_key
+  reconcile:
+    strategy: delete_insert_by_range
+    column: date_key
+    inputs:
+      days:  { type: INTEGER, default: 14 }
+      start: { resolver: { expression: "CAST(strftime(current_date - days, '%Y%m%d') AS BIGINT)" } }
+      end:   { resolver: { expression: "CAST(strftime(current_date + 1, '%Y%m%d') AS BIGINT)" } }
+refresh:                            # added to what the folder file gives every mart
+  hourly: default
+  daily=: [default, { load: reconcile, inputs: { days: 30 } }]      # `=` replaces the folder's `daily: default`: the routine load, then the reconcile of the last 30 days
 grain: [order_id, line_no]
+lint_ignore: [DDB-225]              # `reconcile` slices the finished query by date_key, and the allocation windows are per order: the query is computed in full and the window kept, which is fine once a day
 columns:
   - {name: order_id, type: INTEGER, nullable: false}
   - {name: line_no, type: INTEGER, nullable: false}

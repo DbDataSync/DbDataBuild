@@ -22,7 +22,7 @@ internal static class PlanCommand
     private const int MaxRounds = 12;
 
     public static int Plan(CommandSpec spec, string root, string? targetArg, string[] models, FileInfo? answersFile, bool acceptInferred, DirectoryInfo? outDir, string[] ops, string[] backfillArgs, string[] fullRefreshArgs, string[] paramArgs,
-        TextWriter output, TextWriter error, TextReader input, bool interactive, Func<string, string?> env, Action<string>? written = null, bool hintApply = true)
+        TextWriter output, TextWriter error, TextReader input, bool interactive, Func<string, string?> env, Action<string>? written = null, bool hintApply = true, IReadOnlyList<InputPin>? pins = null)
     {
         // ---- answers file first: a bad file is a usage problem and must not need a database ----
         AnswerFile? file = null;
@@ -45,7 +45,7 @@ internal static class PlanCommand
         foreach (var (model, op) in backfillOps)
             if (!operations.TryAdd(model, op) && operations[model] != op) { error.WriteLine($"`{model}` is given two different operations (--op {operations[model]}, --backfill {op})."); return CliApp.ExitUsage; }
 
-        var (session, exit) = PlanningSession.Prepare(spec, root, targetArg, models, output, error, env, operations, backfillOps.Keys.ToHashSet(StringComparer.Ordinal), fullRefreshArgs.ToHashSet(StringComparer.Ordinal));
+        var (session, exit) = PlanningSession.Prepare(spec, root, targetArg, models, output, error, env, operations, backfillOps.Keys.ToHashSet(StringComparer.Ordinal), fullRefreshArgs.ToHashSet(StringComparer.Ordinal), pins);
         if (session == null) return exit;
         // ---- ask, plan again, until nothing is open ----
         IPrompter? prompter = interactive ? new ConsolePrompter(input, output) : null;
@@ -113,6 +113,14 @@ internal static class PlanCommand
         output.Payload("plan", plan);
         output.Payload("files", new { plan = Path.GetRelativePath(root, yamlPath).Replace('\\', '/'), report = Path.GetRelativePath(root, mdPath).Replace('\\', '/') });
         output.WriteLine($"Plan {plan.Id}: {plan.Steps.Count} step(s) ({plan.Steps.Count(s => s.Type == StepType.Ddl)} ddl, {plan.Steps.Count(s => s.Type == StepType.Load)} load, {plan.Steps.Count(s => s.Type == StepType.Backfill)} backfill, {plan.Steps.Count(s => s.Type == StepType.Hook)} hook, {plan.Steps.Count(s => s.Type == StepType.Track)} track); {risky} risky, {destructive} destructive.");
+        // the inputs that were computed for this plan: apply computes them again, and stops if any is another value
+        var computed = plan.Steps.Where(s => s.Inputs != null).SelectMany(s => s.Inputs!.Where(i => i.Source != "group").Select(i => (Step: s, Input: i))).ToList();
+        foreach (var (step, i) in computed)
+            output.WriteLine($"  input {step.Object}.{step.Operation ?? "default"} `{i.Name}` = {i.Value ?? "NULL"}  [{i.Source}{(i.Origin != null ? " at " + i.Origin : "")}]");
+        foreach (var step in plan.Steps.Where(s => s.HasResolver))
+            output.WriteLine($"  input {step.Object}.{step.Operation ?? "default"} `watermark` = {step.ResolverResult ?? "NULL"}  [resolver:target]");
+        if (computed.Any(c => c.Input.IsComputed) || plan.Steps.Any(s => s.HasResolver)) output.WriteLine("  Apply computes these again; if one is another value then it stops, shows both and lets you approve the new one (--input pins a value now).");
+        output.Payload("inputs", computed.Select(c => new { model = c.Step.Object, operation = c.Step.Operation ?? "default", name = c.Input.Name, type = c.Input.Type, source = c.Input.Source, value = c.Input.Value, origin = c.Input.Origin }).ToList());
         output.WriteLine($"  report: {Path.GetRelativePath(root, mdPath)}");
         output.WriteLine($"  plan:   {Path.GetRelativePath(root, yamlPath)}");
         if (result.Blocks.Count + result.Skipped.Count > 0)

@@ -211,13 +211,14 @@ public static class CliApp
                     var deployDestructive = new Option<string[]>("--allow-destructive") { Description = "Object (marts.fct) whose destructive steps are allowed; repeat for several objects", DefaultValueFactory = _ => [] };
                     var deployDirty = new Option<bool>("--allow-dirty") { Description = "Apply from a working tree with uncommitted changes (recorded)" };
                     var deployDry = new Option<bool>("--dry-run") { Description = "Apply: run every check and print every statement; execute nothing" };
-                    var deployYes = new Option<bool>("--yes") { Description = "Apply the plan without asking (for a script; risky and destructive steps still need their allowances)" };
+                    var deployYes = new Option<bool>("--yes") { Description = "Apply the plan without asking (for a script; risky and destructive steps still need their allowances, and it does not approve computed inputs that moved since the plan: `--input` does)" };
+                    var deployInput = new Option<string[]>("--input") { Description = "`[model.load.]name=value`: the value of an input of a load, instead of the one a resolver computes (repeatable). With the plan it pins the input: it is not computed, so it cannot move. With --apply-plan it is how a deployer says \"yes, with this value\" to an input that moved (the stop prints each override as it would be typed)", DefaultValueFactory = _ => [] };
                     cmd.Options.Add(planOp); cmd.Options.Add(planBackfill); cmd.Options.Add(planFullRefresh); cmd.Options.Add(planParam);
                     cmd.Arguments.Add(planTarget); cmd.Arguments.Add(planModels);
                     cmd.Options.Add(planProject); cmd.Options.Add(planAnswers); cmd.Options.Add(planAccept); cmd.Options.Add(planOut);
-                    cmd.Options.Add(deployWritePlan); cmd.Options.Add(deployApplyPlan); cmd.Options.Add(deployAck); cmd.Options.Add(deployReason); cmd.Options.Add(deployRisky); cmd.Options.Add(deployDestructive); cmd.Options.Add(deployDirty); cmd.Options.Add(deployDry); cmd.Options.Add(deployYes);
+                    cmd.Options.Add(deployInput); cmd.Options.Add(deployWritePlan); cmd.Options.Add(deployApplyPlan); cmd.Options.Add(deployAck); cmd.Options.Add(deployReason); cmd.Options.Add(deployRisky); cmd.Options.Add(deployDestructive); cmd.Options.Add(deployDirty); cmd.Options.Add(deployDry); cmd.Options.Add(deployYes);
                     cmd.SetAction(pr => { var (planConn, planRest) = SplitConnection(pr.GetValue(planProject)!.FullName, pr.GetValue(planTarget), pr.GetValue(planModels) ?? []); return Reported(pr, spec, (o, e) => DeployCommand.Run(spec, pr.GetValue(planProject)!.FullName, planConn, planRest, pr.GetValue(planAnswers), pr.GetValue(planAccept), pr.GetValue(planOut), pr.GetValue(planOp) ?? [], pr.GetValue(planBackfill) ?? [], pr.GetValue(planFullRefresh) ?? [], pr.GetValue(planParam) ?? [],
-                        pr.GetValue(deployWritePlan), pr.GetValue(deployApplyPlan), pr.GetValue(deployAck), pr.GetValue(deployReason), pr.GetValue(deployRisky), pr.GetValue(deployDestructive) ?? [], pr.GetValue(deployDirty), pr.GetValue(deployDry), pr.GetValue(deployYes),
+                        pr.GetValue(deployWritePlan), pr.GetValue(deployApplyPlan), pr.GetValue(deployAck), pr.GetValue(deployReason), pr.GetValue(deployRisky), pr.GetValue(deployDestructive) ?? [], pr.GetValue(deployDirty), pr.GetValue(deployDry), pr.GetValue(deployYes), pr.GetValue(deployInput) ?? [],
                         o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection status":
@@ -333,8 +334,9 @@ public static class CliApp
                     var showRefreshPlan = new Argument<string?>("plan") { Description = "A refresh plan by name; omit to list the plans of every connection", Arity = ArgumentArity.ZeroOrOne };
                     var showRefreshProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var showRefreshConnection = new Option<string?>("--connection") { Description = "Only the plans of this connection" };
-                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e)));
+                    var showRefreshResolve = new Option<bool>("--resolve") { Description = "Evaluate the `expression` resolvers of the plan's loads now, offline (what `start` would be at this moment, in the project's time zone); a `target` or `source` resolver reads a database and is not run here, `connection refresh --dry-run` runs it. Needs a plan" };
+                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection); cmd.Options.Add(showRefreshResolve);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e, pr.GetValue(showRefreshResolve))));
                     break;
                 case "project show plan":
                     var reviewPlan = new Argument<string?>("plan") { Description = "A plan file (plans/<connection>/<id>.plan.yml); omit to list the project's plans", Arity = ArgumentArity.ZeroOrOne };

@@ -10,7 +10,55 @@ public enum RiskClass { Safe, Risky, Destructive }
 
 /// <param name="Source">runtime (a person supplied it) or resolver (read from the target).</param>
 /// <param name="Value">Invariant-culture text of the value in the parameter's logical type, or null for SQL NULL.</param>
-public sealed record PlanParameter(string Name, string Type, string Source, string? Value);
+/// <param name="Planned">Only while a plan is applied: the value the plan was made with, when apply bound another (a moved input the deployer approved, or a value given with `--input` at apply). Recorded in `run_log`; never written to a plan file.</param>
+public sealed record PlanParameter(string Name, string Type, string Source, string? Value, string? Planned = null);
+
+/// <summary>An `--input [model[.load].]name=value`: the value replaces the input's resolver, which is then not run (and a value that is not computed cannot move between a plan and its apply).</summary>
+public sealed record InputPin(string? Target, string Name, string Value, string Text)
+{
+    /// <summary>Reads `[model[.load].]name=value`; null (with a message) when it is not that.</summary>
+    public static InputPin? Parse(string text, out string? problem)
+    {
+        problem = null;
+        var eq = text.IndexOf('=');
+        if (eq <= 0 || eq == text.Length - 1) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
+        var key = text[..eq]; var dot = key.LastIndexOf('.');
+        var (target, name) = dot < 0 ? ((string?)null, key) : (key[..dot], key[(dot + 1)..]);
+        if (name.Length == 0 || (target != null && target.Length == 0)) { problem = $"--input is `[model.]name=value`, not `{text}`."; return null; }
+        return new InputPin(target, name, text[(eq + 1)..], text);
+    }
+
+    /// <summary>Whether the pin is meant for the load of this model (`model`, or `model.load`; the model's own name may have dots).</summary>
+    public bool Matches(string model, string load) => Target == null || Target == model || Target == $"{model}.{load}";
+}
+
+/// <summary>A computed input whose value at apply is not the value in the plan.</summary>
+/// <param name="Planned">The value in the plan (null: NULL).</param>
+/// <param name="Now">The value computed again when the plan is applied.</param>
+public sealed record MovedInput(string StepId, string Model, string Operation, string Name, string? Planned, string? Now)
+{
+    /// <summary>The override as it would be typed to say "yes, with this value": appended to the same command.</summary>
+    public string Override => Quote($"--input {Model}.{Operation}.{Name}={Now}");
+
+    private static string Quote(string arg) { var space = arg.IndexOf(' ', "--input ".Length); return space < 0 ? arg : $"--input \"{arg["--input ".Length..].Replace("\"", "\\\"")}\""; }
+}
+
+/// <summary>
+/// One input of a planned load: how it is defined (the compiled input, with the resolver's text inline so the plan is self-contained), and the value this plan was made with, its source
+/// (`flag`, `default`, `parameter`, `resolver:expression`, `resolver:target`, `resolver:source`, `initial`) and the hash of the resolver that found it.
+/// </summary>
+/// <param name="Origin">For a `source` resolver of a copy: the origin it ran at.</param>
+public sealed record PlannedInput(RefreshParameter Def, string Source, string? Value, string? ResolverHash, string? Origin = null)
+{
+    public string Name => Def.Name;
+    public string Type => Def.Type;
+
+    /// <summary>Whether the value is computed (a resolver found it), which is what can move between a plan and its apply.</summary>
+    public bool IsComputed => Source.StartsWith("resolver:", StringComparison.Ordinal) || Source == "initial";
+}
+
+/// <summary>What resolving the inputs of one load at plan time came to: the inputs, or why the load cannot be planned (<see cref="Failure"/>), or that an input found NULL and says `skip_load`.</summary>
+public sealed record PlannedLoadInputs(IReadOnlyList<PlannedInput> Inputs, string? Failure, bool SkipLoad);
 
 /// <summary>The rows a `transfer` step moves (<see cref="Command"/>: the read is a native command, a call that returns rows, not a SELECT; apply runs it in a transaction it rolls back, and matches its result columns to the declared ones by name): read on <see cref="Origin"/> with <see cref="ReadText"/> (a single SELECT, hashed like any statement), converted by the declared types of <see cref="Columns"/>, and written to <see cref="Staging"/> on the plan's connection.</summary>
 /// <param name="Staging">`schema_name.table_name` of the staging table; the step's text creates it.</param>
@@ -36,10 +84,12 @@ public sealed record PlanColumn(string Name, string Type);
 /// <param name="Effect">For a hook step: `ddl` or `data`, which decides which command may run it.</param>
 /// <param name="Transfer">For a transfer step: where the rows come from and which columns they are. <see cref="Text"/> is the DDL that (re)creates the staging table they are written to.</param>
 /// <param name="DefinitionHash">For a load: the hash of the model query it was planned from, recorded in `run_log` so a later plan can see the query changed.</param>
+/// <param name="Inputs">For a load whose model declares `inputs:`: every input with the value the plan was made with and where it came from, and what is needed to compute it again at apply (a clock-based input moves, and apply says so).</param>
 public sealed record PlanStep(
     string Id, StepType Type, string Object, string Description, string Text, RiskClass Risk, IReadOnlyList<string> Reasons,
     string? HashAfter, IReadOnlyList<PlanParameter> Parameters, string? ResolverText = null, string? ResolverResult = null, bool HasResolver = false,
-    string? FileHash = null, string? Operation = null, string? ShapeSource = null, string? DefinitionHash = null, string? Expect = null, string? Hook = null, string? Effect = null, TransferSpec? Transfer = null);
+    string? FileHash = null, string? Operation = null, string? ShapeSource = null, string? DefinitionHash = null, string? Expect = null, string? Hook = null, string? Effect = null, TransferSpec? Transfer = null,
+    IReadOnlyList<PlannedInput>? Inputs = null);
 
 /// <summary>What the plan assumed about an object, verified against the live target at apply (a mismatch is a stale plan).</summary>
 public sealed record ObjectBase(string Object, ObjectState State, string? LiveShapeHash, string? RecordedShapeHash);

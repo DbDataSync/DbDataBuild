@@ -65,12 +65,12 @@ internal sealed class ProjectContext
     private (RenderResult Result, string BodySql) RenderVariant(ModelSource source, string authorSql, IReadOnlyList<string> targets, string? variant)
     {
         var parameters = source.QueryParameterList(Root, Config);
-        if (!Lowering.Enabled) return (Renderer.Render(source.Definition, authorSql, source.QueryFile, targets, queryParameters: parameters, natives: Lowering.NativeUsesFor(authorSql)), authorSql);
+        if (!Lowering.Enabled) return (InputCompiler.Attach(this, source, Renderer.Render(source.Definition, authorSql, source.QueryFile, targets, queryParameters: parameters, natives: Lowering.NativeUsesFor(authorSql))), authorSql);
         var (lowered, error) = Lowering.Lower(source, authorSql, parameters, variant);
         if (lowered == null) return (new RenderResult([], [], [error!]), authorSql);
         var result = Renderer.Render(source.Definition, lowered.Sql, source.QueryFile, targets, bodyFile: $"rendered/{lowered.ArtifactPath}", queryParameters: parameters, natives: Lowering.NativeUsesFor(lowered.Sql));
         var files = result.Files.Append(new RenderedFile(lowered.ArtifactPath, lowered.ArtifactText)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
-        return (result with { Files = files }, lowered.Sql);
+        return (InputCompiler.Attach(this, source, result with { Files = files }), lowered.Sql);
     }
 
     /// <summary>

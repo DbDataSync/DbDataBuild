@@ -65,10 +65,13 @@ public sealed record LoadParameter(string Name, string Type);
 /// <param name="Targets">Restricts the operation to these targets; null means every target the model declares.</param>
 /// <param name="Declared">False for the operation a kind supplies implicitly.</param>
 /// <param name="MaxRuntime">Opt-in: how long a refresh lets this load run before it cancels the statement and counts the load as failed (wins over the plan's).</param>
+/// <param name="Inputs">The load's `inputs:` (section 8 of docs/research/refresh-plans.md): defaults and resolvers for the values it needs.</param>
 public sealed record LoadOperation(
     string Name, bool IsDefault, string Strategy, IReadOnlyList<string> Key, string? Column, WatermarkSpec? Watermark,
-    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0, EveryDuration? MaxRuntime = null)
+    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0, EveryDuration? MaxRuntime = null, IReadOnlyList<LoadInput>? Inputs = null)
 {
+    public IReadOnlyList<LoadInput> InputList => Inputs ?? [];
+
     public bool AppliesTo(string target) => Targets == null || Targets.Contains(target);
 }
 

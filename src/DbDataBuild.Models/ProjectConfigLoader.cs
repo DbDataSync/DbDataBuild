@@ -6,9 +6,9 @@ namespace DbDataBuild.Models;
 /// <summary>Loads <c>dbdatabuild.yml</c> with the strict YAML rules. Keys that are absent take the built-in default; nothing is inferred.</summary>
 public static class ProjectConfigLoader
 {
-    private static readonly string[] TopKeys = ["defaults", "parameters", "connections", "tracking", "string_semantics", "policy", "hook_groups", "metadata", "lowering", "lint", "rewrites", "model_layout", "tests", "plans", "refresh", "retention", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] TopKeys = ["defaults", "parameters", "connections", "tracking", "string_semantics", "policy", "hook_groups", "metadata", "lowering", "lint", "rewrites", "model_layout", "tests", "plans", "refresh", "retention", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] SemanticsKeys = ["case", "accent", "trailing_space", "collations"];
-    private static readonly string[] ConnectionKeys = ["engine", "version", "parameters", "tracking", "allow_native_commands", "string_semantics", "plans", "refresh", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] ConnectionKeys = ["engine", "version", "parameters", "tracking", "allow_native_commands", "string_semantics", "plans", "refresh", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] CollationEngines = ["duckdb", "sqlserver", "fabric", "postgres"];
 
     /// <summary>Loads the project's config. A missing file yields the defaults and a DDB-109 warning; a bad file yields errors and the defaults.</summary>
@@ -53,10 +53,19 @@ public static class ProjectConfigLoader
             var tracking = ReadTracking(top, connections.Keys.ToHashSet(StringComparer.Ordinal)) ?? d.Tracking;
             var semantics = ReadSemantics(top, d.StringSemantics);
             var policy = ReadPolicy(top, d.Policy);
-            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), RefreshPlans = ReadRefreshPlans(top), DeclaredInfo = ReadInfo(top) };
+            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), RefreshPlans = ReadRefreshPlans(top), Timezone = ReadTimezone(top, "`timezone`"), DeclaredInfo = ReadInfo(top) };
         }
 
         // ---- plans, refresh, retention ----
+
+        /// <summary>`timezone: Europe/Berlin`: an IANA zone name the machine knows. It decides what `current_date` and `now()` mean in an `expression` resolver; without it they mean UTC, never the machine's own zone.</summary>
+        private string? ReadTimezone(YamlMapping m, string where)
+        {
+            if (m.Get("timezone") is not { } node) return null;
+            if (node is YamlScalar { Value.Length: > 0 } s && Timezones.IsKnown(s.Value)) return s.Value;
+            Add(DiagnosticCatalog.InvalidValue, node, $"{where} is {(node is YamlScalar sc ? $"`{sc.Value}`" : "not a name")}.", "An IANA time zone name such as `UTC`, `Europe/Berlin` or `America/New_York`.");
+            return null;
+        }
 
         private TEnum? ReadChoice<TEnum>(YamlMapping m, string key, string where) where TEnum : struct, Enum
         {
@@ -348,7 +357,7 @@ public static class ProjectConfigLoader
                     if (ac is YamlScalar { Value: "true" or "false" } acs) allowCommands = acs.Value == "true";
                     else Add(DiagnosticCatalog.InvalidValue, ac, "`allow_native_commands` is `true` or `false` (lowercase).");
                 }
-                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings));
+                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`") };
             }
             return result;
         }

@@ -32,6 +32,15 @@ public partial class ApplyConformanceTests
             return (exit, o.ToString(), e.ToString());
         }
 
+        /// <summary>A command with a person at the keyboard: <paramref name="reply"/> is what they type when asked.</summary>
+        public (int Exit, string Out, string Err) CliAsking(string reply, params string[] args)
+        {
+            var o = new StringWriter();
+            var e = new StringWriter();
+            var exit = CliApp.Run([.. args, "--project", dir], o, e, new StringReader(reply + "\n"), interactive: true, environment: Env);
+            return (exit, o.ToString(), e.ToString());
+        }
+
         public (int Exit, string Out, string Err) CliNoProject(params string[] args)
         {
             var o = new StringWriter();

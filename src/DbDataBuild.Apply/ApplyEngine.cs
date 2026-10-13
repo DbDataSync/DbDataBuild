@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using DbDataBuild.Core;
 using DbDataBuild.Execution;
+using DbDataBuild.Models;
 using DbDataBuild.Planning;
 using DbDataBuild.State;
 using DbDataBuild.Targets.Ddl;
@@ -22,15 +23,19 @@ public sealed record ApplyTracking(LoginSettings Read, LoginSettings? Write, str
 /// <param name="RecordText">Whether the text of each DDL statement is kept in `ddl_log` (audit `full`); the hash always is.</param>
 /// <param name="Execution">For a refresh: its loads in order with the rules of each, and how to make each ready just before its turn (the lock, the failure rules and the resolvers act per load).</param>
 /// <param name="RecordShapes">Whether each load records the shape of its object before and after (a catalog read per load). A deploy does; a refresh does only when it checks against the live catalog.</param>
+/// <param name="InputPins">`--input` values given when the plan is applied: they replace the value in the plan and the resolver (which is not run); the plan's value is recorded beside them.</param>
+/// <param name="ApproveMoved">Asked when a computed input is not what the plan was made with: true continues with the new values (an interactive deployer said yes). Without it the apply stops (DDB-454).</param>
+/// <param name="Timezone">The zone the clock of an expression resolver means when inputs are computed again.</param>
 public sealed record ApplyOptions(bool DryRun, bool AllowRisky, IReadOnlySet<string> AllowDestructive, string? GitCommit, bool GitDirty, string Invoker, Func<bool>? StopRequested = null, Func<string, CancellationToken, Task<ReadSession>>? OpenOrigin = null,
-    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null);
+    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null,
+    IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, string Timezone = "UTC", Func<DateTimeOffset>? Clock = null);
 
 /// <param name="Status">ok, dry-run, skipped (done in an earlier attempt), stopped (the operator stopped before it) or failed.</param>
 public sealed record StepOutcome(string StepId, string Description, string Status, string? Detail = null);
 
 /// <param name="Refresh">For a refresh: how each load ended and how the run ended. Its steps are then one outcome per load.</param>
 /// <param name="PreparedSteps">For a refresh: the steps as they ran, with every input resolved (a dry run prints these).</param>
-public sealed record ApplyResult(IReadOnlyList<StepOutcome> Outcomes, IReadOnlyList<Diagnostic> Refusals, RefreshSummary? Refresh = null, IReadOnlyList<PlanStep>? PreparedSteps = null)
+public sealed record ApplyResult(IReadOnlyList<StepOutcome> Outcomes, IReadOnlyList<Diagnostic> Refusals, RefreshSummary? Refresh = null, IReadOnlyList<PlanStep>? PreparedSteps = null, IReadOnlyList<MovedInput>? Moved = null)
 {
     public bool Success => Refusals.Count == 0 && (Refresh != null ? Refresh.Outcome == RefreshSummary.Completed : Outcomes.All(o => o.Status != "failed"));
 }
@@ -153,15 +158,16 @@ public static class ApplyEngine
             if (state != b.State || live?.ShapeHash != b.LiveShapeHash || recorded != b.RecordedShapeHash)
                 refusals.Add(Stale($"{b.Object} changed since the plan was made (planned: {b.State} {b.LiveShapeHash?[..12] ?? "-"}, now: {state} {live?.ShapeHash[..12] ?? "-"})."));
         }
-        foreach (var s in plan.Steps.Where(s => !o.Refresh && s.HasResolver && !done.Contains(s.Id)))
-        {
-            if (!snapshot.Live.ContainsKey(s.Object)) { if (s.ResolverResult != null) refusals.Add(Stale($"the resolver of step {s.Id} was planned against a table that no longer exists.")); continue; }
-            var type = s.Parameters.FirstOrDefault(p => p.Source == "resolver")?.Type ?? "TEXT";
-            var now = await TargetSnapshotReader.RunResolverAsync(reader, s.ResolverText!, type, ct);
-            if (now.Error != null || now.Value != s.ResolverResult)
-                refusals.Add(Stale($"the resolver of step {s.Id} returned {(now.Error != null ? now.Error : now.Value ?? "NULL")}, but the plan recorded {s.ResolverResult ?? "NULL"}."));
-        }
+
+        // ---- the computed inputs, computed again: any that is not what the plan was made with stops the apply unless the deployer approves the new value ----
+        var steps = plan.Steps;
+        IReadOnlyList<MovedInput> moved = [];
+        if (!o.Refresh && refusals.Count == 0)
+            (steps, moved) = await InputsAtApplyAsync(plan, done, snapshot, reader, o, refusals, ct);
         if (refusals.Count > 0) return new ApplyResult([], refusals);
+        if (moved.Count > 0 && o.ApproveMoved?.Invoke(moved) != true)
+            return new ApplyResult([], [new Diagnostic(DiagnosticCatalog.InputsMoved, new("plan", 0, 0),
+                $"{moved.Count} computed input(s) are not what the plan was made with: {string.Join("; ", moved.Select(m => $"{m.Model}.{m.Operation} `{m.Name}` was {m.Planned ?? "NULL"} and is now {m.Now ?? "NULL"}"))}.")], Moved: moved);
 
         // ---- execute ----
         var outcomes = new List<StepOutcome>();
@@ -173,7 +179,7 @@ public static class ApplyEngine
                 await tracker.PlanMemberAsync($"member:{m.Position}", plan.Id, m.Position, m.Membership, m.Model, m.Load, m.LoadPlanHash, m.Selected, ct);
         }
 
-        foreach (var step in plan.Steps)
+        foreach (var step in steps)
         {
             if (done.Contains(step.Id)) { outcomes.Add(new(step.Id, step.Description, "skipped", "finished in an earlier attempt")); continue; }
             // an operator's request to stop is honoured between steps only: a statement that has started is never abandoned
@@ -214,6 +220,93 @@ public static class ApplyEngine
         }
         await FinishMigration(tracker, gate, plan, planHash, planText, o, "completed", ct);
         return new ApplyResult(outcomes, []);
+    }
+
+    /// <summary>
+    /// Computes the inputs of every load that has still to run again (docs/research/refresh-plans.md, section 8, item 7): the declared ones with their resolvers (an expression on the clock of now, a `target` resolver on the read
+    /// session, a `source` resolver at the origin) and the watermark. A value pinned with `--input` is not computed: it replaces the plan's and the resolver is not run. An input whose value is not the plan's is returned as
+    /// moved, with the steps carrying the new values (so an approved apply loads what it was shown); a value the plan recorded is kept beside the new one in the load's record.
+    /// </summary>
+    private static async Task<(IReadOnlyList<PlanStep> Steps, IReadOnlyList<MovedInput> Moved)> InputsAtApplyAsync(Plan plan, HashSet<string> done, TargetSnapshot snapshot, ReadSession reader, ApplyOptions o, List<Diagnostic> refusals, CancellationToken ct)
+    {
+        var pins = o.InputPins ?? [];
+        var moved = new List<MovedInput>();
+        var steps = new List<PlanStep>();
+        var matched = new HashSet<InputPin>();
+        var now = (o.Clock ?? (() => DateTimeOffset.UtcNow))();
+        var instant = new DateTimeOffset(now.UtcDateTime.Ticks - now.UtcDateTime.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+        foreach (var step in plan.Steps)
+        {
+            if (done.Contains(step.Id) || step.Type is not (StepType.Load or StepType.Backfill)) { steps.Add(step); continue; }
+            var operation = step.Operation ?? "default";
+            var own = pins.Where(p => p.Matches(step.Object, operation) && (step.Parameters.Any(x => x.Name == p.Name) || step.Inputs?.Any(i => i.Name == p.Name && i.Def.Provides.Count == 0) == true)).ToList();
+            foreach (var p in own) matched.Add(p);
+            var parameters = step.Parameters.ToList();
+            var inputs = step.Inputs?.ToList();
+            void Set(string name, string? value, string source, string? planned)
+            {
+                var at = parameters.FindIndex(x => x.Name == name);
+                if (at >= 0) parameters[at] = parameters[at] with { Value = value, Source = source, Planned = planned != value ? planned : null };
+            }
+
+            // the declared inputs: all of them computed again, in dependency order
+            if (inputs is { Count: > 0 })
+            {
+                var given = inputs.Where(i => i.Source == "flag" && i.Value != null).ToDictionary(i => i.Name, i => (i.Value!, "flag"), StringComparer.Ordinal);
+                foreach (var p in own.Where(p => inputs.Any(i => i.Name == p.Name))) given[p.Name] = (p.Value, "flag");
+                var origin = inputs.Select(i => i.Origin).FirstOrDefault(x => x != null);
+                await using var originRunner = origin == null || o.OpenOrigin == null ? null : new OriginInputRunner(o.OpenOrigin, origin);
+                IInputQueryRunner runner = originRunner == null ? new SessionInputRunner(reader) : new SourceOrTargetRunner(new SessionInputRunner(reader), originRunner);
+                var load = $"{step.Object}.{operation}";
+                var res = await InputResolution.ResolveAsync(load, inputs.Select(i => i.Def).ToList(), given, new InputRunContext(instant, o.Timezone, null, plan.Connection), runner, r => r.Text, ct);
+                if (res.Failure != null) { refusals.Add(new Diagnostic(DiagnosticCatalog.InputNotResolved, new($"step:{step.Id}", 0, 0), res.Failure[(DiagnosticCatalog.InputNotResolved.Code.Length + 2)..])); steps.Add(step); continue; }
+                if (res.SkipLoad) { refusals.Add(new Diagnostic(DiagnosticCatalog.InputsMoved, new($"step:{step.Id}", 0, 0), $"{load}: an input now finds NULL and says `on_null: skip_load`, which the plan did not expect.")); steps.Add(step); continue; }
+                for (var k = 0; k < inputs.Count; k++)
+                {
+                    var planned = inputs[k];
+                    if (res.Inputs.FirstOrDefault(r => r.Name == planned.Name) is not { } fresh) continue;
+                    var movedNow = planned.IsComputed && !string.Equals(planned.Value, fresh.Value, StringComparison.Ordinal) && !given.ContainsKey(planned.Name);
+                    if (movedNow) moved.Add(new MovedInput(step.Id, step.Object, operation, planned.Name, planned.Value, fresh.Value));
+                    if (!string.Equals(planned.Value, fresh.Value, StringComparison.Ordinal) || fresh.Source != planned.Source)
+                    {
+                        inputs[k] = planned with { Source = fresh.Source, Value = fresh.Value, ResolverHash = fresh.ResolverHash ?? planned.ResolverHash };
+                        if (!planned.Def.Free) Set(planned.Name, fresh.Value, fresh.Source, planned.Value);
+                    }
+                }
+            }
+
+            // a value given at the command for a parameter the declared inputs do not cover (the `start` of a range load, the watermark)
+            foreach (var p in own.Where(p => inputs?.Any(i => i.Name == p.Name) != true))
+            {
+                var at = parameters.FindIndex(x => x.Name == p.Name);
+                if (at < 0) continue;
+                if (!InputValues.Fits(parameters[at].Type, p.Value)) { refusals.Add(new Diagnostic(DiagnosticCatalog.InputNotResolved, new($"step:{step.Id}", 0, 0), $"--input `{p.Text}`: `{p.Value}` is not a {parameters[at].Type}.")); continue; }
+                Set(p.Name, p.Value, "flag", parameters[at].Value);
+            }
+
+            // the watermark: its resolver runs again, unless a value was given for it
+            string? resultNow = step.ResolverResult;
+            if (step.HasResolver && own.All(p => p.Name != "watermark"))
+            {
+                if (!snapshot.Live.ContainsKey(step.Object)) { if (step.ResolverResult != null) refusals.Add(Stale($"the resolver of step {step.Id} was planned against a table that no longer exists.")); }
+                else
+                {
+                    var type = step.Parameters.FirstOrDefault(p => p.Source == "resolver")?.Type ?? "TEXT";
+                    var again = await TargetSnapshotReader.RunResolverAsync(reader, step.ResolverText!, type, ct);
+                    if (again.Error != null) refusals.Add(new Diagnostic(DiagnosticCatalog.InputNotResolved, new($"step:{step.Id}", 0, 0), $"the resolver of step {step.Id} returned {again.Error}, but the plan recorded {step.ResolverResult ?? "NULL"}."));
+                    else if (again.Value != step.ResolverResult)
+                    {
+                        moved.Add(new MovedInput(step.Id, step.Object, operation, "watermark", step.ResolverResult, again.Value));
+                        resultNow = again.Value;
+                        if (again.Value != null) Set("watermark", again.Value, "resolver", step.Parameters.FirstOrDefault(p => p.Name == "watermark")?.Value);
+                    }
+                }
+            }
+            steps.Add(step with { Parameters = parameters, Inputs = inputs, ResolverResult = resultNow });
+        }
+        foreach (var unmatched in pins.Where(p => !matched.Contains(p)))
+            refusals.Add(new Diagnostic(DiagnosticCatalog.InputNotResolved, new("plan", 0, 0), $"--input `{unmatched.Text}`: none of the loads still to run in this plan has an input called `{unmatched.Name}`{(unmatched.Target != null ? $" in `{unmatched.Target}`" : "")}."));
+        return (steps, moved);
     }
 
     /// <summary>What the event records as the selection: the text of the arguments that chose it, or nothing when the whole plan ran.</summary>
@@ -302,7 +395,7 @@ public static class ApplyEngine
                 var parameters = step.Parameters.Select(ToGate).ToList();
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 var shapeStart = gate.DryRun || !o.RecordShapes ? null : (await LiveAsync(reader, engine, step.Object, ct))?.ShapeHash;
-                var json = JsonSerializer.Serialize(step.Parameters.Select(p => new { p.Name, p.Type, p.Source, p.Value }), new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                var json = JsonSerializer.Serialize(step.Parameters.Select(p => p.Planned == null ? (object)new { p.Name, p.Type, p.Source, p.Value } : new { p.Name, p.Type, p.Source, p.Value, p.Planned }), new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 var watermark = step.Parameters.FirstOrDefault(p => p.Name == "watermark")?.Value;
                 if (!gate.DryRun)
                     await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "load", plan.Id, o.GitCommit, step.DefinitionHash, shapeStart, step.Operation,
