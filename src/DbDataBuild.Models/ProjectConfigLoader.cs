@@ -123,7 +123,7 @@ public static class ProjectConfigLoader
         }
 
         /// <summary>
-        /// `refresh: { plans: { hourly: { title, description, tags, properties, on_failure, on_busy, expected_every, parallel, check, on_fail } } }`: the refresh plans the project declares, so a model that names another is
+        /// `refresh: { plans: { hourly: { title, description, tags, properties, on_failure, on_busy, max_wait, max_runtime, expected_every, parallel, check, on_fail } } }`: the refresh plans the project declares, so a model that names another is
         /// told. A plan may be an empty mapping (`daily: {}`) or null. The rules are validated and kept in the compiled plan file.
         /// </summary>
         private Dictionary<string, RefreshPlanSettings> ReadRefreshPlans(YamlMapping top)
@@ -141,7 +141,7 @@ public static class ProjectConfigLoader
                     Add(DiagnosticCatalog.InvalidValue, e.Value, $"`refresh.plans.{name}` must be a mapping of settings (`{{}}` for none).");
                     continue;
                 }
-                CheckKeys(m, [.. YamlFieldReader.InfoKeys, "on_failure", "on_busy", "expected_every", "parallel", "check", "on_fail"], $"`refresh.plans.{name}`");
+                CheckKeys(m, [.. YamlFieldReader.InfoKeys, "on_failure", "on_busy", "expected_every", "parallel", "check", "on_fail", "max_wait", "max_runtime"], $"`refresh.plans.{name}`");
                 var where = $"refresh.plans.{name}";
                 string? Word(string key, IReadOnlyList<string> allowed)
                 {
@@ -158,6 +158,15 @@ public static class ProjectConfigLoader
                     every = en is YamlScalar es ? EveryDuration.TryParse(es.Value) : null;
                     if (every == null) Add(DiagnosticCatalog.InvalidValue, en, $"`{where}.expected_every` is not a span.", "A whole number and a unit, for example `15m`, `1h`, `1d` or `1w`.");
                 }
+                EveryDuration? Span(string key)
+                {
+                    if (m.Get(key) is not { } sn) return null;
+                    var span = sn is YamlScalar ss ? EveryDuration.TryParse(ss.Value) : null;
+                    if (span == null) Add(DiagnosticCatalog.InvalidValue, sn, $"`{where}.{key}` is not a span.", "A whole number and a unit, for example `30s`, `15m`, `1h` or `1d`.");
+                    return span;
+                }
+                var maxWait = Span("max_wait");
+                var maxRuntime = Span("max_runtime");
                 int? parallel = null;
                 if (m.Get("parallel") is { } pn)
                 {
@@ -166,7 +175,7 @@ public static class ProjectConfigLoader
                 }
                 var check = ReadChoice<RefreshCheck>(m, "check", where);
                 var onFail = ReadChoice<OnFail>(m, "on_fail", where);
-                result[name] = new RefreshPlanSettings(name, ReadInfo(m) ?? ObjectInfo.Empty, onFailure, onBusy, every, parallel, check, onFail, e.Key.Line);
+                result[name] = new RefreshPlanSettings(name, ReadInfo(m) ?? ObjectInfo.Empty, onFailure, onBusy, every, parallel, check, onFail, e.Key.Line, maxWait, maxRuntime);
             }
             return result;
         }

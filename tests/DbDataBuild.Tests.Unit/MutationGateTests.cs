@@ -24,8 +24,8 @@ public class MutationGateTests
             Events.Add($"log:{entry.Phase}:{entry.StepId}");
         }
         public bool LockGranted { get; set; } = true;
-        public Task<bool> TryLockAsync(string resource, CancellationToken ct) { Events.Add("lock:" + resource); return Task.FromResult(LockGranted); }
-        public Task UnlockAsync(string resource, CancellationToken ct) { Events.Add("unlock:" + resource); return Task.CompletedTask; }
+        public Task<bool> TryLockAsync(string resource, bool shared, CancellationToken ct) { Events.Add("lock:" + resource); return Task.FromResult(LockGranted); }
+        public Task UnlockAsync(string resource, bool shared, CancellationToken ct) { Events.Add("unlock:" + resource); return Task.CompletedTask; }
         public Task RecoverAsync(CancellationToken ct) { Events.Add("recover"); return Task.CompletedTask; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

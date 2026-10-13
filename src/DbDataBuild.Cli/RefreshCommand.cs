@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DbDataBuild.Apply;
 using DbDataBuild.Core;
 using DbDataBuild.Execution;
 using DbDataBuild.Models;
@@ -31,7 +32,7 @@ internal static class RefreshCommand
 
     internal sealed record InputFlag(string? Target, string Name, string Value, string Text);
 
-    public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, TextWriter output, TextWriter error, Func<string, string?> env)
+    public static int Run(CommandSpec spec, string root, string? targetArg, string[] args, string? checkArg, string? onFailArg, bool allowDirty, bool dryRun, string[] inputArgs, bool onlyFailed, TextWriter output, TextWriter error, Func<string, string?> env)
     {
         var configDiags = new List<Diagnostic>();
         var config = ProjectConfigLoader.LoadFromProject(root, configDiags);
@@ -177,12 +178,54 @@ internal static class RefreshCommand
             planHash = Hashing.Sha256Hex(string.Join("\n", items.Select(i => i.Entry.Hash)));
             selection = string.Join(' ', direct.Select(d => d.FullName));
         }
+        // ---- the logins and where the records are, which `--only-failed` and the check both read ----
         // ---- the check level: a flag, the plan's own, the connection's, the project's ----
         var check = checkArg != null ? Enum.Parse<RefreshCheck>(checkArg, ignoreCase: true) : plan?.Settings.Check is { } pc && Enum.TryParse<RefreshCheck>(pc, ignoreCase: true, out var planCheck) ? planCheck : settings.Check;
         var onFail = onFailArg != null ? Enum.Parse<OnFail>(onFailArg, ignoreCase: true) : plan?.Settings.OnFail is { } pf && Enum.TryParse<OnFail>(pf, ignoreCase: true, out var planOnFail) ? planOnFail : settings.OnFail;
         output.WriteLine(Header(planName) + $"  |  check: {LifecycleSettings.Name(check)}");
         var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
         if (readMissing != null) { error.Diag(readMissing); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
+        var tracking = config.TrackingOf(connection.Name);
+        LoginSettings? trackingRead = null;
+        if (tracking.Target is { } tt && tt.Connection != connection.Name)
+        {
+            var (tr, trm) = LoginSettings.FromEnvironment(tt.Connection, tt.Engine, Login.Read, env);
+            if (tr == null) { error.Diag(trm!); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
+            trackingRead = tr;
+        }
+        var scope = tracking.Target is { } ts ? new TrackingScope(ts.Engine, ts.SchemaName, connection.Name) : null;
+
+        // ---- --only-failed: the loads the plan's last run left failed, skipped or not run ----
+        if (onlyFailed)
+        {
+            if (planName == null) { error.WriteLine("--only-failed repeats the last run of a plan: name the plan (`connection refresh <connection> <plan> --only-failed`)."); return CliApp.ExitUsage; }
+            if (scope == null) { error.WriteLine($"--only-failed reads the last run of the plan from the tracking tables, and nothing is tracked for `{connection.Name}`."); return CliApp.ExitUsage; }
+            (string? EventId, IReadOnlyList<AuditLog.LoadState> Loads) last;
+            try
+            {
+                last = Task.Run(async () =>
+                {
+                    await using var own = trackingRead == null ? null : await ReadSession.OpenAsync(trackingRead);
+                    await using var data = own == null ? await ReadSession.OpenAsync(read!) : null;
+                    return await AuditLog.LastPlanRunLoadsAsync(own ?? data!, scope, planName);
+                }).GetAwaiter().GetResult();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { error.WriteLine($"--only-failed could not read the last run of `{planName}` ({ex.GetType().Name}{CliApp.DriverNumber(ex)})."); return CliApp.ExitFindings; }
+            if (last.EventId == null) { error.WriteLine($"No run of `{planName}` is recorded on `{connection.Name}`, so there is nothing to repeat. Run the plan first."); return CliApp.ExitUsage; }
+            var again = items.Where(i => last.Loads.Any(l => l.Model == i.Entry.Model && l.Membership == i.Membership && LoadStatus.NeedsAnotherRun(l.Status))).ToList();
+            output.WriteLine($"--only-failed: the last run of `{planName}` is {last.EventId}; {again.Count} of its {last.Loads.Count} load(s) did not end done.");
+            if (again.Count == 0)
+            {
+                output.Payload("plan", planName);
+                output.Payload("last_run", last.EventId);
+                output.Payload("loads", Array.Empty<object>());
+                output.WriteLine("Nothing to do.");
+                return CliApp.ExitOk;
+            }
+            items = again;
+            members = members.Select(m => m with { Selected = items.Any(i => i.Position == m.Position) }).ToList();
+            selection = (selection.Length == 0 ? "" : selection + " ") + "--only-failed";
+        }
 
         // ---- the inputs: a flag, the membership, a project parameter, what the connection finds ----
         var inputs = new Dictionary<RunItem, List<EffectiveInput>>();
@@ -212,18 +255,8 @@ internal static class RefreshCommand
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
 
-        // ---- the check, and the values only the connection knows ----
-        var tracking = config.TrackingOf(connection.Name);
-        LoginSettings? trackingRead = null;
-        if (tracking.Target is { } tt && tt.Connection != connection.Name)
-        {
-            var (tr, trm) = LoginSettings.FromEnvironment(tt.Connection, tt.Engine, Login.Read, env);
-            if (tr == null) { error.Diag(trm!); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
-            trackingRead = tr;
-        }
-        var scope = tracking.Target is { } ts ? new TrackingScope(ts.Engine, ts.SchemaName, connection.Name) : null;
+        // ---- the check ----
         var findings = new List<Diagnostic>();
-        var built = new List<(RunItem Item, PlanStep Step)>();
         var requires = items.Select(i => i.Entry).DistinctBy(e => e.Model).Select(e => (Object: e.Model, e.ShapeHash)).ToList();
         if (RefreshChecks.NeedsTracking(check, connection.Name, scope) is { } untracked) findings.Add(untracked);
         // a check that cannot run (nothing to read it from) stops a blocking refresh before the connection is opened
@@ -236,12 +269,14 @@ internal static class RefreshCommand
                     await using var own = trackingRead == null ? null : await ReadSession.OpenAsync(trackingRead);
                     var track = scope == null ? null : own ?? data;
                     if (check != RefreshCheck.None && findings.Count == 0) findings.AddRange(await RefreshChecks.RunAsync(check, connection.Name, loadsFile.ProjectHash, requires, connection.Engine, data, track, scope));
-                    if (findings.Count > 0 && onFail == OnFail.Block) return;
-                    foreach (var item in items) built.AddRange((await StepsOfAsync(item, inputs[item], scripts, data, findings, onFail)).Select(s => (item, s)));
                 }).GetAwaiter().GetResult();
             }
             catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
 
+        // a finding about an object is a failure of the loads of that object (kind `check`) and the failure rules apply; one about the connection as a whole stops a blocking refresh before anything runs
+        var objectsOfRun = items.Select(i => i.Entry.Model).ToHashSet(StringComparer.Ordinal);
+        var perObject = onFail == OnFail.Block ? findings.Where(f => objectsOfRun.Contains(f.Location.File)).ToList() : [];
+        var wholeConnection = onFail == OnFail.Block ? findings.Except(perObject).ToList() : [];
         foreach (var d in findings) error.Diag(d with { SeverityOverride = onFail == OnFail.Warn ? Severity.Warning : null });
         output.Payload("plan", planName);
         output.Payload("plan_hash", planHash);
@@ -250,29 +285,49 @@ internal static class RefreshCommand
         output.Payload("on_fail", LifecycleSettings.Name(onFail));
         output.Payload("loads", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }).ToList() }).ToList());
         output.Payload("findings", findings.Select(f => f.Code).ToList());
-        if (findings.Count > 0 && onFail == OnFail.Block)
+        if (wholeConnection.Count > 0)
         {
-            output.WriteLine($"Nothing was executed: {findings.Count} finding(s) from the {LifecycleSettings.Name(check)} check. A deploy brings the connection to the structure the project expects; `--check none` skips the check and `--on-fail warn` runs anyway.");
+            output.WriteLine($"Nothing was executed: {wholeConnection.Count} finding(s) from the {LifecycleSettings.Name(check)} check about the connection as a whole (every load is skipped: check failed). A deploy brings the connection to the structure the project expects; `--check none` skips the check and `--on-fail warn` runs anyway.");
+            output.Payload("outcome", RefreshSummary.Failed);
             output.Next("connection deploy");
             return CliApp.ExitFindings;
         }
-        if (built.Count == 0) { output.WriteLine("Nothing to do: no load applies."); return findings.Count > 0 ? CliApp.ExitFindings : CliApp.ExitOk; }
 
-        // ---- run it as an event of its own ----
+        // ---- the loads, with the rules that apply to each ----
         var (commit, dirty) = GitInfo.Read(root);
         var id = PlanDocument.CreateRunId(DateTime.UtcNow);
-        var steps = built.Select((b, i) => b.Step with { Id = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList();
-        var stepInfo = new Dictionary<string, RefreshStepInfo>(StringComparer.Ordinal);
-        for (var i = 0; i < built.Count; i++)
+        var steps = new List<PlanStep>();
+        var units = new List<RefreshUnit>();
+        var stepsOf = new Dictionary<int, List<PlanStep>>();
+        var byUnit = new Dictionary<int, RunItem>();
+        var maxWait = plan?.Settings.MaxWait is { } mw && EveryDuration.TryParse(mw) is { } mwSpan ? mwSpan.Span : Timeout.InfiniteTimeSpan;
+        foreach (var item in items)
         {
-            var item = built[i].Item;
-            stepInfo[steps[i].Id] = new(item.Membership, item.Entry.Hash, JsonSerializer.Serialize(inputs[item].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }), Json));
+            var own = Skeleton(item, inputs[item], scripts);
+            var ids = new List<PlanStep>();
+            foreach (var st in own) { var numbered = st with { Id = (steps.Count + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) }; steps.Add(numbered); ids.Add(numbered); }
+            var maxRuntimeText = item.Entry.MaxRuntime ?? plan?.Settings.MaxRuntime;
+            units.Add(new RefreshUnit(item.Position, item.Membership, item.Entry.Model, item.Entry.Load, item.Display, item.Entry.Hash, item.Entry.DefinitionHash, ids.First(x => x.Type == StepType.Load).Id,
+                item.Member?.OnFailure ?? plan?.Settings.OnFailure ?? OnFailureModes.Continue, plan?.Settings.OnBusy ?? OnBusyModes.Skip, maxWait,
+                maxRuntimeText != null && EveryDuration.TryParse(maxRuntimeText) is { } mr ? mr.Span : null, maxRuntimeText, perObject.FirstOrDefault(f => f.Location.File == item.Entry.Model)));
+            stepsOf[item.Position] = ids;
+            byUnit[item.Position] = item;
         }
-        var run = new RefreshRunInfo(planName, selection, members, stepInfo);
+        IReadOnlySet<string>? everyModel = null;
+        DependencyGraph? graph = null;
+        IReadOnlySet<string> Downstream(string model)
+        {
+            // the compiled files do not carry the project graph: it is read when a load fails or is skipped, and only then. A project that cannot be read leaves nothing to go by, so everything after is taken as reading it
+            try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
+        }
+        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, session, ct), Downstream);
+
+        var run = new RefreshRunInfo(planName, selection, members);
         var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps, []);
         var audit = settings.Refresh.Audit;
         return ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
-            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run), output, error, env);
+            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed), output, error, env);
     }
 
     /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
@@ -370,44 +425,50 @@ internal static class RefreshCommand
         static string Describe(List<RunItem> items) => items.SelectMany(i => i.Entry.Inputs.Select(p => $"{i.Display}.{p.Name}")).ToList() is { Count: > 0 } all ? $"The inputs of the loads to run: {string.Join(", ", all)}." : "None of them takes an input.";
     }
 
-    /// <summary>The steps of one load: the hooks before it, the load with the values it runs with, the hooks after it. A resolver that finds nothing falls back to the initial value the model declared, or stops the load.</summary>
-    private static async Task<IEnumerable<PlanStep>> StepsOfAsync(RunItem item, List<EffectiveInput> inputs, Dictionary<string, string> scripts, ReadSession read, List<Diagnostic> findings, OnFail onFail)
+    /// <summary>The steps of one load as far as they can be known before the run: the hooks before it, the load (a value that a resolver finds is still empty), the hooks after it.</summary>
+    private static List<PlanStep> Skeleton(RunItem item, List<EffectiveInput> inputs, Dictionary<string, string> scripts)
+    {
+        var l = item.Entry;
+        var parameters = inputs.Select(p => new PlanParameter(p.Name, p.Type, p.Source, p.Value)).ToList();
+        var suffix = item.Membership != l.Load ? $" as {item.Membership}" : "";
+        PlanStep Hook(RefreshHook h) => new("", StepType.Hook, l.Model, $"hook {h.Name} ({h.Event})", scripts[h.File], RiskClass.Safe, ["hook.fired", $"event {h.Event}"], null, [], Operation: h.Event, FileHash: h.FileHash, Hook: h.Name, Effect: h.Effect);
+        var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Load}{suffix})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, l.ResolverFile == null ? null : scripts[l.ResolverFile], null, HasResolver: l.ResolverFile != null,
+            FileHash: l.FileHash, Operation: l.Load, DefinitionHash: l.DefinitionHash);
+        return l.Before.Select(Hook).Append(load).Concat(l.After.Select(Hook)).ToList();
+    }
+
+    /// <summary>
+    /// A load made ready just before its turn: the value a resolver finds is read now, from the connection, so it sees what the loads before it wrote. A resolver that finds nothing falls back to the initial value the model declared, or
+    /// the load fails (a scheduled run has no one to ask).
+    /// </summary>
+    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, ReadSession read, CancellationToken ct)
     {
         var l = item.Entry;
         var parameters = new List<PlanParameter>();
-        string? resolverText = null, resolverResult = null;
+        string? resolverResult = null;
         for (var i = 0; i < inputs.Count; i++)
         {
             var p = inputs[i];
             if (p.Source != "resolver") { parameters.Add(new(p.Name, p.Type, p.Source, p.Value)); continue; }
-            resolverText = scripts[l.ResolverFile!];
-            var found = await TargetSnapshotReader.RunResolverAsync(read, resolverText, p.Type);
+            var found = await TargetSnapshotReader.RunResolverAsync(read, scripts[l.ResolverFile!], p.Type, ct);
             if (found.Error != null)
-            {
-                findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{item.Display} ({l.Load}): the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark."));
-                return [];
-            }
+                return new PreparedLoad(skeleton, InputsJson(inputs), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark.");
             resolverResult = found.Value;
             var value = found.Value;
             var source = "resolver:target";
             if (value == null)
             {
                 if (l.OnNull == WatermarkSpec.InitialLiteral && l.Initial != null) (value, source) = (l.Initial, "initial");
-                else
-                {
-                    findings.Add(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(l.Model, 0, 0), $"{item.Display} ({l.Load}): the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`."));
-                    return [];
-                }
+                else return new PreparedLoad(skeleton, InputsJson(inputs), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`.");
             }
             parameters.Add(new(p.Name, p.Type, source, value));
             inputs[i] = p with { Source = source, Value = value };                         // what the event records
         }
-        var suffix = item.Membership != l.Load ? $" as {item.Membership}" : "";
-        PlanStep Hook(RefreshHook h) => new("", StepType.Hook, l.Model, $"hook {h.Name} ({h.Event})", scripts[h.File], RiskClass.Safe, ["hook.fired", $"event {h.Event}"], null, [], Operation: h.Event, FileHash: h.FileHash, Hook: h.Name, Effect: h.Effect);
-        var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Load}{suffix})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, resolverText, resolverResult, HasResolver: resolverText != null,
-            FileHash: l.FileHash, Operation: l.Load, DefinitionHash: l.DefinitionHash);
-        return l.Before.Select(Hook).Append(load).Concat(l.After.Select(Hook)).ToList();
+        var steps = skeleton.Select(s => s.Type == StepType.Load ? s with { Parameters = parameters, ResolverResult = resolverResult } : s).ToList();
+        return new PreparedLoad(steps, InputsJson(inputs));
     }
+
+    private static string InputsJson(IEnumerable<EffectiveInput> inputs) => JsonSerializer.Serialize(inputs.Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }), Json);
 }
 
 /// <summary>The safety checks before a refresh (`refresh.check`), from cheapest to strictest. Each compares what the compiled project expects of the objects the refresh uses with something recorded or live.</summary>

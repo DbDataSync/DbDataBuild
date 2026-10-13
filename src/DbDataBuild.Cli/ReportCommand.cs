@@ -155,14 +155,20 @@ internal static class ReportCommand
             {
                 if (Cell(r[0]).StartsWith("ref-", StringComparison.Ordinal))
                 {
-                    if (lastRefresh == null || r[1] is not DateTime when || when > lastRefresh) open.Add($"refresh {Cell(r[0])} did not complete (last record {Cell(r[1])} UTC): the next refresh starts over");
+                    if (lastRefresh == null || r[1] is not DateTime when || when > lastRefresh)
+                    {
+                        var ended = (await trackRead.QueryAsync($"SELECT {C("status")}, {C("refresh_plan")} FROM {T("migration_log")} WHERE {C("connection")} = @connection AND {C("plan_id")} = @plan_id ORDER BY {C("applied_utc")} DESC", [byConnection[0], new GateParameter("plan_id", System.Data.DbType.AnsiString, Cell(r[0]))])).FirstOrDefault();
+                        var how = Cell(ended?[0]) is { Length: > 0 } st && st != "started" ? $"ended {st.Replace('_', ' ')}" : "did not complete";
+                        var plan = Cell(ended?[1]);
+                        open.Add($"refresh {Cell(r[0])} {how} (last record {Cell(r[1])} UTC): {(plan.Length > 0 ? $"`{ProductInfo.Cli} connection refresh {target} {plan} --only-failed` repeats the loads that did not finish; " : "")}`{ProductInfo.Cli} connection monitor {target} --event {Cell(r[0])}` says which");
+                    }
                 }
                 else open.Add($"plan {Cell(r[0])} never completed (last record {Cell(r[1])} UTC): continue it by applying the same plan again (`{ProductInfo.Cli} connection deploy --apply-plan <plan>`), or plan again");
             }
             // a step that did not finish ok is left out when the same step of the same plan was run again, and finished, later (a resume after a failure or a lost connection)
             foreach (var r in await trackRead.QueryAsync($"SELECT d.{C("object_name")}, d.{C("plan_id")} FROM {T("ddl_log")} d WHERE d.{C("connection")} = @connection AND d.{C("status")} <> 'ok' AND NOT EXISTS (SELECT 1 FROM {T("ddl_log")} later WHERE later.{C("connection")} = d.{C("connection")} AND later.{C("plan_id")} = d.{C("plan_id")} AND later.{C("object_name")} = d.{C("object_name")} AND later.{C("statement_hash")} = d.{C("statement_hash")} AND later.{C("status")} = 'ok' AND later.{C("executed_utc")} >= d.{C("executed_utc")})", byConnection))
                 open.Add($"DDL on {Cell(r[0])} in plan {Cell(r[1])} did not finish ok");
-            foreach (var r in await trackRead.QueryAsync($"SELECT r.{C("model")}, r.{C("plan_id")} FROM {T("run_log")} r WHERE r.{C("connection")} = @connection AND r.{C("status")} <> 'ok' AND NOT EXISTS (SELECT 1 FROM {T("run_log")} later WHERE later.{C("connection")} = r.{C("connection")} AND ((later.{C("plan_id")} = r.{C("plan_id")} AND later.{C("step_id")} = r.{C("step_id")}) OR (r.{C("plan_id")} LIKE 'ref-%' AND later.{C("plan_id")} LIKE 'ref-%' AND later.{C("model")} = r.{C("model")})) AND later.{C("status")} = 'ok' AND later.{C("started_utc")} >= r.{C("started_utc")})", byConnection))
+            foreach (var r in await trackRead.QueryAsync($"SELECT r.{C("model")}, r.{C("plan_id")} FROM {T("run_log")} r WHERE r.{C("connection")} = @connection AND r.{C("status")} <> 'ok' AND r.{C("status")} <> 'skipped: busy' AND NOT EXISTS (SELECT 1 FROM {T("run_log")} later WHERE later.{C("connection")} = r.{C("connection")} AND ((later.{C("plan_id")} = r.{C("plan_id")} AND later.{C("step_id")} = r.{C("step_id")}) OR (r.{C("plan_id")} LIKE 'ref-%' AND later.{C("plan_id")} LIKE 'ref-%' AND later.{C("model")} = r.{C("model")})) AND later.{C("status")} = 'ok' AND later.{C("started_utc")} >= r.{C("started_utc")})", byConnection))
                 open.Add($"load of {Cell(r[0])} in plan {Cell(r[1])} did not finish ok");
             foreach (var o in origins.Where(o => Cell(o.Latest[2]) != "ok"))
                 open.Add($"{o.Model}: {(o.Origin.Length > 0 ? $"the origin `{o.Origin}`" : "an origin")} {(o.Good == null ? "has never copied well" : $"last copied well at {Cell(o.Good[3])} UTC")}, and its latest attempt ended `{Cell(o.Latest[2])}` (`{ProductInfo.Cli} connection deploy` and `apply`, or `apply --resume`)");

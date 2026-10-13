@@ -20,16 +20,19 @@ public sealed record ApplyTracking(LoginSettings Read, LoginSettings? Write, str
 /// <param name="Refresh">A refresh runs routine loads only and asks the connection nothing about its structure: no plan is verified against the live objects, there is nothing to continue, and the id of every run is its own.</param>
 /// <param name="Run">For a refresh: the plan it ran (null for a load named directly), the selection, the plan's members as run, and what each step belongs to; recorded on the event and on each load row.</param>
 /// <param name="RecordText">Whether the text of each DDL statement is kept in `ddl_log` (audit `full`); the hash always is.</param>
+/// <param name="Execution">For a refresh: its loads in order with the rules of each, and how to make each ready just before its turn (the lock, the failure rules and the resolvers act per load).</param>
 /// <param name="RecordShapes">Whether each load records the shape of its object before and after (a catalog read per load). A deploy does; a refresh does only when it checks against the live catalog.</param>
 public sealed record ApplyOptions(bool DryRun, bool AllowRisky, IReadOnlySet<string> AllowDestructive, string? GitCommit, bool GitDirty, string Invoker, Func<bool>? StopRequested = null, Func<string, CancellationToken, Task<ReadSession>>? OpenOrigin = null,
-    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null);
+    string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null);
 
 /// <param name="Status">ok, dry-run, skipped (done in an earlier attempt), stopped (the operator stopped before it) or failed.</param>
 public sealed record StepOutcome(string StepId, string Description, string Status, string? Detail = null);
 
-public sealed record ApplyResult(IReadOnlyList<StepOutcome> Outcomes, IReadOnlyList<Diagnostic> Refusals)
+/// <param name="Refresh">For a refresh: how each load ended and how the run ended. Its steps are then one outcome per load.</param>
+/// <param name="PreparedSteps">For a refresh: the steps as they ran, with every input resolved (a dry run prints these).</param>
+public sealed record ApplyResult(IReadOnlyList<StepOutcome> Outcomes, IReadOnlyList<Diagnostic> Refusals, RefreshSummary? Refresh = null, IReadOnlyList<PlanStep>? PreparedSteps = null)
 {
-    public bool Success => Refusals.Count == 0 && Outcomes.All(o => o.Status != "failed");
+    public bool Success => Refusals.Count == 0 && (Refresh != null ? Refresh.Outcome == RefreshSummary.Completed : Outcomes.All(o => o.Status != "failed"));
 }
 
 /// <summary>
@@ -96,6 +99,9 @@ public static class ApplyEngine
         var tracker = tracking == null ? Tracker.None : Tracker.For(sameConnection ? gate : ownTrackingGate!, scope!);
 
         var lockName = $"{ProductInfo.Cli}:{tracking?.SchemaName ?? ProductInfo.TrackingSchemaName}";
+        // a refresh locks per load, not the connection: a deploy takes the whole connection (below) and conflicts with any load that is running
+        if (o.Refresh && o.Execution != null)
+            return await RefreshEngine.RunAsync(plan, planText, planHash, reader, tracker, gate, o, runId, lockName, progress, ct);
         if (!await gate.TryAcquireApplicationLockAsync(lockName, ct))
             return new ApplyResult([], [new Diagnostic(DiagnosticCatalog.ApplyLockHeld, new($"lock:{lockName}", 0, 0), $"Another apply holds the application lock `{lockName}` on this target.")]);
         try
@@ -181,7 +187,7 @@ public static class ApplyEngine
             var clock = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var diagnostic = await ExecuteStepAsync(plan, step, reader, gate, tracker, o, runId, ct);
+                var diagnostic = await ExecuteStepAsync(plan, step, reader, gate, tracker, o, runId, null, null, null, ct);
                 if (diagnostic != null)
                 {
                     outcomes.Add(new(step.Id, step.Description, "failed", diagnostic.Found));
@@ -211,7 +217,7 @@ public static class ApplyEngine
     }
 
     /// <summary>What the event records as the selection: the text of the arguments that chose it, or nothing when the whole plan ran.</summary>
-    private static string? SelectionOf(ApplyOptions o) => o.Run is { Selection.Length: > 0 } r ? r.Selection : null;
+    internal static string? SelectionOf(ApplyOptions o) => o.Run is { Selection.Length: > 0 } r ? r.Selection : null;
 
     private static Diagnostic Stale(string detail) => new(DiagnosticCatalog.PlanIsStale, new("plan", 0, 0), detail);
 
@@ -236,12 +242,14 @@ public static class ApplyEngine
         return (await CatalogReader.ReadObjectsAsync(reader, engine, schema, ct, objectName: name)).GetValueOrDefault(obj);
     }
 
-    /// <summary>What a refresh step belongs to, for its row in `run_log`; nothing for a step of a deploy.</summary>
-    private static RefreshStepRecord? RefreshRecord(ApplyOptions o, PlanStep step) =>
-        o.Run is { } run && run.Steps.TryGetValue(step.Id, out var info) ? new RefreshStepRecord(info.Membership, info.LoadPlanHash, info.InputsJson) : null;
+    /// <summary>The status a load that threw is recorded with: past its `max_runtime` when the limit is what cancelled it.</summary>
+    private static string FailureStatus(CancellationTokenSource? limit) => limit is { IsCancellationRequested: true } ? LoadStatus.FailedMaxRuntime : LoadStatus.Failed;
 
     /// <summary>Executes one step. Returns a diagnostic when the step ran but its result is not what the plan promised.</summary>
-    private static async Task<Diagnostic?> ExecuteStepAsync(Plan plan, PlanStep step, ReadSession reader, MutationGate gate, Tracker tracker, ApplyOptions o, Guid runId, CancellationToken ct)
+    /// <param name="refresh">For a step of a refresh: what its row in `run_log` records about the plan; nothing for a step of a deploy.</param>
+    /// <param name="measure">Filled with the rows and the time of a load.</param>
+    /// <param name="limit">The source of the load's `max_runtime`: when it is what cancelled the statement, the row says so.</param>
+    internal static async Task<Diagnostic?> ExecuteStepAsync(Plan plan, PlanStep step, ReadSession reader, MutationGate gate, Tracker tracker, ApplyOptions o, Guid runId, RefreshStepRecord? refresh, StepMeasure? measure, CancellationTokenSource? limit, CancellationToken ct)
     {
         var engine = reader.Engine;
         switch (step.Type)
@@ -298,15 +306,16 @@ public static class ApplyEngine
                 var watermark = step.Parameters.FirstOrDefault(p => p.Name == "watermark")?.Value;
                 if (!gate.DryRun)
                     await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "load", plan.Id, o.GitCommit, step.DefinitionHash, shapeStart, step.Operation,
-                        step.FileHash, step.ResolverText == null ? null : Hashing.ScriptHash(step.ResolverText), json, watermark, RefreshRecord(o, step), ct);
+                        step.FileHash, step.ResolverText == null ? null : Hashing.ScriptHash(step.ResolverText), json, watermark, refresh, ct);
                 long rows;
                 try { rows = await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id, StatementKind.Data, step.Text, parameters), ct); }
                 catch (Exception) when (!gate.DryRun)
                 {
-                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, clock.ElapsedMilliseconds, ct);
+                    await tracker.FinishRunAsync(step.Id, runId, FailureStatus(limit), null, null, clock.ElapsedMilliseconds, CancellationToken.None);
                     throw;
                 }
                 if (gate.DryRun) return null;
+                if (measure != null) (measure.Rows, measure.DurationMs) = (rows, clock.ElapsedMilliseconds);
                 var shapeEnd = o.RecordShapes ? (await LiveAsync(reader, engine, step.Object, ct))?.ShapeHash : null;
                 await tracker.FinishRunAsync(step.Id, runId, "ok", rows, shapeEnd, clock.ElapsedMilliseconds, ct);
                 // the range of data this operation produced, under the shape it produced it in (DESIGN.md 12.3 reads these)
@@ -324,12 +333,12 @@ public static class ApplyEngine
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 var before = gate.DryRun || !o.RecordShapes ? null : await LiveAsync(reader, engine, step.Object, ct);
                 if (!gate.DryRun)
-                    await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "hook", plan.Id, o.GitCommit, null, before?.ShapeHash, step.Hook, step.FileHash, null, null, null, RefreshRecord(o, step), ct);
+                    await tracker.BeginRunAsync(step.Id, runId, step.Object, step.Operation ?? "hook", plan.Id, o.GitCommit, null, before?.ShapeHash, step.Hook, step.FileHash, null, null, null, refresh, ct);
                 long rows;
                 try { rows = await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id, kind, step.Text), ct); }
                 catch (Exception) when (!gate.DryRun)
                 {
-                    await tracker.FinishRunAsync(step.Id, runId, "failed", null, null, clock.ElapsedMilliseconds, ct);
+                    await tracker.FinishRunAsync(step.Id, runId, FailureStatus(limit), null, null, clock.ElapsedMilliseconds, CancellationToken.None);
                     throw;
                 }
                 if (gate.DryRun) return null;

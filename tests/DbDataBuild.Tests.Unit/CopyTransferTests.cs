@@ -167,8 +167,8 @@ public class CopyTransferTests
             return Rows;
         }
         public void Append(StatementLogEntry e) => Events.Add($"log:{e.Phase}:{e.StepId}:{e.Text}:{e.Outcome}:{string.Join(",", (e.Parameters ?? []).Select(p => p.Name))}");
-        public Task<bool> TryLockAsync(string resource, CancellationToken ct) => Task.FromResult(true);
-        public Task UnlockAsync(string resource, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> TryLockAsync(string resource, bool shared, CancellationToken ct) => Task.FromResult(true);
+        public Task UnlockAsync(string resource, bool shared, CancellationToken ct) => Task.CompletedTask;
         public Task RecoverAsync(CancellationToken ct) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

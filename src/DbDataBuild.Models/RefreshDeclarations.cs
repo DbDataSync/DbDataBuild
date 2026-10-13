@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace DbDataBuild.Models;
 
-/// <summary>What a refresh plan does when one of its loads fails (docs/research/refresh-plans.md, section 6). Stored in the compiled plan file; the rules act in a later step.</summary>
+/// <summary>What a refresh plan does when one of its loads fails (docs/research/refresh-plans.md, section 6). Stored in the compiled plan file and acting in a run (step 2).</summary>
 public static class OnFailureModes
 {
     public const string Stop = "stop";
@@ -11,7 +11,7 @@ public static class OnFailureModes
     public static readonly IReadOnlyList<string> All = [Stop, Continue, Ignore];
 }
 
-/// <summary>What a run of a plan does with a load that another run holds (section 6). Stored in the plan file; it acts in a later step.</summary>
+/// <summary>What a run of a plan does with a load that another run holds (section 6). Stored in the plan file and acting in a run (step 2).</summary>
 public static class OnBusyModes
 {
     public const string Skip = "skip";
@@ -20,27 +20,33 @@ public static class OnBusyModes
     public static readonly IReadOnlyList<string> All = [Skip, Wait, Fail];
 }
 
-/// <summary>A span such as `15m`, `1h`, `2d` or `1w`, as a plan says how often it is meant to run (`expected_every`). Kept as written; the minutes are what compares.</summary>
-public sealed record EveryDuration(string Text, long Minutes)
+/// <summary>A span such as `30s`, `15m`, `1h`, `2d` or `1w`, as a plan says how often it is meant to run (`expected_every`), how long a load may run (`max_runtime`) or how long to wait for a busy load (`max_wait`). Kept as written; the seconds are what compares.</summary>
+public sealed record EveryDuration(string Text, long Seconds)
 {
-    private static readonly Regex Form = new(@"^([1-9][0-9]{0,5})(m|h|d|w)$", RegexOptions.CultureInvariant);
+    private static readonly Regex Form = new(@"^([1-9][0-9]{0,5})(s|m|h|d|w)$", RegexOptions.CultureInvariant);
+
+    public long Minutes => Seconds / 60;
+
+    public TimeSpan Span => TimeSpan.FromSeconds(Seconds);
 
     public static EveryDuration? TryParse(string text)
     {
         var m = Form.Match(text.Trim());
         if (!m.Success) return null;
         var n = long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-        return new EveryDuration(m.Value, m.Groups[2].Value switch { "m" => n, "h" => n * 60, "d" => n * 1440, _ => n * 10080 });
+        return new EveryDuration(m.Value, m.Groups[2].Value switch { "s" => n, "m" => n * 60, "h" => n * 3600, "d" => n * 86400, _ => n * 604800 });
     }
 }
 
 /// <summary>
-/// One refresh plan as the project declares it (`refresh.plans.<name>` in dbdatabuild.yml): a name, the words about it, and the rules for running it. Everything here is stored in the compiled plan file; in the first
-/// step of the build only the check and its failure rule act, the others (`on_failure`, `on_busy`, `expected_every`, `parallel`) are validated and kept.
+/// One refresh plan as the project declares it (`refresh.plans.<name>` in dbdatabuild.yml): a name, the words about it, and the rules for running it. Everything here is stored in the compiled plan file. `check`, `on_fail`, `on_failure`, `on_busy`, `max_wait`,
+/// `max_runtime` and `expected_every` act (steps 1 and 2); `parallel` is validated and kept.
 /// </summary>
 /// <param name="Check">Overrides the connection's and the project's `refresh.check` for this plan.</param>
 /// <param name="OnFail">Overrides `refresh.on_fail` for this plan.</param>
-public sealed record RefreshPlanSettings(string Name, ObjectInfo Info, string? OnFailure, string? OnBusy, EveryDuration? ExpectedEvery, int? Parallel, RefreshCheck? Check, OnFail? OnFail, int Line = 0)
+/// <param name="MaxWait">With `on_busy: wait`, how long to wait for a busy load (none: until it is free). Past it the load fails.</param>
+/// <param name="MaxRuntime">Opt-in: how long one load of the plan may run before its statement is cancelled and the load fails (a load's own `max_runtime` wins).</param>
+public sealed record RefreshPlanSettings(string Name, ObjectInfo Info, string? OnFailure, string? OnBusy, EveryDuration? ExpectedEvery, int? Parallel, RefreshCheck? Check, OnFail? OnFail, int Line = 0, EveryDuration? MaxWait = null, EveryDuration? MaxRuntime = null)
 {
     /// <summary>The plan every model with a default load and no `refresh:` is in. It exists whether or not the project declares it.</summary>
     public const string DefaultName = "default";

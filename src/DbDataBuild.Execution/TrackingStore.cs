@@ -234,6 +234,25 @@ public static partial class AuditLog
             [A("status", status), new("rows", DbType.Int64, rows), Fixed("shape_end", shapeEnd), new("ended_utc", DbType.DateTime2, TrackingClock.NextUtc()), new("duration_ms", DbType.Int64, durationMs), new("run_id", DbType.Guid, runId), A("step_id", stepId)]), ct);
     }
 
+    /// <summary>
+    /// A load of a refresh that did not run, in one row: `skipped: upstream failed`, `skipped: busy`, `skipped: stopped`, `not run` (the status says why; the layout has no column for a reason, and `ok` and `failed` stay as they were). The row has no
+    /// duration and no rows, and its time is when the run decided.
+    /// </summary>
+    public static Task UnrunLoadAsync(MutationGate gate, TrackingScope scope, string stepId, Guid runId, string model, string loadName, string status, string planId, string? gitCommit, string? definitionHash, RefreshStepRecord refresh, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var text = $"INSERT INTO {T(scope, "run_log")} ({c("connection")}, {c("run_id")}, {c("step_id")}, {c("model")}, {c("operation")}, {c("rows_affected")}, {c("status")}, {c("plan_id")}, {c("git_commit")}, " +
+                   $"{c("definition_hash")}, {c("shape_hash_start")}, {c("shape_hash_end")}, {c("load_name")}, {c("load_file_hash")}, {c("resolver_file_hash")}, {c("parameters")}, {c("watermark_used")}, {c("started_utc")}, {c("ended_utc")}, " +
+                   $"{c("membership")}, {c("load_plan_hash")}, {c("inputs")}, {c("attempt")}, {c("duration_ms")}) " +
+                   "VALUES (@connection, @run_id, @step_id, @model, @operation, NULL, @status, @plan_id, @git_commit, @definition_hash, NULL, NULL, @load_name, NULL, NULL, NULL, NULL, @started_utc, @ended_utc, @membership, @load_plan_hash, @inputs, NULL, NULL)";
+        var now = TrackingClock.NextUtc();
+        return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
+        [
+            Connection(scope), new("run_id", DbType.Guid, runId), A("step_id", stepId), S("model", model), A("operation", loadName), A("status", status), A("plan_id", planId), A("git_commit", gitCommit), Fixed("definition_hash", definitionHash),
+            A("load_name", loadName), new("started_utc", DbType.DateTime2, now), new("ended_utc", DbType.DateTime2, now), A("membership", refresh.Membership), Fixed("load_plan_hash", refresh.LoadPlanHash), S("inputs", refresh.InputsJson),
+        ]), ct);
+    }
+
     /// <summary>The members of the refresh plan as they were when an event ran it, in order, with whether the run's selection included each (one row per member).</summary>
     public static Task PlanMemberAsync(MutationGate gate, TrackingScope scope, string stepId, string planId, int position, string membership, string model, string loadName, string loadPlanHash, bool selected, CancellationToken ct = default)
     {

@@ -211,7 +211,7 @@ public static class ModelDefinitionLoader
             return (type, uniqueKey, timeColumn, lookback, kind);
         }
 
-        private static readonly string[] LoadKeys = ["default", "strategy", "key", "column", "watermark", "params", "max_span", "connections"];
+        private static readonly string[] LoadKeys = ["default", "strategy", "key", "column", "watermark", "params", "max_span", "connections", "max_runtime"];
         private static readonly string[] WatermarkKeys = ["column", "resolver", "lookback", "on_null", "initial", "overridable"];
         private static readonly System.Text.RegularExpressions.Regex OpName = new("^[a-z][a-z0-9_]*$");
 
@@ -301,7 +301,13 @@ public static class ModelDefinitionLoader
                 }
 
                 if (strategy.Value != LoadStrategies.DeleteInsertByRange) NotUsed();
-                result.Add(new LoadOperation(entry.Key.Value, isDefault, strategy.Value, key, column, watermark, parameters, maxSpan, targets?.Select(t => t.Value).ToList(), Declared: true, entry.Key.Line));
+                EveryDuration? maxRuntime = null;
+                if (Scalar(op, "max_runtime", required: false, at: op) is { } mr)
+                {
+                    maxRuntime = EveryDuration.TryParse(mr.Value);
+                    if (maxRuntime == null) Add(DiagnosticCatalog.InvalidValue, mr, $"max_runtime is `{mr.Value}`.", "A whole number and a unit, for example `30s`, `15m` or `2h`.");
+                }
+                result.Add(new LoadOperation(entry.Key.Value, isDefault, strategy.Value, key, column, watermark, parameters, maxSpan, targets?.Select(t => t.Value).ToList(), Declared: true, entry.Key.Line, maxRuntime));
             }
 
             foreach (var target in connections.Order(StringComparer.Ordinal))
