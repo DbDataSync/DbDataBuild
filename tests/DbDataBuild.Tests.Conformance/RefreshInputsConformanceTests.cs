@@ -223,4 +223,34 @@ public partial class ApplyConformanceTests
         }
         finally { DbDataBuild.Cli.RefreshCommand.Now = previousClock; if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
     }
+
+    [SkippableTheory, MemberData(nameof(Engines))]
+    public async Task A_dry_run_resolves_the_target_resolvers_read_only_and_prints_the_values_it_would_use(string name)
+    {
+        var run = await DaysProject(name);
+        await using var engine = run.Engine;
+        var previousClock = DbDataBuild.Cli.RefreshCommand.Now;
+        DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 1, 23, 30, 15, TimeSpan.Zero);
+        try
+        {
+            Ok(run.Cli("connection", "init", "--apply"), "init");
+            Ok(run.Cli("project", "compile"), "compile");
+            var plan = run.Cli("connection", "deploy", "--write-plan"); Ok(plan, "plan");
+            Ok(run.Cli("connection", "deploy", "--apply-plan", run.PlanFile(plan.Out)), "apply");
+            await engine.ExecAsync("UPDATE staging.days SET n = 9");
+            var before = await DaysAsync(run);
+            var dry = run.Cli("connection", "refresh", name, "hourly", "--dry-run");
+            Ok(dry, "refresh hourly --dry-run");
+            Assert.Contains("input end = 2026-03-03  [resolver:target]", dry.Out);                                          // the newest day in the target, plus one: read, not written
+            Assert.Contains("input start = 2026-03-01  [resolver:expression]", dry.Out);
+            Assert.Contains("input start = 2026-02-27  [resolver:expression]", dry.Out);                                    // `grouped`: both from one resolver
+            Assert.Equal(before, await DaysAsync(run));                                                                       // nothing changed
+            Assert.Equal(0, await CountAsync(run, $"{run.Q("dbdatabuild")}.{run.Q("run_log")}", $"{run.Q("load_name")} = 'by_target'"));
+            var json = run.Cli("connection", "refresh", name, "hourly", "--dry-run", "--format", "json");
+            Ok(json, "dry run json");
+            Assert.Contains("\"resolved_inputs\"", json.Out);
+            Assert.Contains("\"source\": \"resolver:target\"", json.Out);
+        }
+        finally { DbDataBuild.Cli.RefreshCommand.Now = previousClock; if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
+    }
 }

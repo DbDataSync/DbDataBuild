@@ -257,6 +257,7 @@ Usage: `dbdatabuild project show refresh [plan] [options]`
 |---|---|
 | `--connection` `<text>` | Only the plans of this connection |
 | `--project` `<path>` | Project root |
+| `--resolve` | Evaluate the `expression` resolvers of the plan's loads now, offline (what `start` would be at this moment, in the project's time zone); a `target` or `source` resolver reads a database and is not run here, `connection refresh --dry-run` runs it. Needs a plan |
 
 ## project show plan
 

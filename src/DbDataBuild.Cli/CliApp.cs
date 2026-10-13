@@ -334,8 +334,9 @@ public static class CliApp
                     var showRefreshPlan = new Argument<string?>("plan") { Description = "A refresh plan by name; omit to list the plans of every connection", Arity = ArgumentArity.ZeroOrOne };
                     var showRefreshProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var showRefreshConnection = new Option<string?>("--connection") { Description = "Only the plans of this connection" };
-                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e)));
+                    var showRefreshResolve = new Option<bool>("--resolve") { Description = "Evaluate the `expression` resolvers of the plan's loads now, offline (what `start` would be at this moment, in the project's time zone); a `target` or `source` resolver reads a database and is not run here, `connection refresh --dry-run` runs it. Needs a plan" };
+                    cmd.Arguments.Add(showRefreshPlan); cmd.Options.Add(showRefreshProject); cmd.Options.Add(showRefreshConnection); cmd.Options.Add(showRefreshResolve);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => RefreshViews.Show(spec, pr.GetValue(showRefreshProject)!.FullName, pr.GetValue(showRefreshPlan), pr.GetValue(showRefreshConnection), o, e, pr.GetValue(showRefreshResolve))));
                     break;
                 case "project show plan":
                     var reviewPlan = new Argument<string?>("plan") { Description = "A plan file (plans/<connection>/<id>.plan.yml); omit to list the project's plans", Arity = ArgumentArity.ZeroOrOne };

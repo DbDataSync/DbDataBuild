@@ -331,13 +331,17 @@ internal static class RefreshCommand
             try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
-        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, ct), Downstream);
+        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, dryRun ? output.WriteLine : null, ct), Downstream);
 
         var run = new RefreshRunInfo(planName, selection, members);
         var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps, []);
         var audit = settings.Refresh.Audit;
-        return ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
+        var exit = ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
             new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed), output, error, env);
+        // a dry run resolved the inputs (the resolvers ran, read-only): the values it would have used, and where each came from
+        if (dryRun)
+            output.Payload("resolved_inputs", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value, resolver_hash = x.ResolverHash }).ToList() }).ToList());
+        return exit;
     }
 
     /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
@@ -454,7 +458,7 @@ internal static class RefreshCommand
     /// loads before it wrote; a person's `--input` or a membership's value replaces the resolver, which is not run. Then the watermark is read from the connection. An input that cannot be resolved fails the load (`failed: input`) with a
     /// message that names the input and the resolver; one that finds NULL goes to its `on_null`.
     /// </summary>
-    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, ReadSession read, CancellationToken ct)
+    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, ReadSession read, Action<string>? report, CancellationToken ct)
     {
         var l = item.Entry;
         var usedClock = false;
@@ -492,6 +496,10 @@ internal static class RefreshCommand
             inputs[i] = p with { Source = source, Value = value };                         // what the event records
         }
         var steps = skeleton.Select(s => s.Type == StepType.Load ? s with { Parameters = parameters, ResolverResult = resolverResult } : s).ToList();
+        // a dry run says which values the load would run with, and where each came from (the resolvers were run, read-only, to know)
+        if (report != null)
+            foreach (var x in inputs)
+                report($"    input {x.Name} = {x.Value ?? "NULL"}  [{x.Source}]{(x.ResolverHash != null ? $"  resolver {x.ResolverHash[..12]}" : "")}{(x.Free ? "  (no script binds it)" : "")}");
         return new PreparedLoad(steps, InputsJson(inputs, context, usedClock));
     }
 

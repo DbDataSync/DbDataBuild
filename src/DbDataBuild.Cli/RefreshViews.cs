@@ -82,9 +82,10 @@ internal static class RefreshViews
 
     // ---------------- project show refresh ----------------
 
-    public static int Show(CommandSpec spec, string root, string? planArg, string? connectionArg, TextWriter output, TextWriter error)
+    public static int Show(CommandSpec spec, string root, string? planArg, string? connectionArg, TextWriter output, TextWriter error, bool resolve = false)
     {
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: none");
+        if (resolve && planArg == null) { error.WriteLine("--resolve evaluates the expression resolvers of the loads of one plan: name the plan (`project show refresh <plan> --resolve`)."); return CliApp.ExitUsage; }
         var config = ProjectConfigLoader.LoadFromProject(root, []);
         if (connectionArg != null && !config.Connections.ContainsKey(connectionArg)) { error.WriteLine($"Unknown connection `{connectionArg}`. One of: {string.Join(", ", config.Connections.Keys.Order(StringComparer.Ordinal))}."); return CliApp.ExitUsage; }
         var diags = new List<Diagnostic>();
@@ -113,19 +114,58 @@ internal static class RefreshViews
             return CliApp.ExitFindings;
         }
 
-        object Member(RefreshMember m, LoadsFile loads)
+        // `--resolve`: one instant for the whole view, the zone of the connection; only the resolvers that need no database run
+        var started = RefreshCommand.Now();
+        var instant = new DateTimeOffset(started.UtcDateTime.Ticks - started.UtcDateTime.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+        Dictionary<string, InputResolutionResult> Resolved(string connection, RefreshPlanFile plan, LoadsFile loads)
+        {
+            var result = new Dictionary<string, InputResolutionResult>(StringComparer.Ordinal);
+            if (!resolve) return result;
+            foreach (var m in plan.Members)
+            {
+                var entry = loads.Loads.FirstOrDefault(l => l.Model == m.Model && l.Load == m.Load && l.Hash == m.LoadPlanHash);
+                if (entry == null) continue;
+                var given = m.Inputs.ToDictionary(g => g.Name, g => (g.Value, "membership"), StringComparer.Ordinal);
+                result[m.FullName] = InputResolution.ResolveAsync(m.FullName, entry.Inputs.Where(i => i.Source != RefreshParameter.FromResolver).ToList(), given, new InputRunContext(instant, config.TimezoneOf(connection), plan.Name, connection), null, _ => null, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            return result;
+        }
+        var resolvedByPlan = rows.ToDictionary(r => (r.Connection, r.Plan.Name), r => Resolved(r.Connection, r.Plan, r.Loads));
+
+        string Describe(RefreshParameter i, RefreshInputValue? given) =>
+            given != null ? $"{given.Value}  (membership)"
+            : i.Source == RefreshParameter.FromParameter ? $"{i.Value}  (parameter)"
+            : i.Source == RefreshParameter.FromDefault ? $"{i.Value}  (default)"
+            : i.Source == RefreshParameter.FromResolver ? "found when it runs  (resolver)"
+            : i.Source == RefreshParameter.Computed && i.Resolver is { } r ? $"found when it runs  (resolver: {r.Kind} {(r.Text != null ? "`" + r.Text.ReplaceLineEndings(" ") + "`" : r.File)}{(i.Provides.Count > 0 ? ", provides " + string.Join(", ", i.Provides) : "")}){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
+            : i.Source == RefreshParameter.Provided ? $"found when it runs  (provided by `{i.ProvidedBy}`){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
+            : "no default";
+
+        object Member(string connection, string plan, RefreshMember m, LoadsFile loads)
         {
             var entry = loads.Loads.FirstOrDefault(l => l.Model == m.Model && l.Load == m.Load && l.Hash == m.LoadPlanHash);
-            var inputs = (entry?.Inputs ?? []).Select(i => m.Inputs.FirstOrDefault(g => g.Name == i.Name) is { } given
-                ? new { name = i.Name, type = i.Type, source = "membership", value = (string?)given.Value }
-                : new { name = i.Name, type = i.Type, source = i.Source, value = i.Value }).ToList();
-            return new { member = m.Name, model = m.Model, load = m.Load, load_plan = m.LoadPlanHash, strategy = entry?.Strategy, on_failure = m.OnFailure, inputs };
+            resolvedByPlan[(connection, plan)].TryGetValue(m.FullName, out var res);
+            var inputs = (entry?.Inputs ?? []).Where(i => i.Provides.Count == 0).Select(i =>
+            {
+                var given = m.Inputs.FirstOrDefault(g => g.Name == i.Name);
+                var found = res?.Inputs.FirstOrDefault(x => x.Name == i.Name);
+                return new
+                {
+                    name = i.Name, type = i.Type, source = given != null ? "membership" : i.Source, value = given != null ? given.Value : i.Value,
+                    resolver = i.Resolver != null && given == null ? i.Resolver.Kind : i.ProvidedBy != null && given == null ? "provided" : null,
+                    resolver_text = i.Resolver?.Text, resolver_file = i.Resolver?.File,
+                    free = i.Free ? (bool?)true : null, on_null = i.OnNull == "fail" ? null : i.OnNull,
+                    resolved_value = resolve && found != null && found.IsComputed ? found.Value : null, resolved_source = resolve && found != null ? found.Source : null,
+                };
+            }).ToList();
+            return new { member = m.Name, model = m.Model, load = m.Load, load_plan = m.LoadPlanHash, strategy = entry?.Strategy, on_failure = m.OnFailure, inputs, resolve_error = res?.Failure, not_resolved = res is { NotResolved.Count: > 0 } ? res.NotResolved : null };
         }
+        if (resolve) output.Payload("resolved_at", instant.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
         output.Payload("plans", rows.Select(r => new
         {
             connection = r.Connection, name = r.Plan.Name, title = r.Plan.Info.Title, description = r.Plan.Info.Description, hash = r.Plan.Hash, members = r.Plan.Members.Count,
             settings = new { on_failure = r.Plan.Settings.OnFailure, on_busy = r.Plan.Settings.OnBusy, expected_every = r.Plan.Settings.ExpectedEvery, parallel = r.Plan.Settings.Parallel, check = r.Plan.Settings.Check, on_fail = r.Plan.Settings.OnFail },
-            load_members = planArg == null ? null : r.Plan.Members.Select(m => Member(m, r.Loads)).ToList(),
+            load_members = planArg == null ? null : r.Plan.Members.Select(m => Member(r.Connection, r.Plan.Name, m, r.Loads)).ToList(),
             excluded = r.Plan.Excluded.Select(x => new { model = x.Model, member = x.Member, reason = x.Reason }).ToList(),
         }).ToList());
 
@@ -142,7 +182,7 @@ internal static class RefreshViews
         foreach (var r in rows)
         {
             output.WriteLine();
-            output.WriteLine($"Plan {r.Plan.Name} on {r.Connection}  (hash {r.Plan.Hash[..12]})");
+            output.WriteLine($"Plan {r.Plan.Name} on {r.Connection}  (hash {r.Plan.Hash[..12]}){(resolve ? $"  resolved at {instant.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC, clock in {config.TimezoneOf(r.Connection)}" : "")}");
             if (r.Plan.Info.Title != null) output.WriteLine($"  {r.Plan.Info.Title}");
             if (r.Plan.Info.Description != null) output.WriteLine($"  {r.Plan.Info.Description}");
             var s = r.Plan.Settings;
@@ -154,11 +194,15 @@ internal static class RefreshViews
             {
                 var entry = r.Loads.Loads.FirstOrDefault(l => l.Model == m.Model && l.Load == m.Load && l.Hash == m.LoadPlanHash);
                 output.WriteLine($"  {++position,3}. {m.FullName}  [{entry?.Strategy ?? "load plan missing"}]  load plan {m.LoadPlanHash[..12]}{(m.OnFailure != null ? $"  on_failure {m.OnFailure}" : "")}");
-                foreach (var i in entry?.Inputs ?? [])
+                resolvedByPlan[(r.Connection, r.Plan.Name)].TryGetValue(m.FullName, out var resolution);
+                foreach (var i in (entry?.Inputs ?? []).Where(i => i.Provides.Count == 0))
                 {
                     var given = m.Inputs.FirstOrDefault(g => g.Name == i.Name);
-                    output.WriteLine($"         @{i.Name} ({i.Type}): {(given != null ? $"{given.Value}  (membership)" : i.Source == RefreshParameter.FromParameter ? $"{i.Value}  (parameter)" : i.Source == RefreshParameter.FromResolver ? "found when it runs  (resolver)" : "no default")}");
+                    output.WriteLine($"         {(i.Free ? "" : "@")}{i.Name} ({i.Type}): {Describe(i, given)}");
+                    if (resolution?.Inputs.FirstOrDefault(x => x.Name == i.Name) is { IsComputed: true } now) output.WriteLine($"             now: {now.Value ?? "NULL"}  ({now.Source})");
+                    else if (resolution != null && resolution.NotResolved.Contains(i.Name)) output.WriteLine("             not resolved here: it reads a database (`connection refresh --dry-run` runs it)");
                 }
+                if (resolution?.Failure != null) output.WriteLine($"         {resolution.Failure}");
             }
             if (r.Plan.Excluded.Count > 0)
             {

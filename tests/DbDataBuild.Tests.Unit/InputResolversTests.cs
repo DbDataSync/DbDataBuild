@@ -359,6 +359,54 @@ public class InputResolversTests
         Assert.Equal(LoadsDocument.Serialize(loads), File.ReadAllText(Path.Combine(dir, "rendered/sqlserver/loads.yml")));
     }
 
+    // ---------------- seeing them (project show refresh --resolve) ----------------
+
+    private static (int Exit, string Out, string Err) Show(string dir, params string[] args)
+    {
+        var o = new StringWriter(); var e = new StringWriter();
+        var exit = DbDataBuild.Cli.CliApp.Run(["project", "show", "refresh", .. args, "--project", dir], o, e);
+        return (exit, o.ToString(), e.ToString());
+    }
+
+    [Fact]
+    public void Show_refresh_resolve_evaluates_the_expression_resolvers_offline_in_the_projects_zone_and_leaves_the_ones_that_read_a_database()
+    {
+        var previous = DbDataBuild.Cli.RefreshCommand.Now;
+        DbDataBuild.Cli.RefreshCommand.Now = () => new DateTimeOffset(2026, 3, 1, 23, 30, 15, TimeSpan.Zero);
+        try
+        {
+            var dir = Project("    inputs:\n      days: {type: INTEGER, default: 7}\n      end: {resolver: {target: \"SELECT max(event_day) + 1 FROM marts.fct_events\"}}\n      start: {resolver: {expression: 'current_date - days'}}\n", "refresh: { daily: { load: backfill, inputs: { days: 30 } } }\n");
+            Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);
+            var plain = Show(dir, "daily");
+            Assert.Equal(0, plain.Exit);
+            Assert.Contains("(resolver: expression `current_date - days`)", plain.Out);
+            Assert.Contains("(resolver: target ", plain.Out);
+            Assert.DoesNotContain("now:", plain.Out);                                                                       // without --resolve nothing is evaluated
+
+            var shown = Show(dir, "daily", "--resolve");
+            Assert.Equal(0, shown.Exit);
+            Assert.Contains("resolved at 2026-03-01 23:30:15 UTC, clock in UTC", shown.Out);
+            Assert.Contains("now: 2026-01-30  (resolver:expression)", shown.Out);                                         // days = 30 from the membership flows in
+            Assert.Contains("not resolved here: it reads a database", shown.Out);                                         // `end` is a target resolver
+
+            // the project's zone changes what today is: 23:30 UTC is already tomorrow in Berlin
+            File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), Config + "timezone: Europe/Berlin\n");
+            Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);
+            Assert.Contains("now: 2026-01-31  (resolver:expression)", Show(dir, "daily", "--resolve").Out);
+
+            var json = Show(dir, "daily", "--resolve", "--format", "json");
+            Assert.Equal(0, json.Exit);
+            Assert.Contains("\"resolved_at\": \"2026-03-01T23:30:15Z\"", json.Out);
+            Assert.Contains("\"resolved_value\": \"2026-01-31\"", json.Out);
+            Assert.Contains("\"not_resolved\"", json.Out);
+            // --resolve is about one plan
+            var noPlan = Show(dir, "--resolve");
+            Assert.Equal(2, noPlan.Exit);
+            Assert.Contains("name the plan", noPlan.Err);
+        }
+        finally { DbDataBuild.Cli.RefreshCommand.Now = previous; }
+    }
+
     // ---------------- planning (a deploy computes the inputs when it plans, and the plan keeps them) ----------------
 
     [Fact]

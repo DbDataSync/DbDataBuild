@@ -2420,6 +2420,65 @@
               "override"
             ]
           }
+        },
+        "resolved_inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              },
+              "member": {
+                "type": "string"
+              },
+              "inputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "resolver_hash": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "source"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "model",
+              "operation",
+              "member",
+              "inputs"
+            ]
+          }
         }
       }
     },
@@ -4605,6 +4664,48 @@
                                   "string",
                                   "null"
                                 ]
+                              },
+                              "resolver": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "resolver_text": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "resolver_file": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "on_null": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "resolved_value": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "resolved_source": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "free": {
+                                "type": [
+                                  "boolean",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
@@ -4612,6 +4713,21 @@
                               "type",
                               "source"
                             ]
+                          }
+                        },
+                        "resolve_error": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "not_resolved": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "string"
                           }
                         }
                       },
@@ -4662,6 +4778,9 @@
               "excluded"
             ]
           }
+        },
+        "resolved_at": {
+          "type": "string"
         }
       },
       "required": [
