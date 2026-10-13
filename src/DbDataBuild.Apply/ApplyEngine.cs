@@ -444,7 +444,7 @@ public static class ApplyEngine
             }
 
             case StepType.Transfer:
-                return await TransferAsync(plan, step, reader, gate, tracker, o, runId, ct);
+                return await TransferAsync(plan, step, reader, gate, tracker, o, runId, refresh, ct);
 
             default:
                 throw new InvalidOperationException($"Step type {step.Type} cannot be applied yet.");
@@ -455,7 +455,7 @@ public static class ApplyEngine
     /// A copy's transfer: the staging table is (re)created from the step's text, then the rows are read on the origin (a streaming read, one SELECT), converted by the declared type of each column and
     /// written to it with the engine's bulk route. The run is logged like a load (operation `transfer`, the row count, no values). The load that follows reads the staging table.
     /// </summary>
-    private static async Task<Diagnostic?> TransferAsync(Plan plan, PlanStep step, ReadSession reader, MutationGate gate, Tracker tracker, ApplyOptions o, Guid runId, CancellationToken ct)
+    private static async Task<Diagnostic?> TransferAsync(Plan plan, PlanStep step, ReadSession reader, MutationGate gate, Tracker tracker, ApplyOptions o, Guid runId, RefreshStepRecord? refresh, CancellationToken ct)
     {
         var spec = step.Transfer!;
         var engine = reader.Engine;
@@ -471,7 +471,7 @@ public static class ApplyEngine
         }
 
         await gate.ExecuteAsync(GateStatement.FromPlanStep(step.Id + ":staging", StatementKind.Ddl, step.Text), ct);
-        await tracker.BeginRunAsync(step.Id, runId, step.Object, "transfer", plan.Id, o.GitCommit, null, null, $"from {spec.Origin}", null, null, null, null, null, ct);          // the origin is in the record, so `report` can say which origin last copied well
+        await tracker.BeginRunAsync(step.Id, runId, step.Object, "transfer", plan.Id, o.GitCommit, null, null, $"from {spec.Origin}", null, null, null, null, refresh, ct);          // the origin is in the record, so `report` can say which origin last copied well
         try
         {
             await using var origin = await o.OpenOrigin!(spec.Origin, ct);

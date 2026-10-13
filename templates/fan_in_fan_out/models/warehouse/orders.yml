@@ -1,15 +1,18 @@
 # Fan-in: the rows of pos.orders on store_east and on store_west land in one table. `slice` says which rows are an origin's:
 # store_id is not in the origin, so the copy adds it (hence `type`) and writes each connection's `store_id` parameter into its rows.
 # A run replaces only the rows of the origin it loads. The copy has no query and no `columns`: both are the origin's.
+# It is incremental: a run reads each shop from the newest `ordered_on` the warehouse holds for that shop, less a week, and replaces the rows with the same (store_id, order_id).
 # `connections=:` puts it on the SQL Server warehouse and on the PostgreSQL reporting database, each filled from both shops.
 name: warehouse.orders
 kind:
   type: copy
   from: pos.orders
   slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
+  unique_key: [order_id]
+  watermark: {column: ordered_on, lookback: 7 days}
   on_mismatch: fail            # or skip: leave out a shop system whose table has drifted from its declaration, and load the others
 connections=: [sqlserver, postgres]
-refresh: { daily: default }   # in a plan, but a refresh leaves a copy to a deploy for now: the compiled plan says so
+refresh: { hourly: default, daily: default }   # a copy is a load like any other: the refresh reads each shop (it needs their read logins) and loads the report after it
 indexes:
   - {name: ux_orders_store_order, columns: [store_id, order_id], unique: true}   # the load replaces an origin's rows by store_id, so an index leads with it
   - {name: ix_orders_ordered_on, columns: [ordered_on]}

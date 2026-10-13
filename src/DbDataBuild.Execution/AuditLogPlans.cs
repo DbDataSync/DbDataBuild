@@ -49,7 +49,7 @@ public static partial class AuditLog
         string c(string n) => C(scope.Engine, n);
         var rows = await read.QueryAsync(
             $"SELECT r.{c("model")}, r.{c("membership")}, r.{c("status")}, r.{c("started_utc")}, r.{c("duration_ms")}, r.{c("rows_affected")}, r.{c("plan_id")} FROM {T(scope, "run_log")} r " +
-            $"WHERE r.{c("connection")} = @connection AND r.{c("membership")} IS NOT NULL AND r.{c("operation")} NOT IN ('pre_load', 'post_load') AND r.{c("plan_id")} IN (SELECT m.{c("plan_id")} FROM {T(scope, "migration_log")} m WHERE m.{c("connection")} = @connection AND m.{c("refresh_plan")} = @plan) " +
+            $"WHERE r.{c("connection")} = @connection AND r.{c("membership")} IS NOT NULL AND r.{c("operation")} NOT IN ('pre_load', 'post_load', 'transfer') AND r.{c("plan_id")} IN (SELECT m.{c("plan_id")} FROM {T(scope, "migration_log")} m WHERE m.{c("connection")} = @connection AND m.{c("refresh_plan")} = @plan) " +
             $"ORDER BY r.{c("started_utc")} DESC", [Connection(scope), new GateParameter("plan", DbType.AnsiString, plan)], ct);
         static string Text(object? v) => (v as string)?.Trim() ?? "";
         static long? Long(object? v) => v is null or DBNull ? null : Convert.ToInt64(v, CultureInfo.InvariantCulture);

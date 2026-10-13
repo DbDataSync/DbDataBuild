@@ -133,7 +133,7 @@ internal static class ApplyCommand
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
     /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
     /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null);
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -162,6 +162,9 @@ internal static class ApplyCommand
             var (originLogin, missingLogin) = LoginSettings.FromEnvironment(originConnection.Name, originConnection.Engine, Login.Read, env);
             if (originLogin != null) originLogins[origin] = originLogin; else if (missingLogin != null) originMissing.Add(missingLogin);
         }
+        // a refresh opens the origins of its copies by name when a copy runs; a login that is missing is not a refusal here: that copy fails with `failed: origin` and the failure rules apply
+        foreach (var origin in mode.Origins ?? [])
+            if (config.Connections.TryGetValue(origin, out var refreshOrigin) && LoginSettings.FromEnvironment(refreshOrigin.Name, refreshOrigin.Engine, Login.Read, env).Item1 is { } refreshLogin) originLogins[origin] = refreshLogin;
         // where the records go: this connection, another one (central tracking), or nowhere (untracked, with a warning unless that was chosen)
         var tracking = config.TrackingOf(plan.Connection);
         LoginSettings? trackRead = null, trackWrite = null;

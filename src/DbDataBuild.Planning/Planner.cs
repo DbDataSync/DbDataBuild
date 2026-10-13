@@ -610,11 +610,23 @@ public static class Planner
     /// </summary>
     private static PlanStep TransferStep(ModelContext c, CopyOrigin origin)
     {
-        var def = c.Def;
-        var (stagingSchema, stagingTable) = (CopyModels.StagingSchema(c.Input.Config), CopyModels.StagingTable(def.Name));
+        var (create, spec) = CopyTransfer(c.Input.Config, c.Def, c.Ddl, origin);
+        // a command runs a procedure on the origin, which can write: it needs the person's allowance, however it is read
+        var risk = spec.Command ? RiskClass.Risky : RiskClass.Safe;
+        var reasons = spec.Command ? new[] { "copy.transfer.command", "native command: the call runs on the origin with the read login, inside a transaction that is rolled back" } : [spec.Slice == null ? "copy.transfer" : "copy.transfer.slice"];
+        return new PlanStep("", StepType.Transfer, c.Def.Name, $"copy {c.Def.Name} from {origin.Connection} ({origin.Table})", create, risk, reasons, null, [], Transfer: spec);
+    }
+
+    /// <summary>
+    /// The text that creates a copy's staging table on the destination, and the transfer from one origin into it: the exact read in the origin's dialect (every column quoted, in the declared order, with
+    /// `WHERE watermark >= @watermark` when the origin carries a bound). A deploy plans it for every origin; a refresh compiles it into the load plan of the copy and binds the bound when the load runs.
+    /// </summary>
+    public static (string CreateStaging, TransferSpec Spec) CopyTransfer(ProjectConfig config, ModelDefinition def, DdlGenerator destination, CopyOrigin origin)
+    {
+        var (stagingSchema, stagingTable) = (CopyModels.StagingSchema(config), CopyModels.StagingTable(def.Name));
         // the staging table lives under the tracking schema name, which a connection that is not tracked itself (central tracking) may not have yet
-        var create = c.Ddl.CreateSchema(stagingSchema) + "\n" + c.Ddl.DropTableIfExists(stagingSchema, stagingTable) + "\n" + c.Ddl.CreateTable(stagingSchema, stagingTable, c.Ddl.MapAll(def));
-        var originDdl = TargetRegistry.Get(origin.Engine).CreateDdl(c.Input.Config.ForConnection(origin.Connection));
+        var create = destination.CreateSchema(stagingSchema) + "\n" + destination.DropTableIfExists(stagingSchema, stagingTable) + "\n" + destination.CreateTable(stagingSchema, stagingTable, destination.MapAll(def));
+        var originDdl = TargetRegistry.Get(origin.Engine).CreateDdl(config.ForConnection(origin.Connection));
         var (originSchema, originName) = DdlGenerator.Split(origin.Table);
         // a column the copy adds (its slice, when the origin has none) is not read: the value is written into every row
         // a native origin is read as its own text (a derived table, with its parameters bound): the engine computes the rows
@@ -632,10 +644,7 @@ public static class Planner
             watermark = new PlanWatermark(def.Watermark.Column, def.Columns.First(x => string.Equals(x.Name, def.Watermark.Column, StringComparison.OrdinalIgnoreCase)).Type, origin.WatermarkValue);
         }
         var spec = new TransferSpec(origin.Connection, read, $"{stagingSchema}.{stagingTable}", def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), slice, watermark, nativeParameters, isCommand);
-        // a command runs a procedure on the origin, which can write: it needs the person's allowance, however it is read
-        var risk = isCommand ? RiskClass.Risky : RiskClass.Safe;
-        var reasons = isCommand ? new[] { "copy.transfer.command", "native command: the call runs on the origin with the read login, inside a transaction that is rolled back" } : [slice == null ? "copy.transfer" : "copy.transfer.slice"];
-        return new PlanStep("", StepType.Transfer, def.Name, $"copy {def.Name} from {origin.Connection} ({origin.Table})", create, risk, reasons, null, [], Transfer: spec);
+        return (create, spec);
     }
 
     private static bool ParameterFits(ModelContext c, RenderedLoad load, RenderedParameter p, string value, List<Diagnostic> blocks)

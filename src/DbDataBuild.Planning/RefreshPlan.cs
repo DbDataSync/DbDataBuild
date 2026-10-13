@@ -54,7 +54,7 @@ public sealed record RefreshParameter(string Name, string Type, string Source, s
 /// <param name="Load">The load's name (`default` for the one a kind supplies).</param>
 /// <param name="ShapeHash">The shape the compiled project expects of the model's table, which a refresh check compares with what it finds.</param>
 public sealed record LoadPlanEntry(string Model, string Load, string Strategy, bool IsDefault, string File, string FileHash, string? ResolverFile, string? ResolverHash, string DefinitionHash, string ShapeHash,
-    IReadOnlyList<RefreshParameter> Inputs, string? OnNull, string? Initial, IReadOnlyList<RefreshHook> Before, IReadOnlyList<RefreshHook> After, string? MaxRuntime = null)
+    IReadOnlyList<RefreshParameter> Inputs, string? OnNull, string? Initial, IReadOnlyList<RefreshHook> Before, IReadOnlyList<RefreshHook> After, string? MaxRuntime = null, RefreshCopy? Copy = null)
 {
     public string Hash => LoadsDocument.HashOf(this);
 
@@ -64,6 +64,21 @@ public sealed record LoadPlanEntry(string Model, string Load, string Strategy, b
     /// <summary>The inputs that have no default: a load with any of them cannot run unless someone gives the value.</summary>
     public IEnumerable<RefreshParameter> RequiredInputs => Inputs.Where(i => i.Source == RefreshParameter.Required);
 }
+
+/// <summary>
+/// One origin of a copy as a refresh runs it: the read in the origin's own dialect (<see cref="ReadWithWatermark"/> is the same read with `WHERE column >= @watermark`, for an incremental copy), how the origin's rows are told
+/// apart (a slice), and, when a `source` resolver gives the copy's inputs, the inputs as that origin's engine runs them (each origin has its own lowered text).
+/// </summary>
+public sealed record RefreshCopyOrigin(string Connection, string Engine, string Table, string ReadText, string? ReadWithWatermark, string? SliceColumn, string? SliceValue, bool SliceAdded, IReadOnlyList<RefreshParameter> Inputs);
+
+/// <summary>An incremental copy's watermark: the origin is read from the newest value of <see cref="Column"/> that the destination holds (for the origin's own rows, with a slice), less <see cref="Lookback"/>.</summary>
+public sealed record RefreshCopyWatermark(string Column, string Type, string? Lookback);
+
+/// <summary>
+/// What makes a load plan a copy (docs/research/refresh-plans.md, section 15): the staging table on the destination (its create text and its drop), the columns, and one entry per origin. A refresh runs, for each origin, the
+/// transfer into the staging table and then the load (which reads the staging table), and drops the staging table at the end, as a deploy does.
+/// </summary>
+public sealed record RefreshCopy(string Staging, string CreateStaging, string DropStaging, IReadOnlyList<PlanColumn> Columns, RefreshCopyWatermark? Watermark, IReadOnlyList<RefreshCopyOrigin> Origins);
 
 /// <summary>A model or load that has no load plan on the connection, and why.</summary>
 public sealed record RefreshExclusion(string Model, string Reason);
@@ -216,6 +231,44 @@ public static class LoadsDocument
         }
     }
 
+    private static void WriteCopy(StringBuilder sb, RefreshCopy c)
+    {
+        sb.AppendLineLf("    copy:");
+        sb.Append("      staging: ").AppendLineLf(Q(c.Staging));
+        sb.Append("      create_staging: ").AppendLineLf(Q(c.CreateStaging));
+        sb.Append("      drop_staging: ").AppendLineLf(Q(c.DropStaging));
+        sb.AppendLineLf("      columns:");
+        foreach (var col in c.Columns) { sb.Append("        - name: ").AppendLineLf(Q(col.Name)); sb.Append("          type: ").AppendLineLf(Q(col.Type)); }
+        if (c.Watermark is { } w)
+        {
+            sb.AppendLineLf("      watermark:");
+            sb.Append("        column: ").AppendLineLf(Q(w.Column));
+            sb.Append("        type: ").AppendLineLf(Q(w.Type));
+            if (w.Lookback != null) sb.Append("        lookback: ").AppendLineLf(Q(w.Lookback));
+        }
+        sb.AppendLineLf("      origins:");
+        foreach (var o in c.Origins)
+        {
+            sb.Append("        - connection: ").AppendLineLf(Q(o.Connection));
+            sb.Append("          engine: ").AppendLineLf(Q(o.Engine));
+            sb.Append("          table: ").AppendLineLf(Q(o.Table));
+            sb.Append("          read: ").AppendLineLf(Q(o.ReadText));
+            if (o.ReadWithWatermark != null) sb.Append("          read_incremental: ").AppendLineLf(Q(o.ReadWithWatermark));
+            if (o.SliceColumn != null)
+            {
+                sb.AppendLineLf("          slice:");
+                sb.Append("            column: ").AppendLineLf(Q(o.SliceColumn));
+                sb.Append("            value: ").AppendLineLf(Q(o.SliceValue ?? ""));
+                if (o.SliceAdded) sb.AppendLineLf("            added: true");
+            }
+            if (o.Inputs.Count > 0)
+            {
+                sb.AppendLineLf("          inputs:");
+                foreach (var prm in o.Inputs) RefreshInputYaml.Write(sb, "            - ", "              ", prm);
+            }
+        }
+    }
+
     /// <summary>The text of one load plan as it stands in the file, without its own hash line.</summary>
     private static string EntryBody(LoadPlanEntry l)
     {
@@ -239,6 +292,7 @@ public static class LoadsDocument
         }
         Hooks(sb, "before", l.Before);
         Hooks(sb, "after", l.After);
+        if (l.Copy is { } c) WriteCopy(sb, c);
         return sb.ToString();
     }
 
@@ -268,8 +322,28 @@ public static class LoadsDocument
 
     private static readonly string[] TopKeys = ["loads_file", "loads", "excluded"];
     private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads"];
-    private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "max_runtime", "inputs", "before", "after"];
+    private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "max_runtime", "inputs", "before", "after", "copy"];
     private static readonly string[] HookKeys = ["name", "event", "file", "file_hash", "effect", "risk"];
+
+    private static RefreshCopy ReadCopy(CompiledYaml.Reader r, YamlMapping cm)
+    {
+        r.Keys(cm, ["staging", "create_staging", "drop_staging", "columns", "watermark", "origins"], "`copy:`");
+        var columns = new List<PlanColumn>();
+        foreach (var col in r.Maps(cm, "columns", "column")) { r.Keys(col, ["name", "type"], "a column"); columns.Add(new(r.Req(col, "name"), r.Req(col, "type"))); }
+        RefreshCopyWatermark? watermark = null;
+        if (cm.Get("watermark") is YamlMapping wm) { r.Keys(wm, ["column", "type", "lookback"], "`watermark:`"); watermark = new(r.Req(wm, "column"), r.Req(wm, "type"), r.S(wm, "lookback")); }
+        var origins = new List<RefreshCopyOrigin>();
+        foreach (var om in r.Maps(cm, "origins", "origin"))
+        {
+            r.Keys(om, ["connection", "engine", "table", "read", "read_incremental", "slice", "inputs"], "an origin");
+            string? sliceColumn = null, sliceValue = null; var added = false;
+            if (om.Get("slice") is YamlMapping sm) { r.Keys(sm, ["column", "value", "added"], "`slice:`"); sliceColumn = r.Req(sm, "column"); sliceValue = r.Req(sm, "value"); added = r.S(sm, "added") == "true"; }
+            var inputs = new List<RefreshParameter>();
+            foreach (var pm in r.Maps(om, "inputs", "input")) inputs.Add(RefreshInputYaml.Read(r, pm));
+            origins.Add(new(r.Req(om, "connection"), r.Req(om, "engine"), r.Req(om, "table"), r.Req(om, "read"), r.S(om, "read_incremental"), sliceColumn, sliceValue, added, inputs));
+        }
+        return new(r.Req(cm, "staging"), r.Req(cm, "create_staging"), r.Req(cm, "drop_staging"), columns, watermark, origins);
+    }
 
     /// <summary>Reads `loads.yml`. Returns null with diagnostics when it is malformed, has unknown keys, or does not match its own hash.</summary>
     public static LoadsFile? Parse(string text, string file, List<Diagnostic> diags)
@@ -299,8 +373,11 @@ public static class LoadsDocument
             var inputs = new List<RefreshParameter>();
             foreach (var pm in r.Maps(m, "inputs", "input")) inputs.Add(RefreshInputYaml.Read(r, pm));
             stored.Add(r.Req(m, "hash"));
+            RefreshCopy? copy = null;
+            if (m.Get("copy") is YamlMapping cm) copy = ReadCopy(r, cm);
+            else if (m.Get("copy") is { } badCopy) r.Bad(badCopy, "`copy:` must be a mapping.");
             loads.Add(new(r.Req(m, "model"), r.Req(m, "load"), r.Req(m, "strategy"), r.S(m, "default") == "true", r.Req(m, "file"), r.Req(m, "file_hash"), r.S(m, "resolver_file"), r.S(m, "resolver_hash"),
-                r.Req(m, "definition_hash"), r.Req(m, "shape_hash"), inputs, r.S(m, "on_null"), r.S(m, "initial"), HookList(m, "before"), HookList(m, "after"), r.S(m, "max_runtime")));
+                r.Req(m, "definition_hash"), r.Req(m, "shape_hash"), inputs, r.S(m, "on_null"), r.S(m, "initial"), HookList(m, "before"), HookList(m, "after"), r.S(m, "max_runtime"), copy));
         }
         var excluded = new List<RefreshExclusion>();
         foreach (var m in r.Maps(top, "excluded", "exclusion")) { r.Keys(m, ["model", "reason"], "an exclusion"); excluded.Add(new(r.Req(m, "model"), r.Req(m, "reason"))); }
