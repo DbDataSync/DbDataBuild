@@ -133,7 +133,7 @@ internal static class ApplyCommand
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
     /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
     /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null);
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null, int Parallel = 1, SessionLimits? Limits = null);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -218,9 +218,9 @@ internal static class ApplyCommand
         var audit = (mode.Refresh ? lifecycle.Refresh : lifecycle.Deploy).Audit;
         if (audit != AuditLevel.Full) planText = "";
         var options = new ApplyOptions(dryRun, allowRisky, allowDestructive.ToHashSet(StringComparer.Ordinal), audit == AuditLevel.Minimal ? null : commit, dirty, audit == AuditLevel.Minimal ? "" : write?.User ?? Environment.UserName, stopRequested,
-            (name, token) => originLogins.TryGetValue(name, out var login) ? ReadSession.OpenAsync(login, token) : throw new InvalidOperationException($"no read login for connection {name}"),
+            (name, token) => originLogins.TryGetValue(name, out var login) ? (mode.Limits ?? SessionLimits.None).OpenAsync(name, () => ReadSession.OpenAsync(login, token), token) : throw new InvalidOperationException($"no read login for connection {name}"),
             Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run, Execution: mode.Execution,
-            InputPins: mode.InputPins, ApproveMoved: mode.ApproveMoved, Timezone: config.TimezoneOf(plan.Connection), Clock: RefreshCommand.Now);
+            InputPins: mode.InputPins, ApproveMoved: mode.ApproveMoved, Timezone: config.TimezoneOf(plan.Connection), Clock: RefreshCommand.Now, Parallel: mode.Parallel);
 
         // refusals that need no connection come first
         var offline = new List<Diagnostic>(ApplyEngine.CheckAllowances(plan, options));

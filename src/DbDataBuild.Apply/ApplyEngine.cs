@@ -26,9 +26,10 @@ public sealed record ApplyTracking(LoginSettings Read, LoginSettings? Write, str
 /// <param name="InputPins">`--input` values given when the plan is applied: they replace the value in the plan and the resolver (which is not run); the plan's value is recorded beside them.</param>
 /// <param name="ApproveMoved">Asked when a computed input is not what the plan was made with: true continues with the new values (an interactive deployer said yes). Without it the apply stops (DDB-454).</param>
 /// <param name="Timezone">The zone the clock of an expression resolver means when inputs are computed again.</param>
+/// <param name="Parallel">For a refresh: how many loads may run at once (1 is one after another). Each runs on sessions of its own.</param>
 public sealed record ApplyOptions(bool DryRun, bool AllowRisky, IReadOnlySet<string> AllowDestructive, string? GitCommit, bool GitDirty, string Invoker, Func<bool>? StopRequested = null, Func<string, CancellationToken, Task<ReadSession>>? OpenOrigin = null,
     string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null,
-    IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, string Timezone = "UTC", Func<DateTimeOffset>? Clock = null);
+    IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, string Timezone = "UTC", Func<DateTimeOffset>? Clock = null, int Parallel = 1);
 
 /// <param name="Status">ok, dry-run, skipped (done in an earlier attempt), stopped (the operator stopped before it) or failed.</param>
 public sealed record StepOutcome(string StepId, string Description, string Status, string? Detail = null);
@@ -106,7 +107,28 @@ public static class ApplyEngine
         var lockName = $"{ProductInfo.Cli}:{tracking?.SchemaName ?? ProductInfo.TrackingSchemaName}";
         // a refresh locks per load, not the connection: a deploy takes the whole connection (below) and conflicts with any load that is running
         if (o.Refresh && o.Execution != null)
-            return await RefreshEngine.RunAsync(plan, planText, planHash, reader, tracker, gate, o, runId, lockName, progress, ct);
+        {
+            // loads that run together each get a read session, a write session and (when the records go to another connection) a tracking session of their own, all on the same statement log and ordinal
+            Func<CancellationToken, Task<RefreshWorker>>? openWorker = o.DryRun || o.Parallel <= 1 ? null : async token =>
+            {
+                var owned = new List<IAsyncDisposable>();
+                try
+                {
+                    var workerReader = await ReadSession.OpenAsync(read, token); owned.Add(workerReader);
+                    var workerGate = await gate.OpenSiblingAsync(write!, ct: token); owned.Add(workerGate);
+                    var workerTracker = Tracker.None;
+                    if (tracking != null)
+                    {
+                        var trackGate = workerGate;
+                        if (!sameConnection) { trackGate = await ownTrackingGate!.OpenSiblingAsync(tracking.Write!, ct: token); owned.Add(trackGate); }
+                        workerTracker = Tracker.For(trackGate, scope!);
+                    }
+                    return new RefreshWorker(workerReader, workerGate, workerTracker, owned);
+                }
+                catch { foreach (var d in owned) { try { await d.DisposeAsync(); } catch (Exception) { /* closing */ } } throw; }
+            };
+            return await RefreshEngine.RunAsync(plan, planText, planHash, reader, tracker, gate, openWorker, o, runId, lockName, progress, ct);
+        }
         if (!await gate.TryAcquireApplicationLockAsync(lockName, ct))
             return new ApplyResult([], [new Diagnostic(DiagnosticCatalog.ApplyLockHeld, new($"lock:{lockName}", 0, 0), $"Another apply holds the application lock `{lockName}` on this target.")]);
         try

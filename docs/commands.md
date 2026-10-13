@@ -399,6 +399,7 @@ Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [optio
 | `--input` `<text ...>` | `[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
 | `--only-failed` | Run only the loads of the plan that did not end done in its last run: failed, skipped or not run (a full run again is also safe, loads are idempotent). Needs a plan and its recorded runs |
+| `--parallel` `<nullable`1>` | How many loads may run at once, instead of the plan's `parallel` (1 to 64; default 1, one after another). A load starts when the loads of the plan that it reads are done; `max_parallel` on the connection caps it |
 | `--project` `<path>` | Project root |
 
 ## connection monitor

@@ -118,6 +118,12 @@
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
               "type": "boolean"
             },
+            "max_parallel": {
+              "description": "How many sessions one refresh may have open at this connection at once. At an origin of a copy it counts the sessions that read rows for it (and the checks and `source` resolvers that go with them); at the destination it caps `parallel`, the loads that run together. A limit holds within one run (another process has its own). Default: no limit.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
             "string_semantics": {
               "$ref": "#/$defs/stringSemantics"
             },
@@ -241,6 +247,12 @@
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
               "type": "boolean"
             },
+            "max_parallel": {
+              "description": "How many sessions one refresh may have open at this connection at once. At an origin of a copy it counts the sessions that read rows for it (and the checks and `source` resolvers that go with them); at the destination it caps `parallel`, the loads that run together. A limit holds within one run (another process has its own). Default: no limit.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
             "string_semantics": {
               "$ref": "#/$defs/stringSemantics"
             },
@@ -363,6 +375,12 @@
             "allow_native_commands": {
               "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
               "type": "boolean"
+            },
+            "max_parallel": {
+              "description": "How many sessions one refresh may have open at this connection at once. At an origin of a copy it counts the sessions that read rows for it (and the checks and `source` resolvers that go with them); at the destination it caps `parallel`, the loads that run together. A limit holds within one run (another process has its own). Default: no limit.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
             },
             "string_semantics": {
               "$ref": "#/$defs/stringSemantics"
@@ -960,6 +978,12 @@
         "allow_native_commands": {
           "description": "Whether a native command (a procedure call that returns rows, `kind: {type: native, access: command}`) may be run on this connection. Default false: a procedure can write, so each connection that runs one says so. The read login's permissions are what keep it read-only; the call also runs in a transaction that is rolled back.",
           "type": "boolean"
+        },
+        "max_parallel": {
+          "description": "How many sessions one refresh may have open at this connection at once. At an origin of a copy it counts the sessions that read rows for it (and the checks and `source` resolvers that go with them); at the destination it caps `parallel`, the loads that run together. A limit holds within one run (another process has its own). Default: no limit.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
         },
         "string_semantics": {
           "$ref": "#/$defs/stringSemantics"
