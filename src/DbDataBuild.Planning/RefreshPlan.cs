@@ -103,7 +103,7 @@ public sealed record RefreshMember(string Name, string Model, string Load, strin
     public string FullName => $"{Model}.{Name}";
 }
 
-/// <summary>A membership of the plan that was left out of it, and why (a copy between connections is run by a deploy until copies are loads of a refresh).</summary>
+/// <summary>A membership of the plan that was left out of it, and why (a load that needs a person, a copy of a native model, a structure hook).</summary>
 public sealed record RefreshPlanExclusion(string Model, string Member, string Reason);
 
 /// <summary>

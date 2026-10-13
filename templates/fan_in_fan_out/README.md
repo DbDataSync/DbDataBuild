@@ -21,27 +21,23 @@ dbdatabuild project sample marts.daily_sales # run the report on generated sampl
 dbdatabuild project tests run                # the model test gives warehouse.orders rows of two stores with the same order number
 ```
 
-## What a refresh does and does not do
+## What a refresh does
 
-The project declares two refresh plans, `hourly` and `daily` (`refresh.plans` in `dbdatabuild.yml`), and each model says which it is in (`refresh:` in its file): the report is in both, the copy in `daily`. Compile writes `loads.yml` and one file per plan for every connection that builds something. In `rendered/sqlserver/refresh/daily.yml` (and the same in `rendered/postgres/refresh/daily.yml`) the report is a member and the copy is **excluded**; `dbdatabuild project show refresh daily` says so:
+The project declares two refresh plans, `hourly` and `daily` (`refresh.plans` in `dbdatabuild.yml`), and each model says which it is in (`refresh:` in its file): the copy and the report are in both. A copy is a load like any other, so `loads.yml` carries the copy's staging table and a read for each shop in the shop's own dialect (`copy:`, `origins:`), and in `rendered/sqlserver/refresh/hourly.yml` (and the same on `postgres`) the copy is a member **before** the report that reads it:
 
 ```yaml
-loads:
-  - model: "marts.daily_sales"
-    operation: "default"
-    file: "sqlserver/marts.daily_sales/load.default.sql"
-    ...
-excluded:
-  - model: "warehouse.orders"
-    reason: "a copy moves rows between connections; a deploy plans it"
+members:
+  - member: "default"
+    model: "warehouse.orders"
+  - member: "default"
+    model: "marts.daily_sales"
 ```
 
-A refresh rebuilds the report from what the warehouse holds; it never reads a shop system. To bring new orders in, **deploy** again: the plan has a transfer and a load per origin (`copy warehouse.orders from store_east (pos.orders)`),
-which needs the read login of every origin. `connection refresh sqlserver daily` says so while it runs: `1 of 1 member(s); 1 left out: warehouse.orders.`
+`warehouse.orders` is incremental (`unique_key` and `watermark` in the copy's `kind`): a run reads each shop from the newest `ordered_on` the warehouse holds for that shop, less a week, and replaces the rows with the same `(store_id, order_id)`. A refresh stages the rows of each shop on the warehouse, loads them, drops the staging table and then builds the report; it needs the read login of both shops (`DBDATABUILD_STORE_EAST_READ`, `DBDATABUILD_STORE_WEST_READ`) as well as the warehouse's. If a shop cannot be reached the copy ends `failed: origin`, the report is skipped (`upstream failed`, under the plan's `on_failure: continue`), and nothing is half-written. Rows deleted at a shop are not deleted in the warehouse by an incremental copy (a copy with no `watermark` replaces a shop's rows in full and reconciles them).
 
 ## Why the copy declares no resolver
 
-An input of a load can be computed by a `source` resolver, which runs at the origin of a copy in the origin's own dialect (`docs/concepts.md`). This project does not use one on `warehouse.orders`, on purpose: the copy is a **fan-in** (two origins, one table, a `slice` that keeps each origin's rows apart), and the loads that take inputs, a range of days or a window, replace everything in the range, which would remove the other shop's rows of the same days (the copy's own load replaces only the rows of the origin it is loading). A copy from one origin has no such problem: `tests/DbDataBuild.Tests.Conformance/RefreshInputsCopyConformanceTests.cs` copies `src.events` with `delete_insert_by_range`, and its `start` is `source: "SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'"`, run at the origin on either engine. A refresh does not run copies yet (`excluded` above), so a resolver of a copy is computed when the plan is made and again when it is applied.
+An input of a load can be computed by a `source` resolver, which runs at the origin of a copy in the origin's own dialect (`docs/concepts.md`). This project does not use one on `warehouse.orders`, on purpose: the copy is a **fan-in** (two origins, one table, a `slice` that keeps each origin's rows apart), and the loads that take inputs, a range of days or a window, replace everything in the range, which would remove the other shop's rows of the same days (the copy's own load replaces only the rows of the origin it is loading). A copy from one origin has no such problem: `tests/DbDataBuild.Tests.Conformance/RefreshInputsCopyConformanceTests.cs` copies `src.events` with `delete_insert_by_range`, and its `start` is `source: "SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'"`, run at the origin on either engine. A `source` resolver of a copy runs in a refresh at the origin, as in a deploy.
 
 ## Running the cycle on four databases
 
@@ -93,7 +89,7 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 4. **Refresh each engine, and compare them** (a comparison across engines reads only digests of the values):
 
    ```
-   dbdatabuild connection refresh sqlserver daily # Refresh plan rendered/sqlserver/refresh/daily.yml: 1 of 1 member(s); 1 left out: warehouse.orders.
+   dbdatabuild connection refresh sqlserver daily # Refresh plan rendered/sqlserver/refresh/daily.yml: 2 of 2 member(s).
    dbdatabuild connection refresh postgres daily
    dbdatabuild connection compare sqlserver marts.daily_sales --against-connection postgres
    #   matched on the key: 60   only in marts.daily_sales: 0   only in marts.daily_sales: 0
@@ -112,8 +108,7 @@ export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Dat
 
    `--event <id>`, `--lane refresh` and `--attention` work as in the `retail` README, which also walks through the four `refresh.check` levels.
 
-6. **A new order at a shop** reaches the warehouse with a deploy, not a refresh: insert a row into `pos.orders` on `store_east`, refresh (`warehouse.orders` still has 120 rows), deploy again (`E01` has 61 rows, `W01` still 60: only the origin
-   with a change is different, and a run replaces only the rows of the origin it loads). The reporting database waits for its own deploy. The conformance test `StoresTemplateConformanceTests` does exactly this on real engines.
+6. **A new order at a shop** reaches the warehouse with a refresh: insert a row into `pos.orders` on `store_east`, then `dbdatabuild connection refresh sqlserver hourly` (`E01` has 61 rows, `W01` still 60: only the origin with a change is different, and a run replaces only the rows of the origin it loads) and the report follows in the same run. The reporting database waits for its own `connection refresh postgres hourly`. The conformance test `FanInFanOutTemplateConformanceTests` does exactly this on real engines, and then takes a shop's read login away to show the copy ending `failed: origin`.
 
 `status` may say `Structure  pending: a deploy would run 3 step(s)` after a deploy: those are the transfers and the load of the copy, which every deploy runs again (they move data; no structure changes).
 
@@ -127,4 +122,4 @@ document and, after `dbdatabuild connection publish sqlserver`, in the tracking 
 - The shop systems are only read by the tool once they are seeded; their logins need `SELECT` on `pos.orders` (and, to seed them, rights to create a schema and a table).
 - `connection seed` writes every seeded source of the project to the connection it is given, so seed each shop on its own connection as above (only `pos.orders` has a seed).
 - The compile notes DDB-224 for `ux_orders_store_order`: the copy's load key is `store_id` alone (it replaces a shop's rows), which cannot be unique, so no index can make the engine enforce it; the unique index on `(store_id, order_id)` is the table's real key and leads with the load key so each load finds its rows.
-- Not in this template: an incremental copy (`unique_key` and `watermark`, DESIGN.md 6.5.2), which reads only what changed at an origin.
+- The copy is incremental, which a deploy runs too (it reads from the newest value as well); rows deleted at a shop stay in the warehouse; a copy with no `watermark` would replace a shop's rows in full each run (DESIGN.md 6.5.2).
