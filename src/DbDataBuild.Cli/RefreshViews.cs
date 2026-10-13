@@ -31,6 +31,55 @@ internal static class RefreshViews
     /// <summary>How a run ended in words: a run that was written as started and never finished was interrupted.</summary>
     private static string Outcome(string status) => status switch { "started" => "interrupted", _ => status };
 
+    /// <summary>
+    /// Whether a plan is keeping to its `expected_every`: <see cref="Overdue"/> when its last run began longer ago than that (or it never ran), <see cref="Slow"/> when its last run took longer than that to finish. A run still under way is
+    /// neither slow nor does it make the plan overdue until it has been going that long. The slowest load of the last run is named when it is slow.
+    /// </summary>
+    internal sealed record PlanHealth(string? ExpectedEvery, bool Overdue, bool Slow, long? LastRunSeconds, string? SlowestLoad, long? SlowestMs, long? AgeSeconds)
+    {
+        public static readonly PlanHealth None = new(null, false, false, null, null, null, null);
+    }
+
+    /// <summary>The `expected_every` a compiled plan declares, or null.</summary>
+    internal static EveryDuration? ExpectedEveryOf(string root, string connection, string plan)
+    {
+        var path = Path.Combine(root, RenderCommand.RenderedDir, RefreshPlanDocument.PathOf(connection, plan));
+        if (!File.Exists(path)) return null;
+        var file = RefreshPlanDocument.Parse(File.ReadAllText(path), path, []);
+        return file?.Settings.ExpectedEvery is { } text ? EveryDuration.TryParse(text) : null;
+    }
+
+    /// <summary>Works out the health of a plan from its last run; the slowest load is read from the tracking tables only when the run was slow.</summary>
+    internal static async Task<PlanHealth> HealthAsync(ReadSession read, TrackingScope scope, EveryDuration? expected, AuditLog.PlanRun? last)
+    {
+        if (expected == null) return PlanHealth.None;
+        var now = DateTime.UtcNow;
+        if (last == null) return new PlanHealth(expected.Text, Overdue: true, Slow: false, null, null, null, null);
+        var age = (long)(now - last.StartedUtc).TotalSeconds;
+        var took = (long)(last.LastUtc - last.StartedUtc).TotalSeconds;
+        var finished = last.Status != "started";
+        var slow = finished && took > expected.Seconds;
+        // a run that has not finished is overdue when it has been going on for the span: it is not keeping to its schedule either
+        var overdue = age > expected.Seconds && (finished || age > expected.Seconds);
+        string? slowest = null; long? slowestMs = null;
+        if (slow && await AuditLog.SlowestLoadOfRunAsync(read, scope, last.Id) is { } load) (slowest, slowestMs) = ($"{load.Model}.{load.Membership}", load.DurationMs);
+        return new PlanHealth(expected.Text, overdue, slow, took, slowest, slowestMs, age);
+    }
+
+    private static string Span(long seconds) => seconds < 120 ? $"{seconds} s" : seconds < 7200 ? $"{seconds / 60} min" : seconds < 172800 ? $"{seconds / 3600} h" : $"{seconds / 86400} d";
+
+    /// <summary>The warning lines for a plan that is overdue or slow (none when it keeps to its schedule).</summary>
+    internal static IEnumerable<string> HealthWarnings(string plan, PlanHealth h, AuditLog.PlanRun? last)
+    {
+        if (h.Overdue)
+            yield return last == null ? $"OVERDUE: plan {plan} is meant to run every {h.ExpectedEvery} and has never run."
+                                      : $"OVERDUE: plan {plan} is meant to run every {h.ExpectedEvery}; its last run began {Span(h.AgeSeconds ?? 0)} ago.";
+        if (h.Slow)
+            yield return $"SLOW: the last run of plan {plan} took {Span(h.LastRunSeconds ?? 0)}, longer than its expected {h.ExpectedEvery}{(h.SlowestLoad != null ? $"; the slowest load was {h.SlowestLoad} ({Span((h.SlowestMs ?? 0) / 1000)})" : "")}.";
+    }
+
+    private static object HealthJson(PlanHealth h) => new { expected_every = h.ExpectedEvery, overdue = h.Overdue, slow = h.Slow, last_run_seconds = h.LastRunSeconds, age_seconds = h.AgeSeconds, slowest_load = h.SlowestLoad, slowest_load_ms = h.SlowestMs };
+
     // ---------------- project show refresh ----------------
 
     public static int Show(CommandSpec spec, string root, string? planArg, string? connectionArg, TextWriter output, TextWriter error)
@@ -139,17 +188,19 @@ internal static class RefreshViews
         object? Run(AuditLog.PlanRun? r) => r == null ? null : new { id = r.Id, status = Outcome(r.Status), started_utc = Utc(r.StartedUtc), last_utc = Utc(r.LastUtc), complete = !r.Partial, selection = r.Selection, selected = r.Selected, members = r.Total };
         var members = loads.GroupBy(l => (l.Model, l.Membership)).OrderBy(g => g.Key.Model, StringComparer.Ordinal).ThenBy(g => g.Key.Membership, StringComparer.Ordinal).Select(g =>
         {
-            var latest = g.First(); var ok = g.FirstOrDefault(l => l.Status == "ok"); var failed = g.FirstOrDefault(l => l.Status != "ok");
+            var latest = g.First(); var ok = g.FirstOrDefault(l => l.Status == "ok"); var failed = g.FirstOrDefault(l => l.Status.StartsWith("failed", StringComparison.Ordinal));
             return (g.Key.Model, g.Key.Membership, Latest: latest, Ok: ok, Failed: failed);
         }).ToList();
+        var health = await HealthAsync(read, scope, ExpectedEveryOf(root, connection, plan), runs.FirstOrDefault());
         output.Payload("connection", connection);
         output.Payload("plan", new
         {
-            name = plan, last_complete = Run(lastComplete), last_partial = Run(lastPartial), runs = runs.Take(last).Select(Run).ToList(),
+            name = plan, health = HealthJson(health), last_complete = Run(lastComplete), last_partial = Run(lastPartial), runs = runs.Take(last).Select(Run).ToList(),
             members = members.Select(m => new { model = m.Model, member = m.Membership, last_status = m.Latest.Status, last_success_utc = m.Ok == null ? null : Utc(m.Ok.StartedUtc), last_failure_utc = m.Failed == null ? null : Utc(m.Failed.StartedUtc), last_duration_ms = m.Latest.DurationMs, last_rows = m.Latest.Rows }).ToList(),
         });
         output.WriteLine();
         output.WriteLine($"Plan {plan} on {connection}");
+        foreach (var warning in HealthWarnings(plan, health, runs.FirstOrDefault())) output.WriteLine("  " + warning);
         string RunText(AuditLog.PlanRun? r) => r == null ? "none recorded" : $"{r.Id}  {Outcome(r.Status).ToUpperInvariant()}  {Utc(r.LastUtc)} UTC ({Ago(r.LastUtc)}){(r.Partial ? $"  {r.Selected} of {r.Total} member(s){(r.Selection != null ? ": " + r.Selection : "")}" : "")}";
         output.WriteLine($"  Last complete run  {RunText(lastComplete)}");
         output.WriteLine($"  Last partial run   {RunText(lastPartial)}");
@@ -164,13 +215,13 @@ internal static class RefreshViews
             output.WriteLine($"  {m.Model}.{m.Membership}  last {m.Latest.Status}{(m.Latest.DurationMs != null ? $" in {m.Latest.DurationMs} ms" : "")}{(m.Latest.Rows != null ? $", {m.Latest.Rows} row(s)" : "")}  |  success {(m.Ok == null ? "never" : Utc(m.Ok.StartedUtc))}  |  failure {(m.Failed == null ? "none" : Utc(m.Failed.StartedUtc))}");
         if (members.Count == 0) output.WriteLine("  none");
         output.Next($"connection refresh {connection} {plan}");
-        return runs.Count > 0 && runs[0].Status != "completed" ? CliApp.ExitFindings : CliApp.ExitOk;
+        return runs.Count > 0 && runs[0].Status != "completed" ? CliApp.ExitFindings : CliApp.ExitOk;          // overdue and slow are warnings: they do not change the exit code
     }
 
     // ---------------- connection status ----------------
 
     /// <summary>One line per plan (or the one asked for): the last run, how it ended and its age; complete and partial runs apart. Null when the tracking tables cannot say.</summary>
-    public static List<(string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete)>? PlanLines(ProjectConfig config, string connection, string root, string? only, Func<string, string?> env, out string? why)
+    public static List<(string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete, PlanHealth Health)>? PlanLines(ProjectConfig config, string connection, string root, string? only, Func<string, string?> env, out string? why)
     {
         why = null;
         var names = PlanNames(root, connection).Where(n => only == null || n == only).ToList();
@@ -181,26 +232,35 @@ internal static class RefreshViews
         try
         {
             var scope = new TrackingScope(t.Engine, t.SchemaName, connection);
-            var all = Task.Run(async () =>
+            return Task.Run(async () =>
             {
                 await using var read = await ReadSession.OpenAsync(login);
-                return await AuditLog.PlanRunsAsync(read, scope, null, 200);
+                var all = await AuditLog.PlanRunsAsync(read, scope, null, 200);
+                var lines = new List<(string, AuditLog.PlanRun?, AuditLog.PlanRun?, PlanHealth)>();
+                foreach (var n in names)
+                {
+                    var last = all.FirstOrDefault(r => r.Plan == n);
+                    lines.Add((n, last, all.FirstOrDefault(r => r.Plan == n && !r.Partial), await HealthAsync(read, scope, ExpectedEveryOf(root, connection, n), last)));
+                }
+                return lines;
             }).GetAwaiter().GetResult();
-            return names.Select(n => (n, all.FirstOrDefault(r => r.Plan == n), all.FirstOrDefault(r => r.Plan == n && !r.Partial))).ToList();
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { why = $"unknown: the runs could not be read ({ex.GetType().Name}{CliApp.DriverNumber(ex)})"; return null; }
     }
 
-    public static void PrintPlanLines(TextWriter output, List<(string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete)>? lines, string? why)
+    public static void PrintPlanLines(TextWriter output, List<(string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete, PlanHealth Health)>? lines, string? why)
     {
         if (lines == null) { output.WriteLine($"Plans      {why}"); return; }
-        object Line((string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete) l) => new
+        object Line((string Plan, AuditLog.PlanRun? Last, AuditLog.PlanRun? LastComplete, PlanHealth Health) l) => new
         {
             plan = l.Plan, last_run = l.Last == null ? null : l.Last.Id, outcome = l.Last == null ? "never run" : Outcome(l.Last.Status), utc = l.Last == null ? null : Utc(l.Last.LastUtc),
-            complete = l.Last == null ? (bool?)null : !l.Last.Partial, last_complete_utc = l.LastComplete == null ? null : Utc(l.LastComplete.LastUtc),
+            complete = l.Last == null ? (bool?)null : !l.Last.Partial, last_complete_utc = l.LastComplete == null ? null : Utc(l.LastComplete.LastUtc), health = HealthJson(l.Health),
         };
         output.Payload("plans", lines.Select(Line).ToList());
         foreach (var l in lines)
+        {
             output.WriteLine($"Plan {l.Plan,-10} {(l.Last == null ? "never run" : $"{l.Last.Id}  {Outcome(l.Last.Status).ToUpperInvariant()}  {Utc(l.Last.LastUtc)} UTC ({Ago(l.Last.LastUtc)}){(l.Last.Partial ? $"  PARTIAL {l.Last.Selected}/{l.Last.Total}" : "")}{(l.LastComplete == null && l.Last != null ? "  (never run in full)" : "")}")}");
+            foreach (var warning in HealthWarnings(l.Plan, l.Health, l.Last)) output.WriteLine("           " + warning);
+        }
     }
 }

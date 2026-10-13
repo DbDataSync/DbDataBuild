@@ -99,6 +99,7 @@ internal static class RefreshPlanBuilder
 
             foreach (var op in ops)
             {
+                var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
                 var inputs = new List<RefreshParameter>();
                 var routine = true;
                 foreach (var p in op.Parameters)
@@ -114,7 +115,7 @@ internal static class RefreshPlanBuilder
                 }
                 if (!routine) continue;
                 loads.Add(new(def.Name, op.Operation, op.Strategy, op.IsDefault, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
-                    shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList()));
+                    shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text));
             }
         }
         var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList());

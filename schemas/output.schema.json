@@ -1788,6 +1788,9 @@
                   "string",
                   "null"
                 ]
+              },
+              "health": {
+                "$ref": "#/$defs/plan_health"
               }
             },
             "required": [
@@ -2214,6 +2217,97 @@
           "items": {
             "type": "string"
           }
+        },
+        "outcome": {
+          "description": "How the run ended: completed, completed_with_failures (some loads failed or were skipped), stopped (a load failed under on_failure stop, or the operator stopped it) or failed (nothing was done).",
+          "enum": [
+            "completed",
+            "completed_with_failures",
+            "stopped",
+            "failed"
+          ]
+        },
+        "results": {
+          "description": "Every load of the run and how it ended.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "member": {
+                "type": "string"
+              },
+              "load": {
+                "type": "string"
+              },
+              "state": {
+                "description": "done, failed, skipped or not run",
+                "enum": [
+                  "done",
+                  "failed",
+                  "skipped",
+                  "not run"
+                ]
+              },
+              "reason": {
+                "description": "Why it failed or was skipped: check, max runtime, busy, input, upstream failed, stopped, check failed; null otherwise.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "description": "The text run_log records: ok, failed, failed: <kind>, skipped: <reason> or not run.",
+                "type": "string"
+              },
+              "rows": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "duration_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "note": {
+                "description": "upstream skipped: busy, on a load that ran although a load it reads was skipped because it was busy.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "model",
+              "member",
+              "load",
+              "state",
+              "status"
+            ]
+          }
+        },
+        "warnings": {
+          "description": "Failures that on_failure: ignore let pass.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "last_run": {
+          "description": "With --only-failed: the event whose loads were repeated.",
+          "type": "string"
         }
       }
     },
@@ -2734,6 +2828,9 @@
                   "last_status"
                 ]
               }
+            },
+            "health": {
+              "$ref": "#/$defs/plan_health"
             }
           },
           "required": [
@@ -4459,6 +4556,53 @@
         "plans"
       ],
       "description": "The compiled refresh plans: one entry per plan and connection."
+    },
+    "plan_health": {
+      "description": "Whether a plan keeps to its expected_every: overdue (its last run began longer ago than that, or it never ran) and slow (its last run took longer than that, with the slowest load named). All fields are null or false when the plan declares no expected_every.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expected_every": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "overdue": {
+          "type": "boolean"
+        },
+        "slow": {
+          "type": "boolean"
+        },
+        "last_run_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "age_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "slowest_load": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slowest_load_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "overdue",
+        "slow"
+      ]
     }
   }
 }

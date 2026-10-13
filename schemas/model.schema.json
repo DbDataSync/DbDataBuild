@@ -325,6 +325,11 @@
               "items": {
                 "$ref": "#/$defs/connectionName"
               }
+            },
+            "max_runtime": {
+              "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
             }
           }
         },
@@ -361,6 +366,11 @@
               "items": {
                 "$ref": "#/$defs/nonEmptyString"
               }
+            },
+            "max_runtime": {
+              "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
             }
           }
         },
@@ -397,6 +407,11 @@
               "items": {
                 "$ref": "#/$defs/nonEmptyString"
               }
+            },
+            "max_runtime": {
+              "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
             }
           }
         },
@@ -449,6 +464,11 @@
             "max_span": {
               "description": "The longest range one run may reload, for example `400 days`. Enforced at plan time.",
               "$ref": "#/$defs/duration"
+            },
+            "max_runtime": {
+              "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
             }
           }
         },
@@ -535,6 +555,11 @@
                   ]
                 }
               }
+            },
+            "max_runtime": {
+              "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
             }
           }
         }

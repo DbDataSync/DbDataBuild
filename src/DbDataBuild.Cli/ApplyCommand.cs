@@ -124,7 +124,9 @@ internal static class ApplyCommand
     /// <param name="Header">Whether to print the command header (not when the command printed one a moment ago).</param>
     /// <param name="Summary">Whether to print the line that names the plan and the objects it may touch (not after the command printed its own summary).</param>
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null);
+    /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
+    /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -207,7 +209,7 @@ internal static class ApplyCommand
         if (audit != AuditLevel.Full) planText = "";
         var options = new ApplyOptions(dryRun, allowRisky, allowDestructive.ToHashSet(StringComparer.Ordinal), audit == AuditLevel.Minimal ? null : commit, dirty, audit == AuditLevel.Minimal ? "" : write?.User ?? Environment.UserName, stopRequested,
             (name, token) => originLogins.TryGetValue(name, out var login) ? ReadSession.OpenAsync(login, token) : throw new InvalidOperationException($"no read login for connection {name}"),
-            Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run);
+            Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run, Execution: mode.Execution);
 
         // refusals that need no connection come first
         var offline = new List<Diagnostic>(ApplyEngine.CheckAllowances(plan, options));
@@ -243,7 +245,7 @@ internal static class ApplyCommand
         finally { if (onInterrupt != null) Console.CancelKeyPress -= onInterrupt; }
 
         if (dryRun)
-            foreach (var step in plan.Steps)
+            foreach (var step in result.PreparedSteps ?? plan.Steps)
             {
                 output.WriteLine();
                 output.WriteLine($"-- step {step.Id} [{step.Type.ToString().ToLowerInvariant()}, {step.Risk.ToString().ToLowerInvariant()}] {step.Description}");
@@ -257,13 +259,37 @@ internal static class ApplyCommand
             else output.WriteLine("note: metadata was not stored: nothing is tracked for this connection.");
         }
         output.Payload("outcomes", result.Outcomes.Select(o => new { step = o.StepId, description = o.Description, status = o.Status, detail = o.Detail }).ToList());
+        if (result.Refresh is { } refreshed)
+        {
+            output.Payload("outcome", refreshed.Outcome);
+            output.Payload("results", refreshed.Loads.Select(l => new { model = l.Unit.Model, member = l.Unit.Membership, load = l.Unit.Load, state = l.State, reason = l.Reason, status = l.Status, rows = l.Rows, duration_ms = l.DurationMs, detail = l.Detail, note = l.Note }).ToList());
+            output.Payload("warnings", refreshed.Warnings.ToList());
+        }
         output.Payload("statement_log", logPath?.Replace('\\', '/'));
         output.Payload("success", result.Success);
-        if (dryRun) output.Payload("statements", plan.Steps.Where(s => s.Type != StepType.Track).Select(s => new { step = s.Id, type = s.Type, risk = s.Risk, text = s.Text, parameters = s.Parameters }).ToList());
+        if (dryRun) output.Payload("statements", (result.PreparedSteps ?? plan.Steps).Where(s => s.Type != StepType.Track).Select(s => new { step = s.Id, type = s.Type, risk = s.Risk, text = s.Text, parameters = s.Parameters }).ToList());
         foreach (var d in result.Refusals) error.Diag(d);
         output.WriteLine();
         foreach (var o in result.Outcomes) output.WriteLine($"  step {o.StepId}: {o.Status}{(o.Detail != null && o.Status != "ok" ? " (" + o.Detail + ")" : "")}  {o.Description}");
         var planRelative = planLabel;
+        if (result.Refresh is { } summary && !dryRun)
+        {
+            // one line that says how it ended and names what did not: failed loads, and the loads that were skipped or not run
+            var named = mode.Run?.PlanName is { } planNamed ? $" (plan {planNamed})" : "";
+            var counts = $"{summary.Loads.Count(l => l.State == "done")} done, {summary.Loads.Count(l => l.State == "failed")} failed, {summary.Loads.Count(l => l.State == "skipped")} skipped, {summary.Loads.Count(l => l.State == "not run")} not run";
+            output.WriteLine($"Refresh {plan.Id}{named}: {summary.Outcome.Replace('_', ' ')}. {counts}.");
+            foreach (var group in summary.Loads.Where(l => l.State != "done").GroupBy(l => l.State))
+                output.WriteLine($"  {group.Key}: {string.Join("; ", group.Select(l => $"{l.Unit.Display}{(l.Reason != null ? $" ({l.Reason})" : "")}"))}");
+            foreach (var note in summary.Loads.Where(l => l.Note != null)) output.WriteLine($"  {note.Unit.Display} ran: {note.Note}");
+            foreach (var w in summary.Warnings) output.WriteLine($"  warning: {w}");
+            if (summary.Loads.Any(l => l.Status == LoadStatus.FailedCheck))
+                output.Next("connection deploy", $"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed");
+            else if (summary.Outcome != RefreshSummary.Completed)
+                output.Next($"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed", $"connection monitor {plan.Connection}{PlanArgument(mode)}");
+            else if (summary.Loads.Any(l => l.Status == LoadStatus.SkippedBusy)) output.Next($"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed", $"connection monitor {plan.Connection}{PlanArgument(mode)}");
+            else output.Next($"connection monitor {plan.Connection}{PlanArgument(mode)}");
+            return result.Success ? CliApp.ExitOk : CliApp.ExitFindings;
+        }
         if (result.Success)
         {
             output.WriteLine(dryRun ? "Dry run complete: every check passed and nothing was executed." : mode.Refresh ? $"Refresh {plan.Id}{(mode.Run?.PlanName is { } named ? $" (plan {named})" : "")}: {result.Outcomes.Count(o => o.Status == "ok")} step(s) ran." : $"Applied plan {plan.Id}: {result.Outcomes.Count(o => o.Status == "ok")} step(s) executed.");
@@ -276,6 +302,8 @@ internal static class ApplyCommand
             // a plan that stopped part-way continues when it is applied again; a refused one has to be planned again
             if (result.Outcomes.Count > 0) output.Next(mode.Refresh ? $"connection monitor {plan.Connection}{PlanArgument(mode)}" : $"connection deploy --apply-plan {planRelative}", mode.Refresh ? $"connection refresh {plan.Connection}{PlanArgument(mode)}" : "connection monitor");
         }
+        // a deploy that cannot get the lock of the whole connection (a refresh holds a load, or another deploy runs) is busy, not failed
+        if (!mode.Refresh && result.Refusals.Any(d => d.Code == DiagnosticCatalog.ApplyLockHeld.Code)) return CliApp.ExitBusy;
         return result.Success ? CliApp.ExitOk : CliApp.ExitFindings;
     }
 }

@@ -396,6 +396,7 @@ Usage: `dbdatabuild connection refresh [connection] [plan] [selectors]... [optio
 | `--dry-run` | Run every check and print every statement; execute nothing |
 | `--input` `<text ...>` | `[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input |
 | `--on-fail` `<text>` | What a failed check does, instead of the project's `refresh.on_fail`: block (stop before anything runs) or warn (report and run) |
+| `--only-failed` | Run only the loads of the plan that did not end done in its last run: failed, skipped or not run (a full run again is also safe, loads are idempotent). Needs a plan and its recorded runs |
 | `--project` `<path>` | Project root |
 
 ## connection monitor

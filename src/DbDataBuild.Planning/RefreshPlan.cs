@@ -29,7 +29,7 @@ public sealed record RefreshParameter(string Name, string Type, string Source, s
 /// <param name="Load">The load's name (`default` for the one a kind supplies).</param>
 /// <param name="ShapeHash">The shape the compiled project expects of the model's table, which a refresh check compares with what it finds.</param>
 public sealed record LoadPlanEntry(string Model, string Load, string Strategy, bool IsDefault, string File, string FileHash, string? ResolverFile, string? ResolverHash, string DefinitionHash, string ShapeHash,
-    IReadOnlyList<RefreshParameter> Inputs, string? OnNull, string? Initial, IReadOnlyList<RefreshHook> Before, IReadOnlyList<RefreshHook> After)
+    IReadOnlyList<RefreshParameter> Inputs, string? OnNull, string? Initial, IReadOnlyList<RefreshHook> Before, IReadOnlyList<RefreshHook> After, string? MaxRuntime = null)
 {
     public string Hash => LoadsDocument.HashOf(this);
 
@@ -77,10 +77,10 @@ public sealed record RefreshPlanFile(string Connection, string Name, ObjectInfo 
 }
 
 /// <summary>The settings of a plan as the plan file keeps them (text, as declared).</summary>
-public sealed record RefreshPlanSettingsText(string? OnFailure, string? OnBusy, string? ExpectedEvery, int? Parallel, string? Check, string? OnFail)
+public sealed record RefreshPlanSettingsText(string? OnFailure, string? OnBusy, string? ExpectedEvery, int? Parallel, string? Check, string? OnFail, string? MaxWait = null, string? MaxRuntime = null)
 {
     public static RefreshPlanSettingsText From(RefreshPlanSettings? s) => s == null ? new(null, null, null, null, null, null)
-        : new(s.OnFailure, s.OnBusy, s.ExpectedEvery?.Text, s.Parallel, s.Check is { } c ? LifecycleSettings.Name(c) : null, s.OnFail is { } f ? LifecycleSettings.Name(f) : null);
+        : new(s.OnFailure, s.OnBusy, s.ExpectedEvery?.Text, s.Parallel, s.Check is { } c ? LifecycleSettings.Name(c) : null, s.OnFail is { } f ? LifecycleSettings.Name(f) : null, s.MaxWait?.Text, s.MaxRuntime?.Text);
 }
 
 /// <summary>Reading and writing helpers the compiled files share: quoting, and a reader that turns every problem into a diagnostic at the node.</summary>
@@ -156,6 +156,7 @@ public static class LoadsDocument
         sb.Append("    shape_hash: ").AppendLineLf(Q(l.ShapeHash));
         if (l.OnNull != null) sb.Append("    on_null: ").AppendLineLf(Q(l.OnNull));
         if (l.Initial != null) sb.Append("    initial: ").AppendLineLf(Q(l.Initial));
+        if (l.MaxRuntime != null) sb.Append("    max_runtime: ").AppendLineLf(Q(l.MaxRuntime));
         if (l.Inputs.Count > 0)
         {
             sb.AppendLineLf("    inputs:");
@@ -198,7 +199,7 @@ public static class LoadsDocument
 
     private static readonly string[] TopKeys = ["loads_file", "loads", "excluded"];
     private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads"];
-    private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "inputs", "before", "after"];
+    private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "max_runtime", "inputs", "before", "after"];
     private static readonly string[] HookKeys = ["name", "event", "file", "file_hash", "effect", "risk"];
 
     /// <summary>Reads `loads.yml`. Returns null with diagnostics when it is malformed, has unknown keys, or does not match its own hash.</summary>
@@ -230,7 +231,7 @@ public static class LoadsDocument
             foreach (var pm in r.Maps(m, "inputs", "input")) { r.Keys(pm, ["name", "type", "source", "value"], "an input"); inputs.Add(new(r.Req(pm, "name"), r.Req(pm, "type"), r.Req(pm, "source"), r.S(pm, "value"))); }
             stored.Add(r.Req(m, "hash"));
             loads.Add(new(r.Req(m, "model"), r.Req(m, "load"), r.Req(m, "strategy"), r.S(m, "default") == "true", r.Req(m, "file"), r.Req(m, "file_hash"), r.S(m, "resolver_file"), r.S(m, "resolver_hash"),
-                r.Req(m, "definition_hash"), r.Req(m, "shape_hash"), inputs, r.S(m, "on_null"), r.S(m, "initial"), HookList(m, "before"), HookList(m, "after")));
+                r.Req(m, "definition_hash"), r.Req(m, "shape_hash"), inputs, r.S(m, "on_null"), r.S(m, "initial"), HookList(m, "before"), HookList(m, "after"), r.S(m, "max_runtime")));
         }
         var excluded = new List<RefreshExclusion>();
         foreach (var m in r.Maps(top, "excluded", "exclusion")) { r.Keys(m, ["model", "reason"], "an exclusion"); excluded.Add(new(r.Req(m, "model"), r.Req(m, "reason"))); }
@@ -291,6 +292,8 @@ public static class RefreshPlanDocument
         var s = p.Settings;
         if (s.OnFailure != null) sb.Append("  on_failure: ").AppendLineLf(Q(s.OnFailure));
         if (s.OnBusy != null) sb.Append("  on_busy: ").AppendLineLf(Q(s.OnBusy));
+        if (s.MaxWait != null) sb.Append("  max_wait: ").AppendLineLf(Q(s.MaxWait));
+        if (s.MaxRuntime != null) sb.Append("  max_runtime: ").AppendLineLf(Q(s.MaxRuntime));
         if (s.ExpectedEvery != null) sb.Append("  expected_every: ").AppendLineLf(Q(s.ExpectedEvery));
         if (s.Parallel != null) sb.Append("  parallel: ").AppendLineLf(s.Parallel.Value.ToString(CultureInfo.InvariantCulture));
         if (s.Check != null) sb.Append("  check: ").AppendLineLf(Q(s.Check));
@@ -321,7 +324,7 @@ public static class RefreshPlanDocument
     }
 
     private static readonly string[] TopKeys = ["refresh_plan", "members", "excluded"];
-    private static readonly string[] HeaderKeys = ["hash", "connection", "plan", "title", "description", "tags", "properties", "on_failure", "on_busy", "expected_every", "parallel", "check", "on_fail", "members"];
+    private static readonly string[] HeaderKeys = ["hash", "connection", "plan", "title", "description", "tags", "properties", "on_failure", "on_busy", "max_wait", "max_runtime", "expected_every", "parallel", "check", "on_fail", "members"];
     private static readonly string[] MemberKeys = ["member", "model", "load", "load_plan", "on_failure", "inputs"];
 
     /// <summary>Reads a refresh plan's file. Returns null with diagnostics when it is malformed, has unknown keys, or does not match its own hash.</summary>
@@ -353,7 +356,7 @@ public static class RefreshPlanDocument
         var excluded = new List<RefreshPlanExclusion>();
         foreach (var m in r.Maps(top, "excluded", "exclusion")) { r.Keys(m, ["model", "member", "reason"], "an exclusion"); excluded.Add(new(r.Req(m, "model"), r.Req(m, "member"), r.Req(m, "reason"))); }
 
-        var settings = new RefreshPlanSettingsText(r.S(header, "on_failure"), r.S(header, "on_busy"), r.S(header, "expected_every"), r.Int(header, "parallel"), r.S(header, "check"), r.S(header, "on_fail"));
+        var settings = new RefreshPlanSettingsText(r.S(header, "on_failure"), r.S(header, "on_busy"), r.S(header, "expected_every"), r.Int(header, "parallel"), r.S(header, "check"), r.S(header, "on_fail"), r.S(header, "max_wait"), r.S(header, "max_runtime"));
         var plan = new RefreshPlanFile(r.Req(header, "connection"), r.Req(header, "plan"), info, settings, members, excluded);
         if (diags.Count > before) return null;
         var stored = r.S(header, "hash");
@@ -370,14 +373,10 @@ public static class RefreshPlanDocument
     public static string ContentHash(RefreshPlanFile plan) => Hashing.Sha256Hex(Body(plan));
 }
 
-/// <summary>What a refresh step belongs to, for the tracking rows of the run: the membership (the load's name unless the plan says another), the load plan it ran by hash, and the inputs it ran with, each with where its value came from, as JSON.</summary>
-public sealed record RefreshStepInfo(string Membership, string LoadPlanHash, string InputsJson);
-
 /// <summary>One member of the plan as the run saw it: its place in the order, and whether this run's selection included it.</summary>
 public sealed record RefreshRunMember(int Position, string Membership, string Model, string Load, string LoadPlanHash, bool Selected);
 
 /// <summary>
-/// Everything a refresh run records beyond its steps: the plan's name (null for a load named directly), the selection that was asked for (empty for the whole plan), the plan's members as they were when it ran, and the
-/// step information by step id.
+/// Everything a refresh run records beyond its loads: the plan's name (null for a load named directly), the selection that was asked for (empty for the whole plan), and the plan's members as they were when it ran.
 /// </summary>
-public sealed record RefreshRunInfo(string? PlanName, string Selection, IReadOnlyList<RefreshRunMember> Members, IReadOnlyDictionary<string, RefreshStepInfo> Steps);
+public sealed record RefreshRunInfo(string? PlanName, string Selection, IReadOnlyList<RefreshRunMember> Members);

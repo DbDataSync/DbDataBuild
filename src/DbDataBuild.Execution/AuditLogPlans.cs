@@ -55,4 +55,37 @@ public static partial class AuditLog
         static long? Long(object? v) => v is null or DBNull ? null : Convert.ToInt64(v, CultureInfo.InvariantCulture);
         return rows.Select(r => new PlanLoadRow(Text(r[0]), Text(r[1]), Text(r[2]), r[3] is DateTime d ? d : DateTime.MinValue, Long(r[4]), Long(r[5]), Text(r[6]))).ToList();
     }
+
+    /// <summary>A load as the last run of a plan left it: `ok`, `failed...`, `skipped: ...` or `not run`.</summary>
+    public sealed record LoadState(string Model, string Membership, string Status);
+
+    /// <summary>The event that last ran a plan (any selection) and the state each of its loads ended in, or nulls when the plan was never run. `--only-failed` runs the loads of it that did not end `ok`.</summary>
+    public static async Task<(string? EventId, IReadOnlyList<LoadState> Loads)> LastPlanRunLoadsAsync(ReadSession read, TrackingScope scope, string plan, CancellationToken ct = default)
+    {
+        var runs = await PlanRunsAsync(read, scope, plan, 1, ct);
+        if (runs.Count == 0) return (null, []);
+        string c(string n) => C(scope.Engine, n);
+        var rows = await read.QueryAsync(
+            $"SELECT r.{c("model")}, r.{c("membership")}, r.{c("status")} FROM {T(scope, "run_log")} r WHERE r.{c("connection")} = @connection AND r.{c("plan_id")} = @plan_id AND r.{c("membership")} IS NOT NULL ORDER BY r.{c("started_utc")}",
+            [Connection(scope), new GateParameter("plan_id", DbType.AnsiString, runs[0].Id)], ct);
+        static string Text(object? v) => (v as string)?.Trim() ?? "";
+        // a load and its hooks are one load: it ended `ok` only if every row of it did
+        var loads = rows.GroupBy(r => (Model: Text(r[0]), Membership: Text(r[1]))).Select(g => new LoadState(g.Key.Model, g.Key.Membership, g.Select(r => Text(r[2])).FirstOrDefault(x => x != "ok") ?? "ok")).ToList();
+        return (runs[0].Id, loads);
+    }
+
+    /// <summary>The load of a run that took longest, its hooks counted with it (they are part of the time the load took in the plan), or null when the run recorded no durations.</summary>
+    public static async Task<PlanLoadRow?> SlowestLoadOfRunAsync(ReadSession read, TrackingScope scope, string eventId, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var rows = await read.QueryAsync(
+            $"SELECT r.{c("model")}, r.{c("membership")}, r.{c("status")}, r.{c("started_utc")}, r.{c("duration_ms")}, r.{c("rows_affected")}, r.{c("plan_id")} FROM {T(scope, "run_log")} r " +
+            $"WHERE r.{c("connection")} = @connection AND r.{c("plan_id")} = @plan_id AND r.{c("membership")} IS NOT NULL AND r.{c("duration_ms")} IS NOT NULL",
+            [Connection(scope), new GateParameter("plan_id", DbType.AnsiString, eventId)], ct);
+        static string Text(object? v) => (v as string)?.Trim() ?? "";
+        static long Long(object? v) => v is null or DBNull ? 0 : Convert.ToInt64(v, CultureInfo.InvariantCulture);
+        return rows.GroupBy(r => (Model: Text(r[0]), Membership: Text(r[1])))
+            .Select(g => new PlanLoadRow(g.Key.Model, g.Key.Membership, Text(g.First()[2]), g.Min(r => r[3] is DateTime d ? d : DateTime.MaxValue), g.Sum(r => Long(r[4])), null, eventId))
+            .OrderByDescending(l => l.DurationMs).FirstOrDefault();
+    }
 }

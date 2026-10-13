@@ -273,7 +273,7 @@ internal static class PlanCommand
         var policy = session.Context.Config.LifecycleOf(session.Target);
         output.WriteLine($"Structure  {structureText}");
         output.WriteLine($"Deploy     {EventText(lastDeploy, noEvents ?? "none recorded")}");
-        output.WriteLine($"Refresh    {EventText(lastRefresh, noEvents ?? "none recorded")}{(lastRefresh is { Status: "failed" } ? "  (the next refresh starts over)" : "")}");
+        output.WriteLine($"Refresh    {EventText(lastRefresh, noEvents ?? "none recorded")}{(lastRefresh is { Status: "failed" or "stopped" or "completed_with_failures" } ? "  (not every load finished: `connection refresh <connection> <plan> --only-failed` repeats the rest)" : "")}");
         output.WriteLine($"Policy     {policy.Describe()}");
         var planLines = RefreshViews.PlanLines(session.Context.Config, session.Target, root, onlyPlan, env, out var planWhy);
         if (planLines is not { Count: 0 }) RefreshViews.PrintPlanLines(output, planLines, planWhy);

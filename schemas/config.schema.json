@@ -1186,7 +1186,7 @@
                 }
               },
               "on_failure": {
-                "description": "What happens when a load of the plan fails: `stop` (nothing more starts), `continue` (the default: dependents inside the plan are skipped, the rest run) or `ignore` (dependents run on the stale data). Validated and kept in the plan file; it acts in a later step of the build.",
+                "description": "What happens when a load of the plan fails: `stop` (the failed load is recorded, nothing more starts and the rest are `not run`), `continue` (the default: what reads the failed load inside the plan is skipped, the rest run) or `ignore` (recorded as a warning; what reads it runs on the data it had). A membership may override it.",
                 "enum": [
                   "stop",
                   "continue",
@@ -1194,17 +1194,27 @@
                 ]
               },
               "on_busy": {
-                "description": "What a run does with a load another run holds: `skip` (the default), `wait` or `fail`. Validated and kept; it acts in a later step.",
+                "description": "What a run does with a load another run holds (a lock per load, kept as long as the load runs): `skip` (the default: the load is skipped this cycle, which is not a failure, and what reads it still runs), `wait` (queue, up to `max_wait`) or `fail` (the load fails and `on_failure` applies).",
                 "enum": [
                   "skip",
                   "wait",
                   "fail"
                 ]
               },
-              "expected_every": {
-                "description": "How often the plan is meant to run, for example `15m`, `1h`, `1d`, `1w`. Validated and kept; the warning that uses it is a later step.",
+              "max_wait": {
+                "description": "With `on_busy: wait`, how long to wait for a busy load, for example `10m`. Without it the run waits until the load is free. A load still busy after it fails.",
                 "type": "string",
-                "pattern": "^[1-9][0-9]{0,5}[mhdw]$"
+                "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
+              },
+              "max_runtime": {
+                "description": "Opt-in: how long one load of the plan may run, for example `30m`, before its statement in flight is cancelled; the transaction rolls back and the load counts as failed. A load's own `max_runtime` wins.",
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
+              },
+              "expected_every": {
+                "description": "How often the plan is meant to run, for example `15m`, `1h`, `1d`, `1w`. `connection status` and `connection monitor` warn when the last run is older than this (overdue) or took longer (slow) and name the slowest load.",
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,5}[smhdw]$"
               },
               "parallel": {
                 "description": "How many loads may run together. Validated and kept; parallelism is a later step.",

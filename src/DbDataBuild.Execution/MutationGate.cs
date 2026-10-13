@@ -19,9 +19,9 @@ internal interface IWriteExecutor : IAsyncDisposable
     Task<long> BulkCopyAsync(string schema, string table, IReadOnlyList<TransferColumn> columns, IAsyncEnumerable<object?[]> rows, CancellationToken ct) =>
         throw new NotSupportedException("This executor has no bulk route.");
 
-    /// <summary>Tries to take a session-level application lock without waiting. The lock lives as long as this connection (or until <see cref="UnlockAsync"/>).</summary>
-    Task<bool> TryLockAsync(string resource, CancellationToken ct);
-    Task UnlockAsync(string resource, CancellationToken ct);
+    /// <summary>Tries to take a session-level application lock without waiting, exclusive or shared. The lock lives as long as this connection (or until <see cref="UnlockAsync"/>).</summary>
+    Task<bool> TryLockAsync(string resource, bool shared, CancellationToken ct);
+    Task UnlockAsync(string resource, bool shared, CancellationToken ct);
 
     /// <summary>After a failed statement: leaves no transaction open (PostgreSQL refuses further statements in an aborted transaction).</summary>
     Task RecoverAsync(CancellationToken ct);
@@ -29,12 +29,12 @@ internal interface IWriteExecutor : IAsyncDisposable
 
 internal sealed class AdoWriteExecutor(DbConnection connection, bool postgres) : IWriteExecutor
 {
-    public async Task<bool> TryLockAsync(string resource, CancellationToken ct)
+    public async Task<bool> TryLockAsync(string resource, bool shared, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = postgres
-            ? "SELECT pg_try_advisory_lock(hashtextextended(@res, 0))"
-            : "DECLARE @r int; EXEC @r = sp_getapplock @Resource = @res, @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = 0; SELECT @r;";
+            ? (shared ? "SELECT pg_try_advisory_lock_shared(hashtextextended(@res, 0))" : "SELECT pg_try_advisory_lock(hashtextextended(@res, 0))")
+            : $"DECLARE @r int; EXEC @r = sp_getapplock @Resource = @res, @LockMode = N'{(shared ? "Shared" : "Exclusive")}', @LockOwner = N'Session', @LockTimeout = 0; SELECT @r;";
         var p = cmd.CreateParameter();
         p.ParameterName = "@res";
         p.DbType = DbType.String;
@@ -44,10 +44,10 @@ internal sealed class AdoWriteExecutor(DbConnection connection, bool postgres) :
         return postgres ? Convert.ToBoolean(result, CultureInfo.InvariantCulture) : Convert.ToInt32(result, CultureInfo.InvariantCulture) >= 0;
     }
 
-    public async Task UnlockAsync(string resource, CancellationToken ct)
+    public async Task UnlockAsync(string resource, bool shared, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = postgres ? "SELECT pg_advisory_unlock(hashtextextended(@res, 0))" : "EXEC sp_releaseapplock @Resource = @res, @LockOwner = N'Session';";
+        cmd.CommandText = postgres ? (shared ? "SELECT pg_advisory_unlock_shared(hashtextextended(@res, 0))" : "SELECT pg_advisory_unlock(hashtextextended(@res, 0))") : "EXEC sp_releaseapplock @Resource = @res, @LockOwner = N'Session';";
         var p = cmd.CreateParameter();
         p.ParameterName = "@res";
         p.DbType = DbType.String;
@@ -229,7 +229,7 @@ public sealed class MutationGate : IAsyncDisposable
             // type and driver error number only: driver messages can quote data (DESIGN.md 14.2)
             var number = ex is DbException { ErrorCode: var code } && code != 0 ? $" code={code}" : "";
             TryRecord(n, "end", statement, $"failed {ex.GetType().Name}{number}");
-            await RecoverAsync(statement.StepId, ct);
+            await RecoverAsync(statement.StepId, CancellationToken.None);          // not `ct`: a statement that was cancelled (a load past its max_runtime) still has a transaction to roll back
             throw;
         }
     }
@@ -278,24 +278,35 @@ public sealed class MutationGate : IAsyncDisposable
     /// Takes the application lock that makes `apply` mutually exclusive on one target (`sp_getapplock` on SQL Server, an advisory lock on PostgreSQL).
     /// Returns false when another apply holds it. The attempt and the outcome are in the statement log.
     /// </summary>
-    public async Task<bool> TryAcquireApplicationLockAsync(string resource, CancellationToken ct = default)
+    public Task<bool> TryAcquireApplicationLockAsync(string resource, CancellationToken ct = default) => AcquireApplicationLockAsync(resource, shared: false, TimeSpan.Zero, ct);
+
+    /// <summary>
+    /// A lock that can be shared (a refresh holds the connection's lock shared while one load runs, so refreshes of different loads run side by side and a deploy, which takes it exclusive, conflicts with any of them) and
+    /// waited for: <paramref name="maxWait"/> is how long to try again before giving up (<see cref="TimeSpan.Zero"/> tries once, <see cref="Timeout.InfiniteTimeSpan"/> until it is free). The attempt and the outcome are in the log once, not per retry.
+    /// </summary>
+    public async Task<bool> AcquireApplicationLockAsync(string resource, bool shared, TimeSpan maxWait, CancellationToken ct = default)
     {
         var n = Interlocked.Increment(ref ordinal);
-        var s = GateStatement.Tracking("lock", $"acquire application lock {resource}");
+        var s = GateStatement.Tracking("lock", $"acquire application lock {resource}{(shared ? " (shared)" : "")}");
         Record(n, DryRun ? "dry-run" : "begin", s, includeText: true, outcome: null);
         if (DryRun) return true;
-        var granted = await executor!.TryLockAsync(resource, ct);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        bool granted;
+        while (!(granted = await executor!.TryLockAsync(resource, shared, ct)) && (maxWait == Timeout.InfiniteTimeSpan || clock.Elapsed < maxWait))
+            await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
         Record(n, "end", s, includeText: false, outcome: granted ? "granted" : "held by another process");
         return granted;
     }
 
-    public async Task ReleaseApplicationLockAsync(string resource, CancellationToken ct = default)
+    public Task ReleaseApplicationLockAsync(string resource, CancellationToken ct = default) => ReleaseApplicationLockAsync(resource, shared: false, ct);
+
+    public async Task ReleaseApplicationLockAsync(string resource, bool shared, CancellationToken ct = default)
     {
         if (DryRun) return;
         var n = Interlocked.Increment(ref ordinal);
-        var s = GateStatement.Tracking("unlock", $"release application lock {resource}");
+        var s = GateStatement.Tracking("unlock", $"release application lock {resource}{(shared ? " (shared)" : "")}");
         Record(n, "begin", s, includeText: true, outcome: null);
-        await executor!.UnlockAsync(resource, ct);
+        await executor!.UnlockAsync(resource, shared, ct);
         Record(n, "end", s, includeText: false, outcome: "released");
     }
 

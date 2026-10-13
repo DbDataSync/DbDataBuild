@@ -64,9 +64,10 @@ public sealed record LoadParameter(string Name, string Type);
 /// <param name="Column">Range column for delete_insert_by_range (defaults to the kind's time_column).</param>
 /// <param name="Targets">Restricts the operation to these targets; null means every target the model declares.</param>
 /// <param name="Declared">False for the operation a kind supplies implicitly.</param>
+/// <param name="MaxRuntime">Opt-in: how long a refresh lets this load run before it cancels the statement and counts the load as failed (wins over the plan's).</param>
 public sealed record LoadOperation(
     string Name, bool IsDefault, string Strategy, IReadOnlyList<string> Key, string? Column, WatermarkSpec? Watermark,
-    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0)
+    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0, EveryDuration? MaxRuntime = null)
 {
     public bool AppliesTo(string target) => Targets == null || Targets.Contains(target);
 }

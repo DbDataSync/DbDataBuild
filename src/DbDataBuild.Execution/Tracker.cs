@@ -28,6 +28,9 @@ public sealed class Tracker
     public Task PlanMemberAsync(string stepId, string planId, int position, string membership, string model, string loadName, string loadPlanHash, bool selected, CancellationToken ct = default) =>
         gate == null ? Task.CompletedTask : AuditLog.PlanMemberAsync(gate, scope!, stepId, planId, position, membership, model, loadName, loadPlanHash, selected, ct);
 
+    public Task UnrunLoadAsync(string stepId, Guid runId, string model, string loadName, string status, string planId, string? gitCommit, string? definitionHash, RefreshStepRecord refresh, CancellationToken ct = default) =>
+        gate == null ? Task.CompletedTask : AuditLog.UnrunLoadAsync(gate, scope!, stepId, runId, model, loadName, status, planId, gitCommit, definitionHash, refresh, ct);
+
     public Task BeginDdlAsync(string stepId, Guid ddlId, string objectName, string statementText, string statementHash, string? hashBefore, string invoker, string planId, string? gitCommit, CancellationToken ct = default) =>
         gate == null ? Task.CompletedTask : AuditLog.BeginDdlAsync(gate, scope!, stepId, ddlId, objectName, statementText, statementHash, hashBefore, invoker, planId, gitCommit, ct);
 

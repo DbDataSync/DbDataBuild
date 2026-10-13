@@ -8,7 +8,7 @@ namespace DbDataBuild.Cli;
 
 public static class CliApp
 {
-    public const int ExitOk = 0, ExitFindings = 1, ExitUsage = 2, ExitNotImplemented = 3, ExitInternal = 70;
+    public const int ExitOk = 0, ExitFindings = 1, ExitUsage = 2, ExitNotImplemented = 3, ExitBusy = 4, ExitInternal = 70;
 
     /// <param name="input">Where interactive answers are read from. Only used when <paramref name="interactive"/> is true.</param>
     /// <param name="interactive">Whether a person is there to answer questions (a terminal). Commands that ask refuse to run without one unless they are given everything.</param>
@@ -243,9 +243,10 @@ public static class CliApp
                     var runDirty = new Option<bool>("--allow-dirty") { Description = "Run from a working tree with uncommitted changes (recorded)" };
                     var runDry = new Option<bool>("--dry-run") { Description = "Run every check and print every statement; execute nothing" };
                     var runInput = new Option<string[]>("--input") { Description = "`[model.]name=value`: the value of an input of a load to run, instead of its default or the plan's (repeatable); it replaces a resolver, which is then not run, and is recorded as coming from the flag. `model.name` is needed when more than one load has the input", DefaultValueFactory = _ => [] };
+                    var runOnlyFailed = new Option<bool>("--only-failed") { Description = "Run only the loads of the plan that did not end done in its last run: failed, skipped or not run (a full run again is also safe, loads are idempotent). Needs a plan and its recorded runs" };
                     cmd.Arguments.Add(runTarget); cmd.Arguments.Add(runPlan); cmd.Arguments.Add(runModels);
-                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry); cmd.Options.Add(runInput);
-                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), [.. pr.GetValue(runPlan) is { } rp ? [rp] : Array.Empty<string>(), .. pr.GetValue(runModels) ?? []]); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), pr.GetValue(runInput) ?? [], o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    cmd.Options.Add(runProject); cmd.Options.Add(runCheck); cmd.Options.Add(runOnFail); cmd.Options.Add(runDirty); cmd.Options.Add(runDry); cmd.Options.Add(runInput); cmd.Options.Add(runOnlyFailed);
+                    cmd.SetAction(pr => { var (runConn, runRest) = SplitConnection(pr.GetValue(runProject)!.FullName, pr.GetValue(runTarget), [.. pr.GetValue(runPlan) is { } rp ? [rp] : Array.Empty<string>(), .. pr.GetValue(runModels) ?? []]); return Reported(pr, spec, (o, e) => RefreshCommand.Run(spec, pr.GetValue(runProject)!.FullName, runConn, runRest, pr.GetValue(runCheck), pr.GetValue(runOnFail), pr.GetValue(runDirty), pr.GetValue(runDry), pr.GetValue(runInput) ?? [], pr.GetValue(runOnlyFailed), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "connection monitor":
                     var reportProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
