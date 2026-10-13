@@ -78,6 +78,12 @@ public class TemplateConformanceTests
             Ok(plan, "plan");
             var planFile = Path.Combine(dir, System.Text.RegularExpressions.Regex.Match(plan.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);
             Ok(Cli("connection", "deploy", "--apply-plan", planFile), "apply");
+            if (template == "retail")
+            {
+                // the plan `daily` runs the routine loads and `reconcile`, whose window an expression computes from today's date; then the whole history is reloaded by the same load with a window the person gives
+                Ok(Cli("connection", "refresh", name, "daily"), "refresh daily");
+                Ok(Cli("connection", "refresh", name, "marts.fct_sales_lines.reconcile", "--input", "days=4000"), "reconcile the whole history");
+            }
 
             var marts = Directory.EnumerateFiles(Path.Combine(dir, "models", "marts"), "*.sql").Select(f => "marts." + Path.GetFileNameWithoutExtension(f)).OrderBy(m => m, StringComparer.Ordinal).ToList();
             Assert.NotEmpty(marts);

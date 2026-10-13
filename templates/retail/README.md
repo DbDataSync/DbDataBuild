@@ -91,15 +91,35 @@ dbdatabuild connection deploy sqlserver --apply-plan plans/sqlserver/2026-10-12-
   Applied plan 2026-10-12-63bfc38a: 48 step(s) executed.
 ```
 
-**6. Refresh** (frequent, unattended, data only). It reads the committed refresh plan, not the models, checks what `refresh.check` says (the default is `objects`) and repeats the 11 loads of the plan `daily` (`connection refresh sqlserver hourly` runs only the sales lines):
+**6. Refresh** (frequent, unattended, data only). It reads the committed refresh plan, not the models, checks what `refresh.check` says (the default is `objects`) and repeats the 12 loads of the plan `daily` (the 11 routine loads, and `reconcile` of the sales lines, whose window of days a resolver computes from today's date; `connection refresh sqlserver hourly` runs only the sales lines):
 
 ```
 dbdatabuild connection refresh sqlserver daily
-  Refresh plan rendered/sqlserver/refresh/daily.yml: 11 of 11 member(s).
-  Refresh ref-20261012T182419-9aca: 11 step(s) ran.
+  Refresh plan rendered/sqlserver/refresh/daily.yml: 12 of 12 member(s).
+  Refresh ref-20261012T182419-9aca: 12 step(s) ran.
 ```
 
 `status` now says `Structure  in sync: a deploy would change no structure (it would run 11 routine load(s))`.
+
+**A window that moves every day.** `fct_sales_lines` has a second load, `reconcile`, which reloads the last days of the history by `date_key` (a line can change after it was loaded: a return, a corrected price). Its `start` and `end` are **inputs** with a resolver, written in the model:
+
+```yaml
+    inputs:
+      days:  { type: INTEGER, default: 14 }
+      start: { resolver: { expression: "CAST(strftime(current_date - days, '%Y%m%d') AS BIGINT)" } }
+      end:   { resolver: { expression: "CAST(strftime(current_date + 1, '%Y%m%d') AS BIGINT)" } }
+```
+
+An `expression` is evaluated by DuckDB in the tool, on the clock of the day the refresh runs (UTC unless `timezone:` in `dbdatabuild.yml` says another zone), and reads no database. The plan `daily` gives `days: 30`. Without a database you can see what the window is right now, and with a person's value instead:
+
+```
+dbdatabuild project show refresh daily --resolve                    # @start ... now: 20260913   @end ... now: 20261014
+dbdatabuild connection refresh sqlserver daily --dry-run            # the values each load would use, and where each came from
+dbdatabuild connection refresh sqlserver marts.fct_sales_lines.reconcile --input days=4000   # the whole history; the resolver of start is still run, from days
+dbdatabuild connection refresh sqlserver marts.fct_sales_lines.reconcile --input start=20240101
+```
+
+The event records every input with its source (`default`, `membership`, `flag`, `resolver:expression`), the hash of the resolver and the run's instant, so what a load did at two in the morning can be read the next day.
 
 **7. Monitor.** `connection monitor sqlserver` lists the events (a deploy and a refresh are one event each), the DDL and loads they ran, the shapes recorded for each object and what needs attention:
 
@@ -134,5 +154,5 @@ and `connection deploy --apply-plan 2026-10-12-ca1128bf` applies it by that id; 
 ## PostgreSQL
 
 The project is set for SQL Server (see the comment at the top of `dbdatabuild.yml` for the PostgreSQL profile). With that profile and an empty PostgreSQL 17 database, all 23 models validate and the cycle above runs as written
-with `postgres` as the connection (`Applied plan ...: 48 step(s) executed.`, `Refresh ...: 11 step(s) ran.`), and the conformance suite compares every mart with DuckDB's rows on both engines. `fct_shipment_packages` uses
+with `postgres` as the connection (`Applied plan ...: 48 step(s) executed.`, `Refresh ...: 12 step(s) ran.`), and the conformance suite compares every mart with DuckDB's rows on both engines. `fct_shipment_packages` uses
 `generate_series`, which SQL Server has from version 16 (2022; `connections: sqlserver: {version: 16}` says so).

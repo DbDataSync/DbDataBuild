@@ -39,6 +39,10 @@ excluded:
 A refresh rebuilds the report from what the warehouse holds; it never reads a shop system. To bring new orders in, **deploy** again: the plan has a transfer and a load per origin (`copy warehouse.orders from store_east (pos.orders)`),
 which needs the read login of every origin. `connection refresh sqlserver daily` says so while it runs: `1 of 1 member(s); 1 left out: warehouse.orders.`
 
+## Why the copy declares no resolver
+
+An input of a load can be computed by a `source` resolver, which runs at the origin of a copy in the origin's own dialect (`docs/concepts.md`). This project does not use one on `warehouse.orders`, on purpose: the copy is a **fan-in** (two origins, one table, a `slice` that keeps each origin's rows apart), and the loads that take inputs, a range of days or a window, replace everything in the range, which would remove the other shop's rows of the same days (the copy's own load replaces only the rows of the origin it is loading). A copy from one origin has no such problem: `tests/DbDataBuild.Tests.Conformance/RefreshInputsCopyConformanceTests.cs` copies `src.events` with `delete_insert_by_range`, and its `start` is `source: "SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'"`, run at the origin on either engine. A refresh does not run copies yet (`excluded` above), so a resolver of a copy is computed when the plan is made and again when it is applied.
+
 ## Running the cycle on four databases
 
 The numbers below are from a run of these commands against SQL Server 2022 and PostgreSQL 17 (ids and times differ in yours). One database each: `stores_wh` (SQL Server; create it `COLLATE Latin1_General_100_CS_AS` to match the
