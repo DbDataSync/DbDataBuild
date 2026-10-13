@@ -28,7 +28,12 @@ internal static class RefreshCommand
     }
 
     /// <summary>An input as it will run: its value (null for one a resolver finds when the load runs) and where the value came from.</summary>
-    internal sealed record EffectiveInput(string Name, string Type, string Source, string? Value);
+    /// <param name="Free">An input no script binds (a value only resolvers use): it is recorded in the event and never bound to the load.</param>
+    /// <param name="ResolverHash">The hash of the resolver that found the value, when one did.</param>
+    internal sealed record EffectiveInput(string Name, string Type, string Source, string? Value, bool Free = false, string? ResolverHash = null, long DurationMs = 0);
+
+    /// <summary>The frozen instant of a run, to the second. A test sets it to prove the clock a resolver sees is the run's.</summary>
+    internal static Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
 
     internal sealed record InputFlag(string? Target, string Name, string Value, string Text);
 
@@ -178,6 +183,9 @@ internal static class RefreshCommand
             planHash = Hashing.Sha256Hex(string.Join("\n", items.Select(i => i.Entry.Hash)));
             selection = string.Join(' ', direct.Select(d => d.FullName));
         }
+        // ---- one instant for the whole run: what `now()` and `current_date` mean to every resolver of every load ----
+        var started = Now();
+        var context = new InputRunContext(new DateTimeOffset(started.UtcDateTime.Ticks - started.UtcDateTime.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero), config.TimezoneOf(connection.Name), planName, connection.Name);
         // ---- the logins and where the records are, which `--only-failed` and the check both read ----
         // ---- the check level: a flag, the plan's own, the connection's, the project's ----
         var check = checkArg != null ? Enum.Parse<RefreshCheck>(checkArg, ignoreCase: true) : plan?.Settings.Check is { } pc && Enum.TryParse<RefreshCheck>(pc, ignoreCase: true, out var planCheck) ? planCheck : settings.Check;
@@ -252,6 +260,8 @@ internal static class RefreshCommand
             if (l.ResolverFile != null && ReadFile(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
             foreach (var h in l.Before.Concat(l.After))
                 if (ReadFile(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
+            foreach (var r in l.Inputs.Select(i => i.Resolver).Where(r => r?.File != null))
+                if (ReadFile(r!.File!, r.FileHash ?? "", "input resolver") is { } text) scripts[r.File!] = text;
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
 
@@ -321,7 +331,7 @@ internal static class RefreshCommand
             try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
-        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, session, ct), Downstream);
+        var execution = new RefreshExecution(units, (unit, session, ct) => PrepareAsync(byUnit[unit.Position], stepsOf[unit.Position], inputs[byUnit[unit.Position]], scripts, context, session, ct), Downstream);
 
         var run = new RefreshRunInfo(planName, selection, members);
         var executable = new Plan(id, connection.Name, commit, dirty, ProductInfo.Version, [], [], steps, []);
@@ -384,7 +394,7 @@ internal static class RefreshCommand
         foreach (var item in items) result[item] = [];
         foreach (var flag in flags)
         {
-            var candidates = items.Where(i => i.Entry.Inputs.Any(p => p.Name == flag.Name) && (flag.Target == null || flag.Target == i.Display || flag.Target == i.Entry.Model || flag.Target == i.Entry.FullName)).ToList();
+            var candidates = items.Where(i => i.Entry.Inputs.Any(p => p.Name == flag.Name && p.Provides.Count == 0) && (flag.Target == null || flag.Target == i.Display || flag.Target == i.Entry.Model || flag.Target == i.Entry.FullName)).ToList();
             if (candidates.Count == 0)
             {
                 error.WriteLine(flag.Target == null
@@ -400,7 +410,7 @@ internal static class RefreshCommand
         }
         if (!ok) return false;
         foreach (var item in items)
-            foreach (var p in item.Entry.Inputs)
+            foreach (var p in item.Entry.Inputs.Where(p => p.Provides.Count == 0))
             {
                 var flag = flags.Where(f => f.Name == p.Name && (f.Target == null || f.Target == item.Display || f.Target == item.Entry.Model || f.Target == item.Entry.FullName)).LastOrDefault();
                 var given = item.Member?.Inputs.FirstOrDefault(x => x.Name == p.Name);
@@ -408,7 +418,9 @@ internal static class RefreshCommand
                 if (flag != null) (value, source) = (flag.Value, "flag");
                 else if (given != null) (value, source) = (given.Value, "membership");
                 else if (p.Source == RefreshParameter.FromParameter) (value, source) = (p.Value, "parameter");
+                else if (p.Source == RefreshParameter.FromDefault) (value, source) = (p.Value, "default");
                 else if (p.Source == RefreshParameter.FromResolver) (value, source) = (null, "resolver");
+                else if (p.Source is RefreshParameter.Computed or RefreshParameter.Provided) (value, source) = (null, "computed");
                 else
                 {
                     error.Diag(new Diagnostic(DiagnosticCatalog.RefreshInputMissing, new(item.Entry.File, 0, 0), $"`{item.Display}` needs a value for `{p.Name}` ({p.Type}), which has no default: give it with `--input {item.Entry.FullName}.{p.Name}=<value>`."));
@@ -418,18 +430,18 @@ internal static class RefreshCommand
                 {
                     if (!RefreshPlanBuilder.InputFits(p.Type, value!)) { error.WriteLine($"The value `{value}` of the input `{p.Name}` of `{item.Display}` is not a {p.Type}."); ok = false; continue; }
                 }
-                result[item].Add(new(p.Name, p.Type, source, value));
+                result[item].Add(new(p.Name, p.Type, source, value, p.Free));
             }
         return ok;
 
-        static string Describe(List<RunItem> items) => items.SelectMany(i => i.Entry.Inputs.Select(p => $"{i.Display}.{p.Name}")).ToList() is { Count: > 0 } all ? $"The inputs of the loads to run: {string.Join(", ", all)}." : "None of them takes an input.";
+        static string Describe(List<RunItem> items) => items.SelectMany(i => i.Entry.Inputs.Where(p => p.Provides.Count == 0).Select(p => $"{i.Display}.{p.Name}")).ToList() is { Count: > 0 } all ? $"The inputs of the loads to run: {string.Join(", ", all)}." : "None of them takes an input.";
     }
 
     /// <summary>The steps of one load as far as they can be known before the run: the hooks before it, the load (a value that a resolver finds is still empty), the hooks after it.</summary>
     private static List<PlanStep> Skeleton(RunItem item, List<EffectiveInput> inputs, Dictionary<string, string> scripts)
     {
         var l = item.Entry;
-        var parameters = inputs.Select(p => new PlanParameter(p.Name, p.Type, p.Source, p.Value)).ToList();
+        var parameters = inputs.Where(p => !p.Free).Select(p => new PlanParameter(p.Name, p.Type, p.Source, p.Value)).ToList();
         var suffix = item.Membership != l.Load ? $" as {item.Membership}" : "";
         PlanStep Hook(RefreshHook h) => new("", StepType.Hook, l.Model, $"hook {h.Name} ({h.Event})", scripts[h.File], RiskClass.Safe, ["hook.fired", $"event {h.Event}"], null, [], Operation: h.Event, FileHash: h.FileHash, Hook: h.Name, Effect: h.Effect);
         var load = new PlanStep("", StepType.Load, l.Model, $"load {l.Model} ({l.Load}{suffix})", scripts[l.File], RiskClass.Safe, ["load.routine"], null, parameters, l.ResolverFile == null ? null : scripts[l.ResolverFile], null, HasResolver: l.ResolverFile != null,
@@ -438,37 +450,63 @@ internal static class RefreshCommand
     }
 
     /// <summary>
-    /// A load made ready just before its turn: the value a resolver finds is read now, from the connection, so it sees what the loads before it wrote. A resolver that finds nothing falls back to the initial value the model declared, or
-    /// the load fails (a scheduled run has no one to ask).
+    /// A load made ready just before its turn: its computed inputs are resolved now (an expression in the tool, a `target` resolver on the connection), in dependency order, with the run's frozen instant, so a load sees what the
+    /// loads before it wrote; a person's `--input` or a membership's value replaces the resolver, which is not run. Then the watermark is read from the connection. An input that cannot be resolved fails the load (`failed: input`) with a
+    /// message that names the input and the resolver; one that finds NULL goes to its `on_null`.
     /// </summary>
-    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, ReadSession read, CancellationToken ct)
+    private static async Task<PreparedLoad> PrepareAsync(RunItem item, List<PlanStep> skeleton, List<EffectiveInput> inputs, Dictionary<string, string> scripts, InputRunContext context, ReadSession read, CancellationToken ct)
     {
         var l = item.Entry;
+        var usedClock = false;
+        if (l.Inputs.Any(d => d.Source is RefreshParameter.Computed or RefreshParameter.Provided))
+        {
+            var given = inputs.Where(x => x.Source is "flag" or "membership").ToDictionary(x => x.Name, x => (x.Value!, x.Source), StringComparer.Ordinal);
+            var resolution = await InputResolution.ResolveAsync(item.Display, l.Inputs.Where(d => d.Source != RefreshParameter.FromResolver).ToList(), given, context, new SessionInputRunner(read),
+                r => r.File != null && scripts.TryGetValue(r.File, out var text) ? text : null, ct);
+            usedClock = resolution.UsedClock;
+            foreach (var r in resolution.Inputs)
+                if (inputs.FindIndex(x => x.Name == r.Name) is var at and >= 0 && inputs[at].Source == "computed")
+                    inputs[at] = inputs[at] with { Source = r.Source, Value = r.Value, ResolverHash = r.ResolverHash, DurationMs = r.DurationMs };
+            if (resolution.Failure != null) return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), resolution.Failure);
+            if (resolution.SkipLoad) return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), "an input found NULL and its `on_null` is `skip_load`, so the load did not run", LoadStatus.SkippedNoValue);
+        }
         var parameters = new List<PlanParameter>();
         string? resolverResult = null;
         for (var i = 0; i < inputs.Count; i++)
         {
             var p = inputs[i];
+            if (p.Free) continue;
             if (p.Source != "resolver") { parameters.Add(new(p.Name, p.Type, p.Source, p.Value)); continue; }
             var found = await TargetSnapshotReader.RunResolverAsync(read, scripts[l.ResolverFile!], p.Type, ct);
             if (found.Error != null)
-                return new PreparedLoad(skeleton, InputsJson(inputs), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark.");
+                return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` {found.Error}. A table that was never deployed has no watermark.");
             resolverResult = found.Value;
             var value = found.Value;
             var source = "resolver:target";
             if (value == null)
             {
                 if (l.OnNull == WatermarkSpec.InitialLiteral && l.Initial != null) (value, source) = (l.Initial, "initial");
-                else return new PreparedLoad(skeleton, InputsJson(inputs), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`.");
+                else return new PreparedLoad(skeleton, InputsJson(inputs, context, usedClock), $"{DiagnosticCatalog.ResolverResultInvalid.Code}: the resolver for `@{p.Name}` returned NULL and the model says `on_null: require_param`, so a person gives the value: `--input {l.FullName}.{p.Name}=<value>`.");
             }
             parameters.Add(new(p.Name, p.Type, source, value));
             inputs[i] = p with { Source = source, Value = value };                         // what the event records
         }
         var steps = skeleton.Select(s => s.Type == StepType.Load ? s with { Parameters = parameters, ResolverResult = resolverResult } : s).ToList();
-        return new PreparedLoad(steps, InputsJson(inputs));
+        return new PreparedLoad(steps, InputsJson(inputs, context, usedClock));
     }
 
-    private static string InputsJson(IEnumerable<EffectiveInput> inputs) => JsonSerializer.Serialize(inputs.Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }), Json);
+    /// <summary>The inputs as the event records them: each with where its value came from, the hash of the resolver that found it and how long that took; and, when an expression read the clock, the run's instant.</summary>
+    private static string InputsJson(IEnumerable<EffectiveInput> inputs, InputRunContext context, bool usedClock)
+    {
+        var rows = inputs.Select(x =>
+        {
+            var row = new Dictionary<string, object?> { ["name"] = x.Name, ["type"] = x.Type, ["source"] = x.Source, ["value"] = x.Value };
+            if (x.ResolverHash != null) { row["resolver_hash"] = x.ResolverHash; row["duration_ms"] = x.DurationMs; }
+            return row;
+        }).ToList();
+        if (usedClock) rows.Add(new() { ["name"] = "run_started", ["type"] = "TIMESTAMP", ["source"] = "run", ["value"] = context.RunStartedText });
+        return JsonSerializer.Serialize(rows, Json);
+    }
 }
 
 /// <summary>The safety checks before a refresh (`refresh.check`), from cheapest to strictest. Each compares what the compiled project expects of the objects the refresh uses with something recorded or live.</summary>

@@ -12,6 +12,23 @@ public enum RiskClass { Safe, Risky, Destructive }
 /// <param name="Value">Invariant-culture text of the value in the parameter's logical type, or null for SQL NULL.</param>
 public sealed record PlanParameter(string Name, string Type, string Source, string? Value);
 
+/// <summary>
+/// One input of a planned load: how it is defined (the compiled input, with the resolver's text inline so the plan is self-contained), and the value this plan was made with, its source
+/// (`flag`, `default`, `parameter`, `resolver:expression`, `resolver:target`, `resolver:source`, `initial`) and the hash of the resolver that found it.
+/// </summary>
+/// <param name="Origin">For a `source` resolver of a copy: the origin it ran at.</param>
+public sealed record PlannedInput(RefreshParameter Def, string Source, string? Value, string? ResolverHash, string? Origin = null)
+{
+    public string Name => Def.Name;
+    public string Type => Def.Type;
+
+    /// <summary>Whether the value is computed (a resolver found it), which is what can move between a plan and its apply.</summary>
+    public bool IsComputed => Source.StartsWith("resolver:", StringComparison.Ordinal);
+}
+
+/// <summary>What resolving the inputs of one load at plan time came to: the inputs, or why the load cannot be planned (<see cref="Failure"/>), or that an input found NULL and says `skip_load`.</summary>
+public sealed record PlannedLoadInputs(IReadOnlyList<PlannedInput> Inputs, string? Failure, bool SkipLoad);
+
 /// <summary>The rows a `transfer` step moves (<see cref="Command"/>: the read is a native command, a call that returns rows, not a SELECT; apply runs it in a transaction it rolls back, and matches its result columns to the declared ones by name): read on <see cref="Origin"/> with <see cref="ReadText"/> (a single SELECT, hashed like any statement), converted by the declared types of <see cref="Columns"/>, and written to <see cref="Staging"/> on the plan's connection.</summary>
 /// <param name="Staging">`schema_name.table_name` of the staging table; the step's text creates it.</param>
 public sealed record TransferSpec(string Origin, string ReadText, string Staging, IReadOnlyList<PlanColumn> Columns, PlanSlice? Slice = null, PlanWatermark? Watermark = null, IReadOnlyList<PlanParameter>? Parameters = null, bool Command = false);
@@ -36,10 +53,12 @@ public sealed record PlanColumn(string Name, string Type);
 /// <param name="Effect">For a hook step: `ddl` or `data`, which decides which command may run it.</param>
 /// <param name="Transfer">For a transfer step: where the rows come from and which columns they are. <see cref="Text"/> is the DDL that (re)creates the staging table they are written to.</param>
 /// <param name="DefinitionHash">For a load: the hash of the model query it was planned from, recorded in `run_log` so a later plan can see the query changed.</param>
+/// <param name="Inputs">For a load whose model declares `inputs:`: every input with the value the plan was made with and where it came from, and what is needed to compute it again at apply (a clock-based input moves, and apply says so).</param>
 public sealed record PlanStep(
     string Id, StepType Type, string Object, string Description, string Text, RiskClass Risk, IReadOnlyList<string> Reasons,
     string? HashAfter, IReadOnlyList<PlanParameter> Parameters, string? ResolverText = null, string? ResolverResult = null, bool HasResolver = false,
-    string? FileHash = null, string? Operation = null, string? ShapeSource = null, string? DefinitionHash = null, string? Expect = null, string? Hook = null, string? Effect = null, TransferSpec? Transfer = null);
+    string? FileHash = null, string? Operation = null, string? ShapeSource = null, string? DefinitionHash = null, string? Expect = null, string? Hook = null, string? Effect = null, TransferSpec? Transfer = null,
+    IReadOnlyList<PlannedInput>? Inputs = null);
 
 /// <summary>What the plan assumed about an object, verified against the live target at apply (a mismatch is a stale plan).</summary>
 public sealed record ObjectBase(string Object, ObjectState State, string? LiveShapeHash, string? RecordedShapeHash);

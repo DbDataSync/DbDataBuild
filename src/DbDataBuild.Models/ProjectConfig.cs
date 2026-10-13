@@ -46,6 +46,9 @@ public static class PolicyKeys
 /// <param name="Version">The T-SQL level (or major version) the tool generates for: SQL Server 2022 and 2025 at compatibility level 160 are 16, 2025 at 170 is 17.</param>
 public sealed record ConnectionConfig(string Name, string Engine, int? Version = null, int Line = 0, IReadOnlyDictionary<string, ParameterValue>? DeclaredParameters = null, ConnectionTracking? Tracking = null, bool AllowNativeCommands = false, StringSemanticsOverride? Semantics = null, LifecycleOverride? Lifecycle = null, ObjectInfo? DeclaredInfo = null)
 {
+    /// <summary>The connection's own `timezone:` (an IANA name), which wins over the project's for the clock of its resolvers.</summary>
+    public string? Timezone { get; init; }
+
     /// <summary>The connection's title, description, tags and properties (its own: the project's are not inherited).</summary>
     public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
 
@@ -139,6 +142,12 @@ public sealed record ProjectConfig(
 
     /// <summary>The refresh plans the project declares (`refresh.plans`), by name. Empty when it declares none, in which case a model may name any plan; `default` is always valid.</summary>
     public IReadOnlyDictionary<string, RefreshPlanSettings> RefreshPlans { get; init; } = new Dictionary<string, RefreshPlanSettings>();
+
+    /// <summary>The project's `timezone:`: the zone an `expression` resolver's `current_date` and `now()` mean (an IANA name). Null: UTC.</summary>
+    public string? Timezone { get; init; }
+
+    /// <summary>The zone the clock of a resolver on <paramref name="connection"/> means: the connection's own `timezone:`, else the project's, else UTC. The machine's zone is never used.</summary>
+    public string TimezoneOf(string connection) => (Connections.TryGetValue(connection, out var c) ? c.Timezone : null) ?? Timezone ?? "UTC";
 
     /// <summary>The lifecycle settings in force on one connection: the project's with what the connection says laid over them.</summary>
     public LifecycleSettings LifecycleOf(string connection) => Connections.TryGetValue(connection, out var c) && c.Lifecycle is { } own ? own.Apply(Lifecycle) : Lifecycle;

@@ -141,6 +141,19 @@ public static class PlanDocument
                     if (prm.Value != null) sb.Append("        value: ").AppendLineLf(Q(prm.Value));
                 }
             }
+            if (s.Inputs is { Count: > 0 })
+            {
+                sb.AppendLineLf("    inputs:");
+                foreach (var i in s.Inputs)
+                {
+                    sb.Append("      - planned_source: ").AppendLineLf(Q(i.Source));
+                    if (i.Value != null) sb.Append("        planned_value: ").AppendLineLf(Q(i.Value));
+                    if (i.ResolverHash != null) sb.Append("        resolver_hash: ").AppendLineLf(Q(i.ResolverHash));
+                    if (i.Origin != null) sb.Append("        origin: ").AppendLineLf(Q(i.Origin));
+                    sb.AppendLineLf("        input:");
+                    RefreshInputYaml.Write(sb, "          ", "          ", i.Def);
+                }
+            }
             sb.Append("    text: ").AppendLineLf(Q(s.Text));
         }
         if (p.Noticed.Count > 0)
@@ -157,7 +170,7 @@ public static class PlanDocument
     private static readonly string[] PlanKeys = ["id", "hash", "connection", "tool_version", "git_commit", "git_dirty", "project_hash"];
     private static readonly string[] BaseKeys = ["object", "state", "live_shape_hash", "recorded_shape_hash"];
     private static readonly string[] AnswerKeys = ["id", "choice", "value", "note", "source"];
-    private static readonly string[] StepKeys = ["id", "type", "object", "description", "risk", "reasons", "hash_after", "operation", "file_hash", "shape_source", "definition_hash", "expect", "hook", "effect", "resolver", "transfer", "parameters", "text"];
+    private static readonly string[] StepKeys = ["id", "type", "object", "description", "risk", "reasons", "hash_after", "operation", "file_hash", "shape_source", "definition_hash", "expect", "hook", "effect", "resolver", "transfer", "parameters", "inputs", "text"];
     private static readonly string[] ParamKeys = ["name", "type", "source", "value"];
 
     /// <summary>Reads a plan file. Returns null with diagnostics when it is malformed, has unknown keys, or its content hash does not match.</summary>
@@ -241,8 +254,16 @@ public static class PlanDocument
                         else Bad(pn, "Each transfer parameter must be a mapping.");
                     transfer = new TransferSpec(Req(tm, "origin"), Req(tm, "read"), Req(tm, "staging"), columns, slice, watermark, tparams.Count == 0 ? null : tparams, Bool(tm, "command"));
                 }
+                var plannedInputs = new List<PlannedInput>();
+                var inputReader = new CompiledYaml.Reader(file, diags);
+                foreach (var im in inputReader.Maps(m, "inputs", "input"))
+                {
+                    Keys(im, ["planned_source", "planned_value", "resolver_hash", "origin", "input"], "a planned input");
+                    if (im.Get("input") is YamlMapping def) plannedInputs.Add(new(RefreshInputYaml.Read(inputReader, def), Req(im, "planned_source"), S(im, "planned_value"), S(im, "resolver_hash"), S(im, "origin")));
+                    else Bad(im, "A planned input needs its `input:` mapping.");
+                }
                 steps.Add(new PlanStep(Req(m, "id"), EnumOf<StepType>(m, "type"), Req(m, "object"), Req(m, "description"), Req(m, "text"), EnumOf<RiskClass>(m, "risk"), reasons,
-                    S(m, "hash_after"), parameters, resolverText, resolverResult, hasResolver, S(m, "file_hash"), S(m, "operation"), S(m, "shape_source"), S(m, "definition_hash"), S(m, "expect"), S(m, "hook"), S(m, "effect"), transfer));
+                    S(m, "hash_after"), parameters, resolverText, resolverResult, hasResolver, S(m, "file_hash"), S(m, "operation"), S(m, "shape_source"), S(m, "definition_hash"), S(m, "expect"), S(m, "hook"), S(m, "effect"), transfer, plannedInputs.Count == 0 ? null : plannedInputs));
             }
         var noticed = (top.Get("noticed") as YamlSequence)?.Items.OfType<YamlScalar>().Select(x => x.Value).ToList() ?? [];
 

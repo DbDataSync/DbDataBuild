@@ -60,6 +60,89 @@ internal static class RefreshPlanBuilder
         return true;
     }
 
+    /// <summary>
+    /// The inputs of one rendered load: the ones its script binds (the query's parameters, the watermark, `start` and `end` of a range load), with the declared `inputs:` laid over them. Null (with the reason) when the load
+    /// cannot run unattended because a parameter of its query has no value on the connection.
+    /// </summary>
+    /// <param name="originEngine">For a copy: the engine of the origin a `source` resolver runs at, which picks the file it was lowered into.</param>
+    internal static (List<RefreshParameter>? Inputs, string? Skip) InputsOf(ProjectContext ctx, ModelSource source, string connection, ModelDefinition def, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? parameterValues, List<Diagnostic> diags, string? originEngine = null)
+    {
+        var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
+        var inputs = new List<RefreshParameter>();
+        foreach (var p in op.Parameters)
+        {
+            if (p.Source == "parameter")
+            {
+                var key = QueryParameter.KeyOf(p.Name);
+                if (key == null || parameterValues?.GetValueOrDefault(key) is not { } pv) return (null, $"the parameter `{key ?? p.Name}` has no value on {connection}");
+                inputs.Add(new(p.Name, pv.Type, RefreshParameter.FromParameter, pv.Value));
+            }
+            else if (p.Source == "resolver") inputs.Add(new(p.Name, p.Type, RefreshParameter.FromResolver, null));
+            else inputs.Add(new(p.Name, p.Type, RefreshParameter.Required, null));
+        }
+        if (declaredOp is { InputList.Count: > 0 } && !DeclareInputs(ctx, source, connection, def, declaredOp, op, parameterValues, inputs, diags, originEngine)) return (null, "its `inputs:` could not be compiled");
+        return (inputs, null);
+    }
+
+    /// <summary>
+    /// Lays the load's declared `inputs:` over the inputs its script binds: a script parameter (`start`, `end`) gets a default or a resolver; a name no script binds is a free input; an entry that provides several makes
+    /// them `provided` and is itself the resolver. The text of a `target` resolver is the file the renderer wrote (named with its hash); an `expression` is the text as written, with the parameters it names and their values.
+    /// Returns false (with diagnostics) when it cannot be compiled.
+    /// </summary>
+    private static bool DeclareInputs(ProjectContext ctx, ModelSource source, string connection, ModelDefinition def, LoadOperation declared, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? modelValues, List<RefreshParameter> inputs, List<Diagnostic> diags, string? originEngine)
+    {
+        var ok = true;
+        void Bad(LoadInput i, string found, DiagnosticDescriptor? d = null) { diags.Add(new Diagnostic(d ?? DiagnosticCatalog.InputResolverInvalid, new(source.DefinitionFile, i.Line, 1), $"{def.Name}.{declared.Name}: the input `{i.Name}` {found}.")); ok = false; }
+        var providedBy = declared.InputList.Where(g => g.Provides.Count > 0).SelectMany(g => g.Provides.Select(p => (Name: p, Group: g.Name))).ToDictionary(x => x.Name, x => x.Group, StringComparer.Ordinal);
+        var values = source.ParametersFor(ctx.Config, connection);
+
+        RefreshInputResolver? ResolverOf(LoadInput i)
+        {
+            if (i.Resolver == null) return null;
+            var problems = new List<string>();
+            var refs = InputCompiler.ParametersOf(source, ctx.Config, connection, i.Resolver.Text, problems);
+            if (i.Resolver.Kind == InputResolverKinds.Expression) return new(i.Resolver.Kind, i.Resolver.Text, null, null, i.Provides, refs);
+            var rendered = op.InputList.FirstOrDefault(r => r.Name == i.Name && r.Kind == i.Resolver.Kind && (r.Engine == null || originEngine == null || r.Engine == originEngine));
+            if (rendered?.Path == null) { Bad(i, "has no rendered resolver (see the errors of the compile)"); return null; }
+            return new(i.Resolver.Kind, null, rendered.Path, Hashing.ScriptHash(rendered.Text), i.Provides, refs, rendered.Engine);
+        }
+
+        // the value a default gives: a literal, or the parameter it names
+        (string? Value, string Source) DefaultOf(LoadInput i)
+        {
+            if (i.Default == null) return (null, RefreshParameter.Required);
+            var refs = InputParameters.Refs(i.Default);
+            if (refs.Count == 0) return (i.Default, RefreshParameter.FromDefault);
+            if (refs.Count > 1 || i.Default.Trim() != $"${{{refs[0]}}}" || !values.TryGetValue(refs[0], out var pv) || !InputParameters.Scopes.Contains(refs[0][..refs[0].IndexOf('.')])) { Bad(i, $"has the default `{i.Default}`, which is not one `${{project.x}}` or `${{connection.x}}` parameter that has a value on {connection}"); return (null, RefreshParameter.Required); }
+            return (pv.Value, RefreshParameter.FromParameter);
+        }
+
+        foreach (var li in declared.InputList)
+        {
+            var existing = inputs.FirstOrDefault(p => p.Name == li.Name);
+            if (existing != null && existing.Source is RefreshParameter.FromParameter or RefreshParameter.FromResolver) { Bad(li, "has the name of a parameter the load's query or watermark already binds"); continue; }
+            if (li.Provides.Count > 0)
+            {
+                inputs.Add(new(li.Name, "", RefreshParameter.Computed, null, ResolverOf(li), Free: true));
+                continue;
+            }
+            var type = li.Type ?? existing?.Type ?? "VARCHAR";
+            var entry = new RefreshParameter(li.Name, type, RefreshParameter.Required, null, null, Free: existing == null, OnNull: li.OnNull);
+            if (providedBy.TryGetValue(li.Name, out var group)) entry = entry with { Source = RefreshParameter.Provided, ProvidedBy = group };
+            else if (li.Resolver != null) entry = entry with { Source = RefreshParameter.Computed, Resolver = ResolverOf(li) };
+            var (value, valueSource) = DefaultOf(li);
+            if (li.Resolver != null || entry.Source == RefreshParameter.Provided) entry = entry with { Initial = li.OnNull == InputOnNull.Initial ? value : null };
+            else if (li.Default != null) entry = entry with { Source = valueSource, Value = value };
+            if (value != null && !InputValues.Fits(type, value)) Bad(li, $"has the value `{value}`, which is not a {type}");
+            if (existing != null) inputs[inputs.IndexOf(existing)] = entry; else inputs.Add(entry);
+        }
+        // a name a group provides that the load's script binds (`start`, `end`) is provided too, though it is declared nowhere else
+        foreach (var (name, group) in providedBy)
+            if (inputs.FirstOrDefault(p => p.Name == name) is { } p && p.Source == RefreshParameter.Required)
+                inputs[inputs.IndexOf(p)] = p with { Source = RefreshParameter.Provided, ProvidedBy = group };
+        return ok;
+    }
+
     /// <param name="models">Every model of the project that declares <paramref name="connection"/>, with its query as that connection reads it, and its rendering for the connection.</param>
     public static CompiledRefresh Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, List<Diagnostic> diags)
     {
@@ -73,6 +156,7 @@ internal static class RefreshPlanBuilder
                 PlanningSession.Merge(m.Source.ParametersFor(ctx.Config, connection), ctx.Lowering.NativeValuesFor(m.Sql, connection)), null);
         }).ToList();
         var renders = models.ToDictionary(x => x.Model.Source.Definition.Name, x => x.Render, StringComparer.Ordinal);
+        var sources = models.ToDictionary(x => x.Model.Source.Definition.Name, x => x.Model.Source, StringComparer.Ordinal);
 
         var loads = new List<LoadPlanEntry>();
         var excluded = new List<RefreshExclusion>();
@@ -100,20 +184,8 @@ internal static class RefreshPlanBuilder
             foreach (var op in ops)
             {
                 var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
-                var inputs = new List<RefreshParameter>();
-                var routine = true;
-                foreach (var p in op.Parameters)
-                {
-                    if (p.Source == "parameter")
-                    {
-                        var key = QueryParameter.KeyOf(p.Name);
-                        if (key == null || model.ParameterValues?.GetValueOrDefault(key) is not { } pv) { Skip(op, $"the parameter `{key ?? p.Name}` has no value on {connection}"); routine = false; break; }
-                        inputs.Add(new(p.Name, pv.Type, RefreshParameter.FromParameter, pv.Value));
-                    }
-                    else if (p.Source == "resolver") inputs.Add(new(p.Name, p.Type, RefreshParameter.FromResolver, null));
-                    else inputs.Add(new(p.Name, p.Type, RefreshParameter.Required, null));
-                }
-                if (!routine) continue;
+                var (inputs, skipReason) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, diags);
+                if (inputs == null) { Skip(op, skipReason!); continue; }
                 loads.Add(new(def.Name, op.Operation, op.Strategy, op.IsDefault, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
                     shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text));
             }
@@ -157,10 +229,10 @@ internal static class RefreshPlanBuilder
             var ok = true;
             foreach (var (name, value) in m.Inputs)
             {
-                if (entry.Inputs.FirstOrDefault(i => i.Name == name) is not { } input)
+                if (entry.Inputs.FirstOrDefault(i => i.Name == name && i.Provides.Count == 0) is not { } input)
                 {
                     diags.Add(new Diagnostic(DiagnosticCatalog.RefreshMembershipInvalid, where, $"`{def.Name}`: the load `{m.Load}` in the plan `{plan}` is given the input `{name}`, which it does not take.",
-                        entry.Inputs.Count == 0 ? "It takes no input." : $"Its inputs: {string.Join(", ", entry.Inputs.Select(i => i.Name))}."));
+                        entry.Inputs.Count(i => i.Provides.Count == 0) == 0 ? "It takes no input." : $"Its inputs: {string.Join(", ", entry.Inputs.Where(i => i.Provides.Count == 0).Select(i => i.Name))}."));
                     ok = false;
                 }
                 else if (!InputFits(input.Type, value))

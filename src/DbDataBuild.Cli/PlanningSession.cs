@@ -97,7 +97,7 @@ internal sealed class PlanningSession
 
     /// <summary>Returns the session, or null and the exit code after printing why not.</summary>
     public static (PlanningSession? Session, int Exit) Prepare(CommandSpec spec, string root, string? targetArg, string[] models, TextWriter output, TextWriter error, Func<string, string?> env,
-        IReadOnlyDictionary<string, string>? operations = null, IReadOnlySet<string>? backfills = null, IReadOnlySet<string>? fullRefresh = null)
+        IReadOnlyDictionary<string, string>? operations = null, IReadOnlySet<string>? backfills = null, IReadOnlySet<string>? fullRefresh = null, IReadOnlyList<InputPin>? pins = null)
     {
         var ctx = ProjectContext.Load(root);
         var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
@@ -239,11 +239,13 @@ internal sealed class PlanningSession
         IReadOnlyList<ColumnHistoryEntry> history = [];
         var resolved = new Dictionary<string, ResolverOutcome>();
         var rangeBounds = new Dictionary<string, ColumnBounds>();
+        var loadInputs = new Dictionary<string, PlannedLoadInputs>();
+        var inputProblems = new List<string>();
         try
         {
             using var cts = new CancellationTokenSource();
             Dictionary<string, string?> marks;
-            (snapshot, resolved, rangeBounds, marks) = Task.Run(async () =>
+            (snapshot, resolved, rangeBounds, marks, loadInputs, inputProblems) = Task.Run(async () =>
             {
                 await using var read = await ReadSession.OpenAsync(login!);
                 await using var ownTrackingRead = trackingRead == null ? null : await ReadSession.OpenAsync(trackingRead);
@@ -283,8 +285,15 @@ internal sealed class PlanningSession
                         if (max.Error != null) throw new GateRefusedException(new Diagnostic(DiagnosticCatalog.ResolverResultInvalid, new(def.Name, 0, 0), $"{def.Name}: the newest `{def.Watermark.Column}` in the destination {max.Error}."));
                         marks[$"{def.Name}|{origin.Connection}"] = WatermarkBound(max.Value, type, def.Watermark.Lookback);
                     }
-                return (snap, results, bounds, marks);
+                // the inputs the chosen loads declare: computed now, once, with one instant for the plan, and shown in it
+                var chosenOps = renderedOps.Where(o => operations != null && operations.TryGetValue(o.Model, out var chosen) ? o.Operation == chosen : o.IsDefault).ToList();
+                var now = RefreshCommand.Now();
+                var planInstant = new DateTimeOffset(now.UtcDateTime.Ticks - now.UtcDateTime.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+                var (inputSets, problems) = await InputPlanning.ResolveAsync(ctx, target, planned, chosenOps, read, env, pins ?? [], new InputRunContext(planInstant, ctx.Config.TimezoneOf(target), null, target), CancellationToken.None);
+                return (snap, results, bounds, marks, inputSets, problems);
             }).GetAwaiter().GetResult();
+            foreach (var problem in inputProblems) error.WriteLine(problem);
+            if (inputProblems.Count > 0) return (null, CliApp.ExitUsage);
             planned = planned.Select(p => p.Definition.Watermark == null ? p : p with { Origins = p.OriginList.Select(o => marks.TryGetValue($"{p.Definition.Name}|{o.Connection}", out var bound) ? o with { WatermarkValue = bound } : o).ToList() }).ToList();
         }
         catch (GateRefusedException ex)
@@ -304,7 +313,7 @@ internal sealed class PlanningSession
         var loads = renderedOps.GroupBy(o => o.Model).ToDictionary(g => g.Key, g => (IReadOnlyList<RenderedLoad>)g
             .Select(o => new RenderedLoad(o.Operation, o.IsDefault, o.Script, DbDataBuild.State.Hashing.ScriptHash(o.Script), o.Resolver, o.Parameters, o.Watermark)).ToList());
         var input = new PlanInput(target, ctx.Config, planned, snapshot.Live, snapshot.Schemas, snapshot.RecordedShapeHashes, snapshot.LastViewStatementHashes,
-            snapshot.LastLoadDefinitionHashes, snapshot.Acknowledged, loads, resolved, operations, backfills, rangeBounds) { Tracked = trackingScope != null };
+            snapshot.LastLoadDefinitionHashes, snapshot.Acknowledged, loads, resolved, operations, backfills, rangeBounds) { Tracked = trackingScope != null, LoadInputs = loadInputs };
         return (new PlanningSession { Root = root, Target = target, Context = ctx, Input = input, Warnings = distinct.Where(d => d.Severity != Severity.Error).ToList() }, CliApp.ExitOk);
     }
 

@@ -59,6 +59,11 @@ public sealed record PlanInput(
     public string Engine => Config.EngineOf(Target) ?? Target;
 
     public static string ResolverKey(string model, string operation) => $"{model}|{operation}";
+
+    /// <summary>The inputs of the chosen loads, resolved at plan time (docs/research/refresh-plans.md, section 8): an expression computed, a `target` resolver run on the read login, a `source` resolver run at an origin (a copy has one set per origin).</summary>
+    public IReadOnlyDictionary<string, PlannedLoadInputs> LoadInputs { get; init; } = new Dictionary<string, PlannedLoadInputs>();
+
+    public static string InputsKey(string model, string operation, string? origin = null) => origin == null ? $"{model}|{operation}" : $"{model}|{operation}|{origin}";
 }
 
 /// <summary>The smallest and largest value of a range load's column on the target, read at plan time so a range can be compared with what the table holds.</summary>
@@ -492,8 +497,23 @@ public static class Planner
         var parameters = new List<PlanParameter>();
         string? resolverResult = null;
         var open = false;
+        // the inputs the model declares are worked out before the plan is made (a resolver run, an expression computed): one set for a load, one per origin for a copy
+        var origins = def.IsCopy && !def.LocalCopy ? c.Model.OriginList.Select(o => o.Connection).ToList<string?>() : [null];
+        var inputSets = origins.Select(o => (Origin: o, Set: c.Input.LoadInputs.GetValueOrDefault(PlanInput.InputsKey(def.Name, load.Operation, o)))).ToList();
+        if (inputSets.FirstOrDefault(x => x.Set?.Failure != null).Set is { } failed)
+        {
+            blocks.Add(new Diagnostic(DiagnosticCatalog.InputNotResolved, new(def.Name, 0, 0), failed.Failure!));
+            return false;
+        }
+        if (inputSets.Any(x => x.Set is { SkipLoad: true }))
+        {
+            c.Noticed.Add($"{def.Name}: an input of the load `{load.Operation}` found NULL and says `on_null: skip_load`, so the table is not loaded.");
+            return true;
+        }
+        bool Supplied(string name) => inputSets.Count > 0 && inputSets.All(x => x.Set?.Inputs.Any(i => i.Name == name && !i.Def.Free) == true);
         foreach (var p in load.Parameters)
         {
+            if (p.Source == "runtime" && Supplied(p.Name)) continue;                                  // a default, a resolver or a pin gave it: the value is bound below
             if (p.Source == "parameter")
             {
                 // a parameter the query uses as a value: its value on this connection, from the project's files (never asked, never in the statement text)
@@ -549,24 +569,37 @@ public static class Planner
             }
         }
         if (open) return true;
-        if (!SpanFits(c, load, parameters, blocks)) return false;
-        RangeNotice(c, load, parameters);
 
-        var loadStep = new PlanStep("", backfill ? StepType.Backfill : StepType.Load, def.Name, $"{(backfill ? "backfill" : "load")} {def.Name} ({load.Operation})", load.Script,
-            backfill ? RiskClass.Risky : RiskClass.Safe, backfill ? ["load.backfill", "requested with --backfill"] : ["load.routine"], null, parameters,
-            load.ResolverText, resolverResult, HasResolver: load.ResolverText != null, FileHash: load.FileHash, Operation: load.Operation, DefinitionHash: c.Model.DefinitionHash);
+        // the load's step for one origin (or the load itself): the values its inputs have there are bound beside the others
+        PlanStep? StepFor(string? origin)
+        {
+            var set = inputSets.FirstOrDefault(x => x.Origin == origin).Set;
+            var all = new List<PlanParameter>(parameters);
+            foreach (var i in set?.Inputs ?? [])
+                if (!i.Def.Free && load.Parameters.Any(p => p.Name == i.Name) && all.All(a => a.Name != i.Name)) all.Add(new PlanParameter(i.Name, i.Type, i.Source, i.Value));
+            if (!SpanFits(c, load, all, blocks)) return null;
+            RangeNotice(c, load, all);
+            return new PlanStep("", backfill ? StepType.Backfill : StepType.Load, def.Name, $"{(backfill ? "backfill" : "load")} {def.Name} ({load.Operation})", load.Script,
+                backfill ? RiskClass.Risky : RiskClass.Safe, backfill ? ["load.backfill", "requested with --backfill"] : ["load.routine"], null, all,
+                load.ResolverText, resolverResult, HasResolver: load.ResolverText != null, FileHash: load.FileHash, Operation: load.Operation, DefinitionHash: c.Model.DefinitionHash,
+                Inputs: set == null || set.Inputs.Count == 0 ? null : set.Inputs);
+        }
         if (def.IsCopy && !def.LocalCopy && c.Model.OriginList.Count > 0)
         {
             // a copy: for each origin the rows are staged on the destination, then loaded from there by the ordinary strategy (a copy with a slice replaces only that origin's rows); the staging table is dropped at the end
             foreach (var origin in c.Model.OriginList)
             {
+                var stepForOrigin = StepFor(origin.Connection);
+                if (stepForOrigin == null) return false;
                 loadSteps.Add(TransferStep(c, origin));
-                loadSteps.AddRange(Hooked.Around(c.Model, backfill ? "backfill" : "load", loadStep));
+                loadSteps.AddRange(Hooked.Around(c.Model, backfill ? "backfill" : "load", stepForOrigin));
             }
             var (stagingSchema, stagingTable) = (CopyModels.StagingSchema(c.Input.Config), CopyModels.StagingTable(def.Name));
             loadSteps.Add(Step(StepType.Ddl, $"{stagingSchema}.{stagingTable}", $"drop staging table of {def.Name}", c.Ddl.DropTableIfExists(stagingSchema, stagingTable), RiskClass.Safe, ["copy.staging.drop"]));
             return true;
         }
+        var loadStep = StepFor(null);
+        if (loadStep == null) return false;
         loadSteps.AddRange(Hooked.Around(c.Model, backfill ? "backfill" : "load", loadStep));
         return true;
     }

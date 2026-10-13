@@ -44,6 +44,12 @@ public static class PlanReport
             }
             if (s.HashAfter != null) L($"- Expected shape hash afterwards: `{s.HashAfter[..16]}`");
             if (s.Parameters.Count > 0) L($"- Parameters: {string.Join(", ", s.Parameters.Select(p => $"@{p.Name} ({p.Type}, {p.Source}) = {(p.Value ?? "NULL")}"))}");
+            if (s.Inputs is { Count: > 0 })
+            {
+                L("- Inputs, as computed when the plan was made (apply computes them again; if any differs it stops and shows what moved):");
+                foreach (var i in s.Inputs.Where(i => i.Source != "group"))
+                    L($"  - `{i.Name}` ({i.Type}) = {i.Value ?? "NULL"}  [{i.Source}{(i.Origin != null ? " at " + i.Origin : "")}]");
+            }
             if (s.HasResolver) L($"- Resolver result at plan time: {(s.ResolverResult ?? "NULL")}. Apply runs the resolver again and refuses if it differs.");
             if (s.Risk != RiskClass.Safe) L($"- Risk: {s.Risk.ToString().ToLowerInvariant()}.");
             L();

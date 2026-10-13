@@ -56,6 +56,34 @@ public sealed class ReadSession : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reads at most <paramref name="maxRows"/> rows of one SELECT with the names of its columns, and stops (the command is cancelled, the rest is never fetched). A resolver of an input must return exactly one row, so the
+    /// caller asks for two and counts. Guarded like every read.
+    /// </summary>
+    public async Task<(IReadOnlyList<string> Names, IReadOnlyList<IReadOnlyList<object?>> Rows)> QueryFirstRowsAsync(string sql, int maxRows, int timeoutSeconds, CancellationToken ct = default)
+    {
+        if (ReadGuard.Check(sql) is { } refused) throw new GateRefusedException(refused);
+        Observer?.Invoke(sql);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = timeoutSeconds;
+        var rd = await cmd.ExecuteReaderAsync(ct);
+        var names = Enumerable.Range(0, rd.FieldCount).Select(rd.GetName).ToList();
+        var rows = new List<IReadOnlyList<object?>>();
+        try
+        {
+            while (rows.Count < maxRows && await rd.ReadAsync(ct))
+                rows.Add(Enumerable.Range(0, rd.FieldCount).Select(i => rd.IsDBNull(i) ? null : rd.GetValue(i)).ToList());
+        }
+        finally
+        {
+            // more rows may follow and the caller does not want them: cancel instead of draining, and let a cancellation that comes back from closing be
+            if (rows.Count >= maxRows) { try { cmd.Cancel(); } catch (Exception) { /* the statement ended */ } }
+            try { await rd.DisposeAsync(); } catch (Exception) when (rows.Count >= maxRows) { /* the cancelled rest */ }
+        }
+        return (names, rows);
+    }
+
+    /// <summary>
     /// Opens a streaming read: one SELECT, the rows handed over as they arrive instead of being collected (a copy reads whole tables). Guarded like every read. The stream owns the command and the reader
     /// and must be disposed.
     /// </summary>

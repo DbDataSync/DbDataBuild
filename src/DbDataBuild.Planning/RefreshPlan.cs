@@ -12,13 +12,38 @@ namespace DbDataBuild.Planning;
 /// <summary>A data hook around a routine load, by name and file: the script is read from the project when the refresh runs, and must have the hash the plan recorded.</summary>
 public sealed record RefreshHook(string Name, string Event, string File, string FileHash, string Effect, string Risk);
 
+/// <summary>A parameter of the project or the connection that a resolver's text names (`${project.days}`), with the value it had when the project was compiled: the load plan carries it, so a run needs no project files.</summary>
+public sealed record RefreshParameterRef(string Name, string Type, string Value);
+
+/// <summary>
+/// How an input is computed when its load runs (docs/research/refresh-plans.md, section 8). An `expression` is committed as the text written; a `target` or `source` resolver is committed as a file under `rendered/`
+/// (<see cref="File"/> and its hash), lowered for the engine it runs on, and its <see cref="Text"/> is read from that file when the load runs. <see cref="Provides"/> are the inputs a resolver that answers several
+/// (named columns) provides. <see cref="Hash"/> is what the event records with the value.
+/// </summary>
+/// <param name="Engine">For a `source` resolver: the engine of the origin the text is lowered for (a copy may have origins of several engines, each with its own file).</param>
+public sealed record RefreshInputResolver(string Kind, string? Text, string? File, string? FileHash, IReadOnlyList<string> Provides, IReadOnlyList<RefreshParameterRef> Parameters, string? Engine = null)
+{
+    public string Hash => Hashing.Sha256Hex(string.Join("\n", Kind, FileHash ?? Text ?? "", string.Join(",", Parameters.Select(p => $"{p.Name}={p.Value}"))));
+}
+
 /// <summary>An input of a load: its name and type, and where its default comes from.</summary>
-/// <param name="Source">`parameter` (a value the project's files give, recorded here), `resolver` (read from the connection when the load runs) or `required` (it has no default: a person, or a membership of a plan, gives it).</param>
-public sealed record RefreshParameter(string Name, string Type, string Source, string? Value)
+/// <param name="Source">`parameter` (a value the project's files give, recorded here), `default` (a value the load's `inputs:` give), `resolver` (the watermark, read from the connection when the load runs), `computed` (its <see cref="Resolver"/> finds it when the load runs), `provided` (computed by the resolver of <see cref="ProvidedBy"/>) or `required` (it has no default: a person, or a membership of a plan, gives it).</param>
+/// <param name="Free">True for an input no script binds (`days`): resolvers and memberships use it, nothing is bound to the load for it.</param>
+/// <param name="OnNull">What to do when the resolver finds NULL: `fail`, `initial` (use <see cref="Initial"/>) or `skip_load`.</param>
+public sealed record RefreshParameter(string Name, string Type, string Source, string? Value, RefreshInputResolver? Resolver = null, bool Free = false, string? ProvidedBy = null, string OnNull = "fail", string? Initial = null)
 {
     public const string FromParameter = "parameter";
+    public const string FromDefault = "default";
     public const string FromResolver = "resolver";
+    public const string Computed = "computed";
+    public const string Provided = "provided";
     public const string Required = "required";
+
+    /// <summary>The inputs this entry answers when it is a resolver that provides several.</summary>
+    public IReadOnlyList<string> Provides => Resolver?.Provides ?? [];
+
+    /// <summary>Whether a resolver (its own, or its group's) has to run to know the value, unless a person or a membership gave it.</summary>
+    public bool NeedsResolver => Source is Computed or Provided;
 }
 
 /// <summary>
@@ -113,6 +138,56 @@ internal static class CompiledYaml
     }
 }
 
+/// <summary>One input of a load as a block of YAML: how a load plan (`loads.yml`) and a deploy plan both write it, and read it back.</summary>
+internal static class RefreshInputYaml
+{
+    public static readonly string[] Keys = ["name", "type", "source", "value", "free", "provided_by", "on_null", "initial", "resolver"];
+    private static string Q(string s) => CompiledYaml.Q(s);
+
+    /// <param name="first">What starts the first line (a list item's `- `, or the indent of a mapping).</param>
+    /// <param name="pad">The indent of every other line.</param>
+    public static void Write(StringBuilder sb, string first, string pad, RefreshParameter prm)
+    {
+        sb.Append(first).Append("name: ").AppendLineLf(Q(prm.Name));
+        sb.Append(pad).Append("type: ").AppendLineLf(Q(prm.Type));
+        sb.Append(pad).Append("source: ").AppendLineLf(Q(prm.Source));
+        if (prm.Value != null) sb.Append(pad).Append("value: ").AppendLineLf(Q(prm.Value));
+        if (prm.Free) sb.Append(pad).AppendLineLf("free: true");
+        if (prm.ProvidedBy != null) sb.Append(pad).Append("provided_by: ").AppendLineLf(Q(prm.ProvidedBy));
+        if (prm.OnNull != "fail") sb.Append(pad).Append("on_null: ").AppendLineLf(Q(prm.OnNull));
+        if (prm.Initial != null) sb.Append(pad).Append("initial: ").AppendLineLf(Q(prm.Initial));
+        if (prm.Resolver is not { } rv) return;
+        sb.Append(pad).AppendLineLf("resolver:");
+        sb.Append(pad).Append("  kind: ").AppendLineLf(Q(rv.Kind));
+        if (rv.Text != null) sb.Append(pad).Append("  text: ").AppendLineLf(Q(rv.Text));
+        if (rv.File != null) { sb.Append(pad).Append("  file: ").AppendLineLf(Q(rv.File)); sb.Append(pad).Append("  file_hash: ").AppendLineLf(Q(rv.FileHash ?? "")); }
+        if (rv.Engine != null) sb.Append(pad).Append("  engine: ").AppendLineLf(Q(rv.Engine));
+        if (rv.Provides.Count > 0) { sb.Append(pad).AppendLineLf("  provides:"); foreach (var p in rv.Provides) sb.Append(pad).Append("    - ").AppendLineLf(Q(p)); }
+        if (rv.Parameters.Count > 0)
+        {
+            sb.Append(pad).AppendLineLf("  parameters:");
+            foreach (var p in rv.Parameters) { sb.Append(pad).Append("    - name: ").AppendLineLf(Q(p.Name)); sb.Append(pad).Append("      type: ").AppendLineLf(Q(p.Type)); sb.Append(pad).Append("      value: ").AppendLineLf(Q(p.Value)); }
+        }
+    }
+
+    /// <param name="extra">Keys the owner of the mapping adds to the input's own.</param>
+    public static RefreshParameter Read(CompiledYaml.Reader r, YamlMapping pm, params string[] extra)
+    {
+        r.Keys(pm, [.. Keys, .. extra], "an input");
+        RefreshInputResolver? resolver = null;
+        if (pm.Get("resolver") is YamlMapping rm)
+        {
+            r.Keys(rm, ["kind", "text", "file", "file_hash", "engine", "provides", "parameters"], "a resolver");
+            var provides = ((rm.Get("provides") as YamlSequence)?.Items ?? []).OfType<YamlScalar>().Select(x => x.Value).ToList();
+            var refs = new List<RefreshParameterRef>();
+            foreach (var qm in r.Maps(rm, "parameters", "parameter")) { r.Keys(qm, ["name", "type", "value"], "a parameter"); refs.Add(new(r.Req(qm, "name"), r.Req(qm, "type"), r.Req(qm, "value"))); }
+            resolver = new(r.Req(rm, "kind"), r.S(rm, "text"), r.S(rm, "file"), r.S(rm, "file_hash"), provides, refs, r.S(rm, "engine"));
+        }
+        else if (pm.Get("resolver") is { } bad) r.Bad(bad, "A resolver must be a mapping.");
+        return new(r.Req(pm, "name"), r.Req(pm, "type"), r.Req(pm, "source"), r.S(pm, "value"), resolver, r.S(pm, "free") == "true", r.S(pm, "provided_by"), r.S(pm, "on_null") ?? "fail", r.S(pm, "initial"));
+    }
+}
+
 /// <summary>Reads and writes `loads.yml`. Like a deploy plan it carries a hash of its own content and is refused when it was edited.</summary>
 public static class LoadsDocument
 {
@@ -160,13 +235,7 @@ public static class LoadsDocument
         if (l.Inputs.Count > 0)
         {
             sb.AppendLineLf("    inputs:");
-            foreach (var prm in l.Inputs)
-            {
-                sb.Append("      - name: ").AppendLineLf(Q(prm.Name));
-                sb.Append("        type: ").AppendLineLf(Q(prm.Type));
-                sb.Append("        source: ").AppendLineLf(Q(prm.Source));
-                if (prm.Value != null) sb.Append("        value: ").AppendLineLf(Q(prm.Value));
-            }
+            foreach (var prm in l.Inputs) RefreshInputYaml.Write(sb, "      - ", "        ", prm);
         }
         Hooks(sb, "before", l.Before);
         Hooks(sb, "after", l.After);
@@ -228,7 +297,7 @@ public static class LoadsDocument
         {
             r.Keys(m, EntryKeys, "a load");
             var inputs = new List<RefreshParameter>();
-            foreach (var pm in r.Maps(m, "inputs", "input")) { r.Keys(pm, ["name", "type", "source", "value"], "an input"); inputs.Add(new(r.Req(pm, "name"), r.Req(pm, "type"), r.Req(pm, "source"), r.S(pm, "value"))); }
+            foreach (var pm in r.Maps(m, "inputs", "input")) inputs.Add(RefreshInputYaml.Read(r, pm));
             stored.Add(r.Req(m, "hash"));
             loads.Add(new(r.Req(m, "model"), r.Req(m, "load"), r.Req(m, "strategy"), r.S(m, "default") == "true", r.Req(m, "file"), r.Req(m, "file_hash"), r.S(m, "resolver_file"), r.S(m, "resolver_hash"),
                 r.Req(m, "definition_hash"), r.Req(m, "shape_hash"), inputs, r.S(m, "on_null"), r.S(m, "initial"), HookList(m, "before"), HookList(m, "after"), r.S(m, "max_runtime")));

@@ -23,6 +23,7 @@ public static class LoadStatus
     public const string SkippedBusy = "skipped: busy";
     public const string SkippedStopped = "skipped: stopped";
     public const string SkippedCheckFailed = "skipped: check failed";
+    public const string SkippedNoValue = "skipped: no value";
     public const string NotRun = "not run";
 
     /// <summary>`done`, `failed`, `skipped` or `not run`.</summary>
@@ -90,7 +91,7 @@ internal static class RefreshEngine
         var preparedSteps = new List<PlanStep>();
         var refusals = new List<Diagnostic>();
         var failedModels = new List<string>();                  // loads that failed under `continue`: what reads them is skipped
-        var busyModels = new List<string>();                    // loads skipped because they were busy: what reads them runs, and says so
+        var skippedModels = new Dictionary<string, string>(StringComparer.Ordinal);      // loads skipped because they were busy or an input found nothing and said skip_load: what reads them runs, and says so
         var halted = false; var stopTriggered = false; var operatorStopped = false;
 
         bool Reads(IEnumerable<string> upstream, string model) => upstream.Any(u => exec.DownstreamOf(u).Contains(model));
@@ -116,7 +117,8 @@ internal static class RefreshEngine
             else
             {
                 progress($"load {unit.Position}/{exec.Units.Count}: {unit.Display}");
-                result = await RunUnitAsync(unit, Reads(busyModels, unit.Model) ? "upstream skipped: busy" : null, plan, reader, tracker, gate, o, runId, connectionLock, preparedSteps, progress, ct);
+                var upstreamSkipped = skippedModels.FirstOrDefault(kv => exec.DownstreamOf(kv.Key).Contains(unit.Model));
+                result = await RunUnitAsync(unit, upstreamSkipped.Key != null ? $"upstream skipped: {upstreamSkipped.Value}" : null, plan, reader, tracker, gate, o, runId, connectionLock, preparedSteps, progress, ct);
             }
             results.Add(result);
 
@@ -129,11 +131,12 @@ internal static class RefreshEngine
                     default: failedModels.Add(unit.Model); break;
                 }
             }
-            else if (result.Status == LoadStatus.SkippedBusy) busyModels.Add(unit.Model);
+            else if (result.Status == LoadStatus.SkippedBusy) skippedModels[unit.Model] = "busy";
+            else if (result.Status == LoadStatus.SkippedNoValue) skippedModels[unit.Model] = "no value";
         }
 
         // how it ended: a stop wins; an ignored failure is a warning and nothing more; a busy skip is not a failure
-        var problems = results.Where(r => r.State is "failed" or "not run" || (r.State == "skipped" && r.Status != LoadStatus.SkippedBusy)).ToList();
+        var problems = results.Where(r => r.State is "failed" or "not run" || (r.State == "skipped" && r.Status is not (LoadStatus.SkippedBusy or LoadStatus.SkippedNoValue))).ToList();
         var ignored = results.Where(r => r.State == "failed" && r.Unit.OnFailure == OnFailureModes.Ignore).ToList();
         var counted = problems.Except(ignored).ToList();
         var outcome = stopTriggered || operatorStopped ? RefreshSummary.Stopped

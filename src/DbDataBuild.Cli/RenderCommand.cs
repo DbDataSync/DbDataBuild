@@ -115,7 +115,7 @@ internal static class RenderCommand
 
     /// <summary>Whether a file in a directory under `rendered/` is one the compiler writes (so a stale one may be removed): in a connection's `refresh/` folder every `.yml` is.</summary>
     private static bool IsGenerated(string dir, string fileName) =>
-        fileName is "manifest.yml" or "lowered.sql" or LoadsDocument.FileName or RefreshPlanDocument.RetiredFileName || (fileName.StartsWith("load.", StringComparison.Ordinal) && fileName.EndsWith(".sql", StringComparison.Ordinal))
+        fileName is "manifest.yml" or "lowered.sql" or LoadsDocument.FileName or RefreshPlanDocument.RetiredFileName || ((fileName.StartsWith("load.", StringComparison.Ordinal) || fileName.StartsWith("input.", StringComparison.Ordinal)) && fileName.EndsWith(".sql", StringComparison.Ordinal))
         || (dir.EndsWith("/" + RefreshPlanDocument.FolderName, StringComparison.Ordinal) && fileName.EndsWith(".yml", StringComparison.Ordinal));
 
     private static (List<string> Wrote, List<string> Removed) Write(string root, IReadOnlyList<RenderedFile> files, HashSet<string> scopeDirs)

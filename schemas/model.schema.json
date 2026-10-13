@@ -299,6 +299,73 @@
         }
       ]
     },
+    "loadInputs": {
+      "description": "The values the load needs and where each comes from (docs/research/refresh-plans.md, section 8). An input has a `type`, a `default`, and/or a `resolver` that computes it when the load runs: an `expression` (a DuckDB expression, evaluated in the tool in a sandboxed in-memory database; it may name the load's other inputs, `${project.x}` and `${connection.x}` parameters and the run variables `run_started`, `plan` and `connection`), a `target` (a SELECT in DuckDB dialect over the project's models, lowered for the engine and run on the load's connection) or a `source` (the same for a copy, run at the copy's origin). The result is exactly one row; NULL goes to `on_null`. `provides` makes one resolver answer several inputs (named columns). The inputs `start` and `end` of a range load are its parameters. A `--input` flag or a membership's value replaces the resolver, which is then not run.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "The input's type. Optional for `start` and `end` of a range load (the range column's type) and for a resolver that provides others.",
+            "enum": [
+              "DATE",
+              "TIMESTAMP",
+              "INTEGER",
+              "BIGINT",
+              "SMALLINT",
+              "VARCHAR"
+            ]
+          },
+          "default": {
+            "description": "The value when there is no resolver; with a resolver, the value `on_null: initial` falls back to. May be a `${project.name}` or `${connection.name}` reference.",
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "resolver": {
+            "description": "How the value is computed when the load runs: exactly one of `expression`, `target`, `source`.",
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "expression": {
+                "description": "A DuckDB expression (`current_date - days`), or a SELECT without FROM (`SELECT current_date - 7 AS start, current_date + 1 AS end`, for `provides`). A table reference is an error: there is nothing to read.",
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "target": {
+                "description": "A SELECT in DuckDB dialect over the project's models, returning one row; lowered for the engine of the load's connection and run there on the read login, as committed.",
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "source": {
+                "description": "Only for a copy: a SELECT in DuckDB dialect over the origin's tables, returning one row; lowered for the origin's engine and run at the origin on its read login.",
+                "$ref": "#/$defs/nonEmptyString"
+              }
+            }
+          },
+          "on_null": {
+            "description": "What to do when the resolver finds NULL: `fail` (the default), `initial` (use `default`) or `skip_load` (the load does not run; not a failure).",
+            "enum": [
+              "fail",
+              "initial",
+              "skip_load"
+            ]
+          },
+          "provides": {
+            "description": "The inputs this resolver answers, as the names of its columns. Each is declared in `inputs` with a type (or is `start`/`end` of a range load) and has no resolver of its own.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          }
+        }
+      }
+    },
     "loadOperation": {
       "oneOf": [
         {
@@ -325,6 +392,9 @@
               "items": {
                 "$ref": "#/$defs/connectionName"
               }
+            },
+            "inputs": {
+              "$ref": "#/$defs/loadInputs"
             },
             "max_runtime": {
               "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
@@ -367,6 +437,9 @@
                 "$ref": "#/$defs/nonEmptyString"
               }
             },
+            "inputs": {
+              "$ref": "#/$defs/loadInputs"
+            },
             "max_runtime": {
               "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
               "type": "string",
@@ -407,6 +480,9 @@
               "items": {
                 "$ref": "#/$defs/nonEmptyString"
               }
+            },
+            "inputs": {
+              "$ref": "#/$defs/loadInputs"
             },
             "max_runtime": {
               "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
@@ -464,6 +540,9 @@
             "max_span": {
               "description": "The longest range one run may reload, for example `400 days`. Enforced at plan time.",
               "$ref": "#/$defs/duration"
+            },
+            "inputs": {
+              "$ref": "#/$defs/loadInputs"
             },
             "max_runtime": {
               "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
@@ -555,6 +634,9 @@
                   ]
                 }
               }
+            },
+            "inputs": {
+              "$ref": "#/$defs/loadInputs"
             },
             "max_runtime": {
               "description": "Opt-in: how long a refresh lets this load run (for example `30s`, `15m`, `2h`) before it cancels the statement in flight; the transaction rolls back and the load counts as failed. Wins over the plan's `max_runtime`.",
