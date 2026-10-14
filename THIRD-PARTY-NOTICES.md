@@ -15,7 +15,8 @@ dbdatabuild is MIT licensed (see `LICENSE`). The executable it ships (`scripts/p
 | Package | License |
 |---|---|
 | DuckDB.NET.Data.Full, DuckDB.NET.Bindings.Full | MIT |
-| Apache.Arrow, Apache.Arrow.Scalars | Apache-2.0 |
+| Apache.Arrow, Apache.Arrow.Scalars, Apache.Arrow.Flight, Apache.Arrow.Flight.Sql | Apache-2.0 |
+| Grpc.Net.Client, Grpc.Net.Common, Grpc.Core.Api, Google.Protobuf | Apache-2.0 (Grpc.*), BSD-3-Clause (Google.Protobuf) |
 | Microsoft.Data.SqlClient and its Microsoft.IdentityModel, Microsoft.Extensions, System.* dependencies | MIT |
 | Microsoft.SqlServer.TransactSql.ScriptDom | MIT |
 | Npgsql | PostgreSQL License |

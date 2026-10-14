@@ -78,7 +78,25 @@ public sealed class LoginSettings
         FromEnvironment(connection, connection, login, env);
 
     /// <summary>For the command header (DESIGN.md 9.1): which variable and which user, never the password or the rest of the string.</summary>
-    public string Describe() => $"{(Engine == "duckdb" ? "DuckDB file, read-only" : Engine == "odbc" ? $"ODBC, {User ?? "the driver's own credentials"}" : User ?? "integrated/default")} ({Variable})";
+    public string Describe() => $"{(Engine == "duckdb" ? "DuckDB file, read-only" : Engine == "odbc" ? $"ODBC, {User ?? "the driver's own credentials"}" : Engine == "flightsql" ? FlightSqlDescription() : User ?? "integrated/default")} ({Variable})";
+
+    /// <summary>Where the login goes, when it is a network address that is safe to show (`host:port` of a Flight SQL login); null otherwise, and when the value cannot be read.</summary>
+    public string? Target
+    {
+        get
+        {
+            if (Engine != "flightsql") return null;
+            try { return FlightSqlLogin.Parse(ConnectionString).HostAndPort; }
+            catch (FlightSqlLoginException) { return null; }
+        }
+    }
+
+    // the host and port and how the login signs in (a user's name, or the kind of token); the value itself is never shown
+    private string FlightSqlDescription()
+    {
+        try { var login = FlightSqlLogin.Parse(ConnectionString); return $"Flight SQL {login.HostAndPort}, {login.AuthenticationDescription}"; }
+        catch (FlightSqlLoginException) { return "Flight SQL (the login value is not a valid Flight SQL URI)"; }
+    }
 
     public string? User
     {
@@ -88,6 +106,7 @@ public sealed class LoginSettings
             {
                 if (Engine == "duckdb") return null;                              // a file has no user
                 if (Engine == "odbc") return OdbcLogin.UserOf(ConnectionString);
+                if (Engine == "flightsql") return FlightSqlLogin.UserOf(ConnectionString);
                 if (Engine == "postgres") return new NpgsqlConnectionStringBuilder(ConnectionString).Username;
                 var b = new SqlConnectionStringBuilder(ConnectionString);
                 return string.IsNullOrEmpty(b.UserID) ? null : b.UserID;
@@ -99,6 +118,11 @@ public sealed class LoginSettings
     /// <summary>Opens the read side of this login as a row source. Internal on purpose: the way to it is <see cref="ReadSession"/>.</summary>
     internal async Task<IRowSource> OpenRowSourceAsync(CancellationToken ct)
     {
+        if (Engine == "flightsql")
+        {
+            if (Login == Login.Write) throw new InvalidOperationException("A Flight SQL connection is only read.");
+            return await FlightSqlRowSource.ConnectAsync(ConnectionString, ct);
+        }
         var connection = await OpenAsync(ct);
         return Engine switch
         {

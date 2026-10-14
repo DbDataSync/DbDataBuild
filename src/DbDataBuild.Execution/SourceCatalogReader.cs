@@ -80,6 +80,16 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
 
     private static bool IsAnsiSource(string target) => target is "odbc" or "flightsql";
 
+    // For a Flight SQL server the metadata calls come first and `information_schema` is the fallback; true when the dialect says there is no catalog at all.
+    private static IMetadataCatalog? FlightSqlMetadata(ReadSession read, string target) => target == "flightsql" ? read.Metadata : null;
+
+    private static async Task<T> FlightSqlFallbackAsync<T>(ReadSession read, Func<Task<T>> informationSchema)
+    {
+        try { return await informationSchema(); }
+        catch (Exception ex) when (DriverFailure.Rpc(ex) is { } rpc && rpc.StatusCode is not (Grpc.Core.StatusCode.Unavailable or Grpc.Core.StatusCode.Unauthenticated or Grpc.Core.StatusCode.PermissionDenied or Grpc.Core.StatusCode.DeadlineExceeded or Grpc.Core.StatusCode.Cancelled))
+        { throw CatalogUnavailableException.FlightSqlWithoutCatalog(read.Dialect.Name); }
+    }
+
     private static void RequireCatalog(ReadSession read)
     {
         if (read.Dialect.Catalog == Models.CatalogStyle.None) throw new CatalogUnavailableException(read.Dialect.Name);
@@ -87,10 +97,19 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
 
     public static async Task<IReadOnlyList<string>> SchemasAsync(ReadSession read, string target, CancellationToken ct = default)
     {
-        if (IsAnsiSource(target)) { RequireCatalog(read); return (await read.QueryAsync(AnsiSchemas, null, ct)).Select(r => r[0]!.ToString()!).ToList(); }
+        if (IsAnsiSource(target))
+        {
+            RequireCatalog(read);
+            if (FlightSqlMetadata(read, target) is { } metadata && await metadata.SchemasAsync(ct) is { } named) return named.Where(n => n is not ("information_schema" or "pg_catalog" or "sys")).ToList();
+            Task<IReadOnlyList<string>> ask() => ReadSchemaNamesAsync(read, ct);
+            return target == "flightsql" ? await FlightSqlFallbackAsync(read, ask) : await ask();
+        }
         var rows = await read.QueryAsync(target == "duckdb" ? DuckDbSchemas : target == "postgres" ? PostgresSchemas : SqlServerSchemas, null, ct);
         return rows.Select(r => (string)r[0]!).ToList();
     }
+
+    private static async Task<IReadOnlyList<string>> ReadSchemaNamesAsync(ReadSession read, CancellationToken ct) =>
+        (await read.QueryAsync(AnsiSchemas, null, ct)).Select(r => r[0]!.ToString()!).ToList();
 
     /// <summary>Primary key columns, in key order, per table name of the schema name.</summary>
     public static async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> PrimaryKeysAsync(ReadSession read, string target, string schema, CancellationToken ct = default)
@@ -98,7 +117,9 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
         if (IsAnsiSource(target))
         {
             RequireCatalog(read);
-            var ansi = await read.QueryAsync(AnsiPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct);
+            if (FlightSqlMetadata(read, target) is { } metadata && await metadata.PrimaryKeysAsync(schema, ct) is { } offered) return offered;
+            var ansi = target == "flightsql" ? await FlightSqlFallbackAsync(read, () => read.QueryAsync(AnsiPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct))
+                : await read.QueryAsync(AnsiPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct);
             return ansi.GroupBy(r => r[0]!.ToString()!, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.OrderBy(r => Convert.ToInt32(r[2], CultureInfo.InvariantCulture)).Select(r => r[1]!.ToString()!).ToList(), StringComparer.Ordinal);
         }
@@ -118,7 +139,10 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
         if (IsAnsiSource(target))
         {
             RequireCatalog(read);
-            var ansi = await read.QueryAsync(AnsiForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
+            if (FlightSqlMetadata(read, target) is { } metadata && await metadata.ForeignKeysAsync(schema, ct) is { } offered)
+                return offered.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<State.ForeignKeyShape>)kv.Value.Select(k => new State.ForeignKeyShape(k.Name, k.Columns, k.ReferencedSchema, k.ReferencedTable, k.ReferencedColumns)).ToList(), StringComparer.Ordinal);
+            var ansi = target == "flightsql" ? await FlightSqlFallbackAsync(read, () => read.QueryAsync(AnsiForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct))
+                : await read.QueryAsync(AnsiForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
             return ansi.GroupBy(r => r[0]!.ToString()!, StringComparer.Ordinal).ToDictionary(
                 table => table.Key,
                 table => (IReadOnlyList<State.ForeignKeyShape>)table.GroupBy(r => r[1]!.ToString()!, StringComparer.Ordinal).Select(fk =>

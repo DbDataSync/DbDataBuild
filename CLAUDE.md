@@ -8,7 +8,7 @@ dbdatabuild is a .NET 10 CLI that builds analytics tables and views on SQL Serve
 scripts/fetch-native.sh                        # once: the prebuilt polyglot library (or scripts/build-polyglot.sh to compile it)
 dotnet build                                   # warnings are errors
 dotnet test tests/DbDataBuild.Tests.Unit       # no database needed; about 15 seconds
-scripts/test-engines.sh up                     # SQL Server 2022 and PostgreSQL 17 in docker, loopback only (`up all` adds SQL Server 2025 (`mssql2025`: probes and one load, at database compatibility levels 170 and 160), and Oracle, Spark SQL and the BigQuery emulator, which are only probed for their dialect)
+scripts/test-engines.sh up                     # SQL Server 2022 and PostgreSQL 17 in docker, loopback only (`up all` adds SQL Server 2025 (`mssql2025`: probes and one load, at database compatibility levels 170 and 160), and Oracle, Spark SQL and the BigQuery emulator, which are only probed for their dialect; `up flight` adds two Arrow Flight SQL servers, plain and TLS, as origins)
 eval "$(scripts/test-engines.sh env)"
 dotnet test tests/DbDataBuild.Tests.Conformance   # real engines, about 6 minutes in all; skipped without the env vars; groups: --filter "Group=apply", "Group=templates", "Group!=apply&Group!=templates&Group!=release" (the quick one), "Group=release" (sample projects with the rewrites off), "DisplayName~oracle"
 scripts/test-engines.sh down
