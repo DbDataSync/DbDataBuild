@@ -556,6 +556,12 @@ public static class ApplyEngine
     {
         var list = (spec.Parameters ?? []).Select(ToGate).ToList();
         if (spec.Watermark != null) list.Add(ToGate(new PlanParameter("watermark", spec.Watermark.Type, "resolver", spec.Watermark.Value)));
+        // an origin that binds by position gets the values in the order the plan recorded (a name used twice in the text is passed twice)
+        if (spec.ParameterOrder is { Count: > 0 } order)
+        {
+            var byName = list.ToDictionary(x => x.Name.TrimStart('@'), StringComparer.Ordinal);
+            return order.Select(name => byName[name]).ToList();
+        }
         return list.Count == 0 ? null : list;
     }
 

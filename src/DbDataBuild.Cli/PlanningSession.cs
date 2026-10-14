@@ -16,11 +16,19 @@ internal static class CommandTargets
         [.. ProjectConfigLoader.LoadFromProject(projectRoot, []).Connections.Keys.Order(StringComparer.Ordinal)];
 
     /// <summary>The connection a command works on: the flag, or the project's only default connection.</summary>
-    public static ConnectionConfig? Resolve(ProjectConfig config, string? arg, TextWriter error)
+    /// <param name="readOnlyOk">Whether the command only reads the connection (`inspect`, `compare`, `monitor`, `status`, `project import`). A `readonly` connection is refused (DDB-455) by every command that writes to it or builds on it.</param>
+    public static ConnectionConfig? Resolve(ProjectConfig config, string? arg, TextWriter error, bool readOnlyOk = false)
     {
         var name = arg ?? (config.DefaultConnections.Count == 1 ? config.DefaultConnections[0] : null);
         if (name == null) { error.WriteLine($"A connection is required: the project has {config.DefaultConnections.Count} default connections ({string.Join(", ", config.DefaultConnections)}). Name one after the command, for example `{ProductInfo.Cli} connection status {(config.DefaultConnections.Count > 0 ? config.DefaultConnections[0] : "<connection>")}`."); return null; }
         if (!config.Connections.TryGetValue(name, out var connection)) { error.WriteLine($"Unknown connection `{name}`. One of: {string.Join(", ", config.Connections.Keys.Order(StringComparer.Ordinal))}."); return null; }
+        if (connection.ReadOnly && !readOnlyOk)
+        {
+            error.Diag(new Diagnostic(DiagnosticCatalog.ReadOnlyConnectionNotWritable, new($"connection:{connection.Name}", 0, 0),
+                $"The connection `{connection.Name}` is `readonly` ({connection.Kind.Describe()}): this command writes to a connection or builds on it.",
+                Fix: "Use it as an origin (a copy, a mapped or native model, a `source` resolver), or read it with `connection inspect`, `compare`, `monitor` and `project import`."));
+            return null;
+        }
         return connection;
     }
 }
@@ -100,11 +108,11 @@ internal sealed class PlanningSession
         IReadOnlyDictionary<string, string>? operations = null, IReadOnlySet<string>? backfills = null, IReadOnlyList<InputPin>? pins = null)
     {
         var ctx = ProjectContext.Load(root);
-        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
+        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error, readOnlyOk: spec.Name == "connection status");
         if (connection == null) return (null, CliApp.ExitUsage);
         var target = connection.Name; var engine = connection.Engine;
 
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}  |  login: {login?.Describe() ?? "none"}");
         output.Payload("effect", spec.Effect.Describe());
         output.Payload("login", login?.Describe());

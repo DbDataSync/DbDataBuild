@@ -55,9 +55,18 @@ JOIN pg_namespace n ON n.oid = t.relnamespace
 WHERE n.nspname = @schema AND t.relkind = 'r' AND (@object = '' OR t.relname = @object)
 ORDER BY t.relname, ic.relname";
 
+    // DuckDB: the standard views, with the parameters by position (schema, object, object). Its indexes are not read: an ART index is rare in a file that is read, and its definition is a CREATE INDEX text.
+    private const string DuckDbColumns = @"
+SELECT t.table_name, t.table_type, c.ordinal_position, c.column_name, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable
+FROM information_schema.tables t
+JOIN information_schema.columns c ON c.table_catalog = t.table_catalog AND c.table_schema = t.table_schema AND c.table_name = t.table_name
+WHERE t.table_catalog = current_database() AND t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW') AND (? = '' OR t.table_name = ?)
+ORDER BY t.table_name, c.ordinal_position";
+
     /// <param name="objectName">Only this object of the schema name (a step that checks what it just did reads one object, not the hundreds a schema name may hold); null reads them all.</param>
     public static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadObjectsAsync(ReadSession read, string target, string schema, CancellationToken ct = default, string? objectName = null)
     {
+        if (target == "duckdb") return await ReadDuckDbObjectsAsync(read, schema, objectName, ct);
         var p = new[] { new GateParameter("schema", DbType.String, schema), new GateParameter("object", DbType.String, objectName ?? "") };
         var postgres = target == "postgres";
         var columnRows = await read.QueryAsync(postgres ? PostgresColumns : SqlServerColumns, p, ct);
@@ -80,6 +89,23 @@ ORDER BY t.relname, ic.relname";
             if (!postgres) o.Physical.Add(new("compression", (string)r[1]!, $"{r[6]} partitions={r[7]}"));
         }
         return objects.ToDictionary(kv => $"{schema}.{kv.Key}", kv => new ObjectShape(schema, kv.Key, kv.Value.Kind, kv.Value.Columns, kv.Value.Physical));
+    }
+
+    private static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadDuckDbObjectsAsync(ReadSession read, string schema, string? objectName, CancellationToken ct)
+    {
+        var name = objectName ?? "";
+        var rows = await read.QueryAsync(DuckDbColumns, [new GateParameter("schema", DbType.String, schema), new GateParameter("object", DbType.String, name), new GateParameter("object", DbType.String, name)], ct);
+        var objects = new Dictionary<string, (ObjectKind Kind, List<ColumnShape> Columns)>(StringComparer.Ordinal);
+        foreach (var r in rows)
+        {
+            var table = (string)r[0]!;
+            if (!objects.TryGetValue(table, out var o)) objects[table] = o = ((string)r[1]! == "VIEW" ? ObjectKind.View : ObjectKind.Table, []);
+            var declared = ((string)r[4]!).ToLowerInvariant();
+            var type = declared.Contains('(') ? declared[..declared.IndexOf('(')].Trim() : declared;          // DECIMAL(18,3) is the type decimal with a precision and scale of its own
+            var decimalType = type == "decimal";
+            o.Columns.Add(new((string)r[3]!, type, Int(r[5]), decimalType ? Int(r[6]) : null, decimalType ? Int(r[7]) : null, (string?)r[8] == "YES", null, null));
+        }
+        return objects.ToDictionary(kv => $"{schema}.{kv.Key}", kv => new ObjectShape(schema, kv.Key, kv.Value.Kind, kv.Value.Columns, []));
     }
 
     private static ObjectKind KindOf(bool postgres, object kind) =>

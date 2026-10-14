@@ -229,6 +229,7 @@ public static class ProjectValidator
                     CheckLayout(effectiveConfig.Layout, file, def.Name, diags);
                     declared.Add((def.Name, file));
                     CheckRefreshPlans(def, file, effectiveConfig, diags);
+                    CheckDestinations(def, file, effectiveConfig, diags);
                     if (isCopy) copies.Add((def, file));
                     else models.Add(WithParameters(new ModelSource(def, file, stem + ".sql") { Inherited = Inherited(merged, file, stem + ".sql"), Head = head }));
                 }
@@ -422,6 +423,15 @@ public static class ProjectValidator
     }
 
     /// <summary>A model that names a refresh plan the project does not declare (when the project declares any; `default` is always there) is told, at the place the membership was written.</summary>
+    /// <summary>A model is built on its connections, and a copy is written to them: none may be `readonly` (it is an origin only).</summary>
+    private static void CheckDestinations(ModelDefinition def, string file, ProjectConfig config, List<Diagnostic> diags)
+    {
+        foreach (var c in (def.Targets ?? config.DefaultConnections).Where(config.IsReadOnly))
+            diags.Add(new Diagnostic(DiagnosticCatalog.ReadOnlyConnectionNotWritable, new(file, 0, 0),
+                $"`{def.Name}` is {(def.IsCopy ? "copied to" : "built on")} the connection `{c}`, which is `readonly`: the tool never writes there.",
+                Fix: "Name connections that are not readonly in the model's `connections`, or use the readonly connection as an origin (a mapped or native model, or what a copy reads)."));
+    }
+
     private static void CheckRefreshPlans(ModelDefinition def, string file, ProjectConfig config, List<Diagnostic> diags)
     {
         if (config.RefreshPlans.Count == 0) return;

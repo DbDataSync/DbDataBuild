@@ -62,7 +62,8 @@ public sealed record PlannedLoadInputs(IReadOnlyList<PlannedInput> Inputs, strin
 
 /// <summary>The rows a `transfer` step moves (<see cref="Command"/>: the read is a native command, a call that returns rows, not a SELECT; apply runs it in a transaction it rolls back, and matches its result columns to the declared ones by name): read on <see cref="Origin"/> with <see cref="ReadText"/> (a single SELECT, hashed like any statement), converted by the declared types of <see cref="Columns"/>, and written to <see cref="Staging"/> on the plan's connection.</summary>
 /// <param name="Staging">`schema_name.table_name` of the staging table; the step's text creates it.</param>
-public sealed record TransferSpec(string Origin, string ReadText, string Staging, IReadOnlyList<PlanColumn> Columns, PlanSlice? Slice = null, PlanWatermark? Watermark = null, IReadOnlyList<PlanParameter>? Parameters = null, bool Command = false);
+/// <param name="ParameterOrder">For an origin that takes its parameters by position (`?`, `$1`): the names of the values in the order they are bound, a name used twice in the text appearing twice for `?`. Null when the read binds by name.</param>
+public sealed record TransferSpec(string Origin, string ReadText, string Staging, IReadOnlyList<PlanColumn> Columns, PlanSlice? Slice = null, PlanWatermark? Watermark = null, IReadOnlyList<PlanParameter>? Parameters = null, bool Command = false, IReadOnlyList<string>? ParameterOrder = null);
 
 /// <summary>The lower bound an incremental copy reads from: rows whose <see cref="Column"/> is at or after <see cref="Value"/> (invariant text of the column's <see cref="Type"/>), bound to `@watermark` in the read.</summary>
 public sealed record PlanWatermark(string Column, string Type, string Value);

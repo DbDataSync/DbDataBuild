@@ -151,21 +151,21 @@ internal static class ApplyCommand
             error.WriteLine($"The plan is for the connection `{plan.Connection}`, which this project does not have. Connections: {string.Join(", ", config.Connections.Keys.Order(StringComparer.Ordinal))}.");
             return CliApp.ExitFindings;
         }
-        var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
-        var (write, writeMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Write, env);
+        var (read, readMissing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
+        var (write, writeMissing) = LoginSettings.FromEnvironment(connection, Login.Write, env);
         // a plan with a copy reads rows from other connections: each needs its read login, and is opened by name when the transfer runs
         var originLogins = new Dictionary<string, LoginSettings>(StringComparer.Ordinal);
         var originMissing = new List<Diagnostic>();
         foreach (var origin in plan.Steps.Where(s => s.Transfer != null).Select(s => s.Transfer!.Origin).Distinct(StringComparer.Ordinal))
         {
             if (!config.Connections.TryGetValue(origin, out var originConnection)) { originMissing.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new($"connection:{origin}", 0, 0), $"The plan reads rows from the connection `{origin}`, which this project does not have.")); continue; }
-            var (originLogin, _) = LoginSettings.FromEnvironment(originConnection.Name, originConnection.Engine, Login.Read, env);
+            var (originLogin, _) = LoginSettings.FromEnvironment(originConnection, Login.Read, env);
             // a login that is missing is not a refusal here: that origin is checked when its own transfer's turn comes, and the others are not held back by it
             if (originLogin != null) originLogins[origin] = originLogin;
         }
         // a refresh opens the origins of its copies by name when a copy runs; a login that is missing is not a refusal here: that copy fails with `failed: origin` and the failure rules apply
         foreach (var origin in mode.Origins ?? [])
-            if (config.Connections.TryGetValue(origin, out var refreshOrigin) && LoginSettings.FromEnvironment(refreshOrigin.Name, refreshOrigin.Engine, Login.Read, env).Item1 is { } refreshLogin) originLogins[origin] = refreshLogin;
+            if (config.Connections.TryGetValue(origin, out var refreshOrigin) && LoginSettings.FromEnvironment(refreshOrigin, Login.Read, env).Item1 is { } refreshLogin) originLogins[origin] = refreshLogin;
         // where the records go: this connection, another one (central tracking), or nowhere (untracked, with a warning unless that was chosen)
         var tracking = config.TrackingOf(plan.Connection);
         LoginSettings? trackRead = null, trackWrite = null;

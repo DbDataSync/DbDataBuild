@@ -21,6 +21,13 @@ public static partial class TransferValues
     [GeneratedRegex(@"^DECIMAL\(\d+,\s*\d+\)$", RegexOptions.IgnoreCase)]
     private static partial Regex Decimal();
 
+    private static byte[] ReadAll(Stream stream)
+    {
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
+    }
+
     /// <summary>Converts one value read from the origin to the CLR type the destination's bulk writer takes for <paramref name="column"/>. A null stays null.</summary>
     public static object? Convert(object? value, TransferColumn column)
     {
@@ -42,7 +49,7 @@ public static partial class TransferValues
                 "TIMESTAMP WITH TIME ZONE" => value switch { DateTimeOffset o => o.ToUniversalTime(),   // the instant is what is kept: PostgreSQL takes only an offset of zero, and SQL Server keeps whichever it is given
                                                           DateTime dt => new DateTimeOffset(dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime()), _ => throw new InvalidCastException() },
                 "UUID" => value is Guid g ? g : Guid.Parse(System.Convert.ToString(value, CultureInfo.InvariantCulture)!),
-                "BLOB" => value is byte[] b ? b : throw new InvalidCastException(),
+                "BLOB" => value switch { byte[] b => b, Stream s => ReadAll(s), _ => throw new InvalidCastException() },
                 _ when Decimal().IsMatch(t) => System.Convert.ToDecimal(value, CultureInfo.InvariantCulture),
                 _ when Text().IsMatch(t) => value as string ?? System.Convert.ToString(value, CultureInfo.InvariantCulture) ?? "",
                 _ => throw new TransferException($"column `{column.Name}` has type {column.LogicalType}, which a copy cannot carry."),

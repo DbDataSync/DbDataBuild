@@ -22,7 +22,7 @@ internal static class AckCommand
         if (kind is not ("drift" or "definition" or "history")) { error.WriteLine($"Unknown acknowledgement `{kind}`. One of: drift, definition, history."); return CliApp.ExitUsage; }
         if (string.IsNullOrWhiteSpace(reason)) { error.WriteLine("--reason is required: an acknowledgement is recorded with who made it and why."); return CliApp.ExitUsage; }
 
-        var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        var (read, readMissing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
         var tracking = CommandTracking.Require(ctx.Config, connection, env, needWrite: true, error, spec.Name);
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}  |  login: read {read?.Describe() ?? "none"}; records on {tracking?.Target.Connection ?? "none"}: write {tracking?.Write?.Describe() ?? "none"}");
         if (readMissing != null) error.Diag(readMissing);

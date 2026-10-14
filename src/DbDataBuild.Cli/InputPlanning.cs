@@ -88,7 +88,7 @@ internal static class InputPlanning
     private static async Task<ReadSession> OpenOrigin(ProjectContext ctx, string connection, Func<string, string?> env, CancellationToken ct)
     {
         var config = ctx.Config.Connections[connection];
-        var (login, missing) = LoginSettings.FromEnvironment(config.Name, config.Engine, Login.Read, env);
+        var (login, missing) = LoginSettings.FromEnvironment(config, Login.Read, env);
         if (login == null) throw new GateRefusedException(missing!);
         return await ReadSession.OpenAsync(login, ct);
     }

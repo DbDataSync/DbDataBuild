@@ -155,8 +155,13 @@ internal static class RefreshPlanBuilder
             var (createText, spec) = Planner.CopyTransfer(ctx.Config, def, ddl, origin);
             create = createText;
             string? incremental = null;
-            if (def.Watermark != null) incremental = Planner.CopyTransfer(ctx.Config, def, ddl, origin with { WatermarkValue = "0" }).Spec.ReadText;
-            list.Add(new(origin.Connection, origin.Engine, origin.Table, spec.ReadText, incremental, spec.Slice?.Column, spec.Slice?.Value, spec.Slice?.Added ?? false, []));
+            IReadOnlyList<string>? order = null;
+            if (def.Watermark != null)
+            {
+                var bounded = Planner.CopyTransfer(ctx.Config, def, ddl, origin with { WatermarkValue = "0" }).Spec;
+                (incremental, order) = (bounded.ReadText, bounded.ParameterOrder);
+            }
+            list.Add(new(origin.Connection, origin.Engine, origin.Table, spec.ReadText, incremental, spec.Slice?.Column, spec.Slice?.Value, spec.Slice?.Added ?? false, [], order));
         }
         var watermark = def.Watermark == null ? null : new RefreshCopyWatermark(def.Watermark.Column, def.Columns.First(x => string.Equals(x.Name, def.Watermark.Column, StringComparison.OrdinalIgnoreCase)).Type, def.Watermark.Lookback);
         return new RefreshCopy($"{stagingSchema}.{stagingTable}", create, ddl.DropTableIfExists(stagingSchema, stagingTable), def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), watermark, list);

@@ -1,6 +1,6 @@
 # Read-only origins: ODBC, Arrow Flight SQL, DuckDB and configurable dialects
 
-Status: proposal for the owner's review. Nothing is built. Written from the code as of entry 156.
+Status: steps 1 and 2 are built (entries 157 and 158; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Steps 3 to 5 are not. Written from the code as of entry 156.
 
 ## 1. The goal
 

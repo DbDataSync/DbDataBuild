@@ -114,6 +114,15 @@
                 "additionalProperties": false,
                 "properties": {
                   "engine": {
+                    "description": "The driver of the connection (sqlserver, postgres, fabric, duckdb, odbc, flightsql).",
+                    "type": "string"
+                  },
+                  "read_only": {
+                    "description": "Present and true when the connection's `engine` says `readonly`: the tool only reads it.",
+                    "const": true
+                  },
+                  "dialect": {
+                    "description": "The SQL dialect of an origin whose driver does not bring its own (odbc, flightsql): a built-in or a name from `dialects:`.",
                     "type": "string"
                   },
                   "version": {

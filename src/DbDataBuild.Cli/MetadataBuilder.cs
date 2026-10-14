@@ -38,7 +38,7 @@ internal static class MetadataBuilder
             config = new
             {
                 default_connections = cfg.DefaultConnections,
-                connections = cfg.Connections.OrderBy(c => c.Key, StringComparer.Ordinal).ToDictionary(c => c.Key, c => (object)new { engine = c.Value.Engine, version = c.Value.Version, title = c.Value.Info.Title, description = c.Value.Info.Description, tags = c.Value.Info.TagsForDocument, properties = c.Value.Info.PropertiesForDocument }),
+                connections = cfg.Connections.OrderBy(c => c.Key, StringComparer.Ordinal).ToDictionary(c => c.Key, c => (object)new { engine = c.Value.Engine, read_only = c.Value.ReadOnly ? true : (bool?)null, dialect = c.Value.Kind.Dialect == c.Value.Engine ? null : c.Value.Kind.Dialect, version = c.Value.Version, title = c.Value.Info.Title, description = c.Value.Info.Description, tags = c.Value.Info.TagsForDocument, properties = c.Value.Info.PropertiesForDocument }),
                 target_versions = cfg.TargetVersions,
                 tracking_schema = cfg.TrackingSchemaName,
                 rewrites = new { fidelity = cfg.Rewrites?.Fidelity ?? RewriteSettings.Exact, disable = cfg.Rewrites?.Disable ?? [], enable = cfg.Rewrites?.Enable ?? [] },

@@ -52,8 +52,17 @@ public partial class FanInFanOutTemplateConformanceTests
         try
         {
             Ok(Cli("project", "create", "fan_in_fan_out", dir), "create");
+            // the shops are `readonly`: the tool refuses to seed one (DDB-455). Demo shops are made the way the README says: `readonly` out while they are seeded, back in after
+            var config = Path.Combine(dir, "dbdatabuild.yml");
+            var readOnlyText = File.ReadAllText(config);
+            Assert.Contains("store_east: { engine: readonly postgres", readOnlyText);
+            var refused = Cli("connection", "seed", "store_east", "--seed", "1", "--apply");
+            Assert.NotEqual(0, refused.Exit);
+            Assert.Contains("DDB-455", refused.Err);
+            File.WriteAllText(config, readOnlyText.Replace("engine: readonly postgres", "engine: postgres"));
             Ok(Cli("connection", "seed", "store_east", "--seed", "1", "--apply"), "seed east");
             Ok(Cli("connection", "seed", "store_west", "--seed", "2", "--apply"), "seed west");
+            File.WriteAllText(config, readOnlyText);
             Ok(Cli("project", "compile"), "compile");
             // a shop system keeps no records of its own: what is missing is the warehouse's tracking tables, and that is where `init` is advised
             var before = Cli("connection", "inspect", "store_east");

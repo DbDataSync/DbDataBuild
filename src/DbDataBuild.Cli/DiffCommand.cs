@@ -29,7 +29,7 @@ internal static class DiffCommand
         else right = (againstSchema ?? left.SchemaName, left.Name);
 
         var ctx = ProjectContext.Load(root);
-        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
+        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error, readOnlyOk: true);
         if (connection == null) return CliApp.ExitUsage;
         var target = connection.Name; var engine = connection.Engine;
         var otherConnection = connection;
@@ -38,6 +38,11 @@ internal static class DiffCommand
             if (!ctx.Config.Connections.TryGetValue(againstConnection, out otherConnection)) { error.WriteLine($"Unknown connection `{againstConnection}`. One of: {string.Join(", ", ctx.Config.Connections.Keys.Order(StringComparer.Ordinal))}."); return CliApp.ExitUsage; }
         }
         var across = !string.Equals(otherConnection.Name, connection.Name, StringComparison.Ordinal);
+        if (!connection.Kind.IsBuildTarget || !otherConnection.Kind.IsBuildTarget)
+        {
+            error.WriteLine($"`connection compare` compares tables of SQL Server and PostgreSQL connections; `{(connection.Kind.IsBuildTarget ? otherConnection : connection).Name}` is {(connection.Kind.IsBuildTarget ? otherConnection : connection).Kind.Describe()}.");
+            return CliApp.ExitUsage;
+        }
         if (!across && string.Equals(left.SchemaName, right.SchemaName, StringComparison.OrdinalIgnoreCase) && string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)) { error.WriteLine("Both sides name the same table."); return CliApp.ExitUsage; }
 
         // the key: given, or the table's own grain (a model's grain or unique key, a source's grain)
@@ -54,8 +59,8 @@ internal static class DiffCommand
             else { error.WriteLine($"{qualified} has no grain or unique key in the project, so there is nothing to match rows on. Give the columns with --key a,b."); return CliApp.ExitUsage; }
         }
 
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
-        var (otherLogin, otherMissing) = across ? LoginSettings.FromEnvironment(otherConnection.Name, otherConnection.Engine, Login.Read, env) : (login, null);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
+        var (otherLogin, otherMissing) = across ? LoginSettings.FromEnvironment(otherConnection, Login.Read, env) : (login, null);
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}{(across ? $" against {otherConnection.Name}" : "")}  |  login: {login?.Describe() ?? "none"}{(across ? $", {otherLogin?.Describe() ?? "none"}" : "")}  |  values: {(showValues ? "shown (requested)" : "not read")}");
         if (missing != null) { error.Diag(missing); return CliApp.ExitFindings; }
         if (otherMissing != null) { error.Diag(otherMissing); return CliApp.ExitFindings; }

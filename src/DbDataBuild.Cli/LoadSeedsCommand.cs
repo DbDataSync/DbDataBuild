@@ -35,7 +35,7 @@ internal static class LoadSeedsCommand
         LoginSettings? write = null;
         if (apply)
         {
-            var (settings, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Write, environment);
+            var (settings, missing) = LoginSettings.FromEnvironment(connection, Login.Write, environment);
             if (missing != null)
             {
                 output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}  |  login: none");
