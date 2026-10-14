@@ -1,6 +1,5 @@
 name: purchasing.purchase_order_detail
-kind:
-  type: mapped
+kind: mapped
 grain: [purchase_order_id, purchase_order_detail_id]
 columns:
   - {name: purchase_order_id, type: INTEGER, nullable: false}

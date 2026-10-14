@@ -12,8 +12,8 @@ namespace DbDataBuild.Tests.Conformance;
 [Trait("Group", "apply")]
 public partial class CentralTrackingConformanceTests
 {
-    private const string Orders = "name: staging.orders\nkind: {type: mapped}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string Fct = "name: marts.fct_orders\nkind: {type: full}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Orders = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Fct = "name: marts.fct_orders\nkind: full\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     private const string FctSql = "SELECT order_id, amount FROM staging.orders\n";
 
     [GeneratedRegex(@"plan:\s+(\S+\.plan\.yml)")]

@@ -1,6 +1,5 @@
 name: staging.genres
-kind:
-  type: view
+kind: view
 grain:
   - genre_id
 columns:

@@ -1,6 +1,5 @@
 name: marts.dim_employee
-kind:
-  type: full
+kind: full
 grain:
   - employee_id
 columns:

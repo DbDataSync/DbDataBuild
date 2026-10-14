@@ -1,6 +1,5 @@
 name: sales.special_offer
-kind:
-  type: mapped
+kind: mapped
 grain: [special_offer_id]
 columns:
   - {name: special_offer_id, type: INTEGER, nullable: false}

@@ -1,6 +1,5 @@
 name: marts.dim_sales_person
-kind:
-  type: full
+kind: full
 grain:
   - sales_person_id
 columns:

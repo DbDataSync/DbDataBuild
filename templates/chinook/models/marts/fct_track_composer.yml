@@ -1,6 +1,5 @@
 name: marts.fct_track_composer
-kind:
-  type: full
+kind: full
 grain:
   - track_id
   - position

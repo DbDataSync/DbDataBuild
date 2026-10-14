@@ -1,6 +1,5 @@
 name: ref.categories
-kind:
-  type: mapped
+kind: mapped
 grain: [category_code]
 columns:
   - {name: category_code, type: "VARCHAR(10)", nullable: false}

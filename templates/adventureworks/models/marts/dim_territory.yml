@@ -1,6 +1,5 @@
 name: marts.dim_territory
-kind:
-  type: full
+kind: full
 grain:
   - territory_id
 columns:

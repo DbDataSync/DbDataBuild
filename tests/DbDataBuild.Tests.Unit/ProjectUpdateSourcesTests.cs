@@ -40,15 +40,15 @@ public class ProjectUpdateSourcesTests : IDisposable
         File.WriteAllText(p, text);
     }
 
-    private const string StaleEvents = "name: src.events\nkind: {type: mapped}\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n";
+    private const string StaleEvents = "name: src.events\nkind: mapped\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n";
 
     private void Project(string events = StaleEvents)
     {
         Write("dbdatabuild.yml", "defaults: {connections: [sqlserver]}\ntracking: { connection: sqlserver }\nconnections:\n  analytics: { engine: readonly duckdb }\n  lost: { engine: readonly duckdb }\n");
         Write("models/src/events.yml", events);
-        Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n");
-        Write("models/src/elsewhere.yml", "name: src.elsewhere\nkind: {type: mapped}\nconnections=: [lost]\ncolumns:\n  - {name: id, type: BIGINT}\n");
-        Write("models/src/computed.yml", "name: src.computed\nkind: {type: native, access: select, query: \"SELECT 1 AS n\"}\nconnections=: [analytics]\ncolumns:\n  - {name: n, type: INTEGER}\n");
+        Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n");
+        Write("models/src/elsewhere.yml", "name: src.elsewhere\nkind: mapped\nconnections=: [lost]\ncolumns:\n  - {name: id, type: BIGINT}\n");
+        Write("models/src/computed.yml", "name: src.computed\nkind: {native: {access: select, query: \"SELECT 1 AS n\"}}\nconnections=: [analytics]\ncolumns:\n  - {name: n, type: INTEGER}\n");
     }
 
     private Func<string, string?> Env => v => v == "DBDATABUILD_ANALYTICS_READ" ? Db : null;      // `lost` has no read login

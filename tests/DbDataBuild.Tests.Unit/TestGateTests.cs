@@ -13,8 +13,8 @@ public class TestGateTests
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         Directory.CreateDirectory(Path.Combine(dir, "models/marts"));
         Directory.CreateDirectory(Path.Combine(dir, "tests/metadata"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
-        File.WriteAllText(Path.Combine(dir, "models/marts/o.yml"), "name: marts.o\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/o.yml"), "name: marts.o\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/o.sql"), "SELECT order_id FROM staging.orders\n");
         File.WriteAllText(Path.Combine(dir, "tests/metadata/critical_rule.sql"), ruleBody);
         Assert.Equal(0, Cli(dir, "project", "compile").Exit);

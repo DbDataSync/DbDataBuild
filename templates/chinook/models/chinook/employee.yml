@@ -1,6 +1,5 @@
 name: chinook.employee
-kind:
-  type: mapped
+kind: mapped
 grain: [employee_id]
 columns:
   - {name: employee_id, type: INTEGER, nullable: false}

@@ -6,7 +6,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 |---|---|---|---|
 | [`project create`](#project-create) | `P⇒P` | Repo files only (no target connection) | List the project templates built in, or create a ready-to-run project from one |
 | [`project model create`](#project-model-create) | `P⇒P` | Repo files only (no target connection) | Create a model to start from: a definition and a placeholder query that runs, in the project's layout (a view, a full table, or an incremental one) |
-| [`project model update`](#project-model-update) | `C→P` | Target read-only | Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing |
+| [`project model update`](#project-model-update) | `C→P` | Target read-only | Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing; it also rewrites a model kind written in the old form (kind: {type: copy, ...}) to the form keyed by the kind's name |
 | [`project compile`](#project-compile) | `P⇒P` | Repo files only (no target connection) | Validate the project and write what is compiled from it (rendered/): the lowered queries and the load scripts per connection |
 | [`project tests run`](#project-tests-run) | `P→` | Offline only | Run the project's tests: metadata rules (DuckDB SQL over the metadata views) in tests/metadata/ and model tests (given rows, expected rows) in tests/models/ |
 | [`project tests list`](#project-tests-list) | `P→` | Offline only | List the project's tests with their kind, severity and tags (nothing is run) |
@@ -69,7 +69,7 @@ Usage: `dbdatabuild project model create <model> [options]`
 
 ## project model update
 
-Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing.
+Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing; it also rewrites a model kind written in the old form (kind: {type: copy, ..}) to the form keyed by the kind's name.
 
 Effect: Target read-only. Reads and writes: `C→P`.
 

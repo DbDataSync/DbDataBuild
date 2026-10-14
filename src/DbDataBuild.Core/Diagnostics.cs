@@ -84,11 +84,11 @@ public static class DiagnosticCatalog
     // 2xx: model semantics
     public static readonly DiagnosticDescriptor MissingUniqueKey = E("214", "Missing unique_key",
         "unique_key: [<column>, ...]",
-        "Add `unique_key:` under `kind:`.",
+        "Add `unique_key:` under the kind (`kind: {incremental_by_unique_key: {unique_key: [order_id]}}`).",
         "Kind incremental_by_unique_key upserts by key and cannot run without one.");
     public static readonly DiagnosticDescriptor MissingTimeColumn = E("215", "Missing time_column",
         "time_column: <column>",
-        "Add `time_column:` under `kind:`.",
+        "Add `time_column:` under the kind (`kind: {incremental_by_time_range: {time_column: ordered_on}}`).",
         "Kind incremental_by_time_range derives its range from MAX(time_column) in the target.");
     public static readonly DiagnosticDescriptor GrainMismatch = E("216", "Grain missing or inconsistent",
         "grain is required for incremental kinds, and must equal unique_key for incremental_by_unique_key.",
@@ -151,7 +151,7 @@ public static class DiagnosticCatalog
         "A copy reads each origin with the declared columns. When one system of an application is on another version, its table may have lost a column or changed a type, and reading it would fail or load the wrong thing. The apply of a deploy compares each origin's live table with the declaration just before that origin's own transfer and names the origin that differs; `on_mismatch` says whether that stops the apply there (`fail`; the origins before it stay loaded) or leaves that origin out (`skip`). A refresh does not make this comparison. An origin whose login is not in the environment cannot be compared, and its transfer fails.");
     public static readonly DiagnosticDescriptor ModelReadsAnotherConnection = E("231", "A model reads a table that is not on its connection",
         "every table a query reads exists on the connection the model is built on: a mapped model or a model built there, or a copy of the table to that connection",
-        "Copy the table to the model's connection (`kind: {type: copy, from: ...}`) and read the copy, or build the model on the connection where the table is.",
+        "Copy the table to the model's connection (`kind: {copy: {from: ...}}`) and read the copy, or build the model on the connection where the table is.",
         "A query runs on one connection and never reaches across to another; moving rows between connections is a copy. A model that reads a table declared (or built) only on other connections would fail when it runs, so it is refused when the project is checked.");
     public static readonly DiagnosticDescriptor NativeReadsNotDeclared = N("233", "A native model does not say what it reads",
         "a `reads:` list on the native model naming the tables its text reads (`reads: [dbo.orders, dbo.customers]`)",
@@ -209,6 +209,14 @@ public static class DiagnosticCatalog
         "a load of the model (or `default` when the model declares none) and, under `inputs:`, the names and values the load takes",
         "Use a load name from the model's `loads:`, an input the load takes (`start` and `end` of a range load, `watermark` of a watermark load, or a parameter the load's query uses) and a value of that input's type.",
         "A membership says which load runs in a plan and may give values for its inputs for that plan. A load the model does not declare, an input the load does not take, or a value that does not fit the input's type would fail only when the plan ran; the project refuses it when it is compiled.");
+    public static readonly DiagnosticDescriptor KindWrittenOldWay = W("247", "A model kind is written in the old form",
+        "`kind` keyed by the kind's name: `kind: {copy: {from: pos.orders}}`, or `kind: view` for a kind with no settings",
+        $"Run `{ProductInfo.Cli} project model update` (or `project update`): it rewrites the old form `kind: {{type: copy, from: pos.orders}}` to the new one, and `--check` lists the files that still have it.",
+        "The old form named the kind under a key called `type`, a word that also means a column's SQL type. It is read for one more release and gives the same model, and the same rendered files, as the new form; nothing in the tool writes it any more.");
+    public static readonly DiagnosticDescriptor KindShapeInvalid = E("248", "A model kind is not written as one kind",
+        "`kind` is the name of one kind (`kind: full`), or a mapping with exactly one key, the kind's name, whose value is a mapping of that kind's settings (`kind: {incremental_by_unique_key: {unique_key: [order_id]}}`)",
+        "Name one kind: view, full, incremental_by_unique_key, incremental_by_time_range, copy, mapped or native, and put its settings beneath its name.",
+        "The kind of a model is said by the shape of the file: one key, the kind, with its settings under it, so a setting that belongs to another kind is an unknown key and a model cannot have two kinds. A kind with no settings may be written as a plain value. A key such as `kind.copy:` is an ordinary key with a dot in it, not a nested one.");
     public static readonly DiagnosticDescriptor TrackingNotConfigured = W("232", "Nothing is tracked for a connection",
         "a `tracking:` section naming the connection that keeps the records (`tracking: { connection: audit }`), or `tracking: none` to choose not to track",
         "Add `tracking: { connection: <name> }` to dbdatabuild.yml (a connection of the project; `dbdatabuild connection init <name> --apply` creates the tables there), or `tracking: none` if the connection is not to be tracked. A connection can say its own under `connections.<name>.tracking`.",
@@ -527,7 +535,7 @@ public static class DiagnosticCatalog
         SqlParseFailure, NotASingleSelect, ConstructNeedsVersion, PairUnsupported, RenderedScriptInvalid, PlaceholderUndeclared, KeyColumnNullable, TypeNotMappable, IndexNotSupported, HookScriptInvalid, QueryNotLowerable,
         CollationCannotSatisfyProfile, CollationNotVerifiable, CollationNotConfigured,
         AnswerForUnknownQuestion, AnswerChoiceInvalid, AnswerValueMismatch, NoProposalToAccept, QuestionUnanswered,
-        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, ReadOnlyConnectionNotWritable, DialectProfileInvalid, DialectLockInvalid, DialectLockMissing, DialectLockStale, OriginDialectChanged, ProjectUpdateDiffers, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
+        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, KindWrittenOldWay, KindShapeInvalid, RefreshInputMissing, RefreshPlanUnknown, ReadOnlyConnectionNotWritable, DialectProfileInvalid, DialectLockInvalid, DialectLockMissing, DialectLockStale, OriginDialectChanged, ProjectUpdateDiffers, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
         TestFailed, TestCouldNotRun, TestNotASelect,
         LoginNotConfigured, GateRefused, StatementLogUnavailable, ReadStatementRefused, TrackingNotInitialized,
         InternalError,

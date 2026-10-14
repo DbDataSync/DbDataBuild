@@ -1,6 +1,5 @@
 name: marts.agg_product_abc
-kind:
-  type: full
+kind: full
 grain:
   - product_id
 columns:

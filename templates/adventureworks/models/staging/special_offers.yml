@@ -1,6 +1,5 @@
 name: staging.special_offers
-kind:
-  type: view
+kind: view
 grain:
   - special_offer_id
 columns:

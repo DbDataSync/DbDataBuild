@@ -55,11 +55,11 @@ public class MacroConformanceTests
 
             Write("dbdatabuild.yml", Config(name));
             Write("macros/snapshots.sql", Macros);
-            Write("models/src/orders.yml", "name: src.orders\nkind: {type: mapped}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
-            Write("models/src/orders_snap.yml", "name: src.orders_snap\nkind: {type: mapped}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
-            Write("models/marts/live_totals.yml", "name: marts.live_totals\nkind: {type: full}\n" + Cols);
+            Write("models/src/orders.yml", "name: src.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
+            Write("models/src/orders_snap.yml", "name: src.orders_snap\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
+            Write("models/marts/live_totals.yml", "name: marts.live_totals\nkind: full\n" + Cols);
             Write("models/marts/live_totals.sql", "SELECT * FROM status_totals('src.orders', NULL)\n");
-            Write("models/marts/snap_totals.yml", "name: marts.snap_totals\nkind: {type: full}\n" + Cols);
+            Write("models/marts/snap_totals.yml", "name: marts.snap_totals\nkind: full\n" + Cols);
             Write("models/marts/snap_totals.sql", "SELECT * FROM status_totals('src.orders_snap', 'snap_date')\n");
 
             Ok(Cli("connection", "init", name, "--apply"), "init");
@@ -142,9 +142,9 @@ public class MacroConformanceTests
                       date_col: { type: NAME, value: snap_date }
                 """);
             Write("macros/snapshots.sql", Macros);
-            Write("models/src/orders.yml", "name: src.orders\nkind: {type: mapped}\nconnections=: [live]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
-            Write("models/src/orders_snap.yml", "name: src.orders_snap\nkind: {type: mapped}\nconnections=: [snap]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
-            Write("models/marts/totals.yml", "name: marts.totals\nkind: {type: full}\n" + Cols);
+            Write("models/src/orders.yml", "name: src.orders\nkind: mapped\nconnections=: [live]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
+            Write("models/src/orders_snap.yml", "name: src.orders_snap\nkind: mapped\nconnections=: [snap]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
+            Write("models/marts/totals.yml", "name: marts.totals\nkind: full\n" + Cols);
             Write("models/marts/totals.sql", "SELECT * FROM status_totals(${connection.table}, ${connection.date_col})\n");
 
             Ok(Cli("project", "compile"), "validate");                                                                         // neither connection is told it reads a table that is on the other

@@ -1,6 +1,5 @@
 name: ref.channels
-kind:
-  type: mapped
+kind: mapped
 grain: [channel_code]
 columns:
   - {name: channel_code, type: "VARCHAR(4)", nullable: false}

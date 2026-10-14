@@ -1,6 +1,5 @@
 name: staging.work_orders
-kind:
-  type: view
+kind: view
 grain:
   - work_order_id
 columns:

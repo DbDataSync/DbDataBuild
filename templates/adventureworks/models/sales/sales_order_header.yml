@@ -1,6 +1,5 @@
 name: sales.sales_order_header
-kind:
-  type: mapped
+kind: mapped
 grain: [sales_order_id]
 columns:
   - {name: sales_order_id, type: INTEGER, nullable: false}

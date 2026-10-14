@@ -39,7 +39,7 @@ internal static class RefreshPlanBuilder
         foreach (var m in models.OrderBy(m => m.Source.Definition.Name, StringComparer.Ordinal))
         {
             var def = m.Source.Definition;
-            lines.Add(def.KindType == ModelKinds.View ? $"{def.Name}=view:{ctx.DefinitionHashOf(m.Sql)}" : $"{def.Name}={ExpectedShape(ddl, def)}");
+            lines.Add(def.Kind == ModelKinds.View ? $"{def.Name}=view:{ctx.DefinitionHashOf(m.Sql)}" : $"{def.Name}={ExpectedShape(ddl, def)}");
         }
         return Hashing.Sha256Hex(string.Join("\n", lines));
     }

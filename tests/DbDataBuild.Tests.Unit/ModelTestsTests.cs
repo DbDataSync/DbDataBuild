@@ -9,8 +9,8 @@ namespace DbDataBuild.Tests.Unit;
 /// <summary>`test` for models: `tests/models/*.yml`, given rows and what the query must return (DESIGN.md 9.8).</summary>
 public class ModelTestsTests
 {
-    private const string Orders = "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: note, type: VARCHAR}\n";
-    private const string Fct = "name: marts.fct_orders\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: note2, type: VARCHAR}\n";
+    private const string Orders = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: note, type: VARCHAR}\n";
+    private const string Fct = "name: marts.fct_orders\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: note2, type: VARCHAR}\n";
     private const string FctSql = "SELECT o.order_id, o.amount, o.note || '!' AS note2 FROM staging.orders o WHERE o.order_id > 0\n";
 
     private static string Project(params (string Path, string Text)[] tests)
@@ -206,7 +206,7 @@ public class ModelTestsTests
     public void A_model_that_reads_another_model_is_given_that_models_rows()
     {
         var dir = Project(("marts/v_big.yml", "cases:\n  - name: big only\n    given:\n      marts.fct_orders:\n        - {order_id: 1, amount: 5, note2: a}\n        - {order_id: 2, amount: 500, note2: b}\n    expect:\n      - {order_id: 2}\n"));
-        File.WriteAllText(Path.Combine(dir, "models/marts/v_big.yml"), "name: marts.v_big\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/v_big.yml"), "name: marts.v_big\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/v_big.sql"), "SELECT f.order_id FROM marts.fct_orders f WHERE f.amount > 100\n");
         var (exit, doc, _) = Test(dir);
         Assert.Equal((0, "pass"), (exit, Status(doc, "marts.v_big::big only")));

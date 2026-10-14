@@ -1,5 +1,5 @@
 name: staging.stores
-kind: {type: view}
+kind: view
 grain: [store_id]
 columns:
   - {name: store_id, type: INTEGER, nullable: false}

@@ -1,5 +1,5 @@
 name: staging.budgets
-kind: {type: view}
+kind: view
 grain: [budget_month, region, category_code]
 columns:
   - {name: budget_month, type: INTEGER, nullable: false}

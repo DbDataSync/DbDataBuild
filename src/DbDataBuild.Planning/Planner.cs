@@ -126,7 +126,7 @@ public static class Planner
             }
 
             var ctx = new ModelContext(input, model, ddl, byId, used, questions, noticed, schemasCreated);
-            var ok = def.KindType == ModelKinds.View ? PlanView(ctx, ddlSteps, bases, blocks) : PlanTable(ctx, ddlSteps, loadSteps, bases, blocks);
+            var ok = def.Kind == ModelKinds.View ? PlanView(ctx, ddlSteps, bases, blocks) : PlanTable(ctx, ddlSteps, loadSteps, bases, blocks);
             if (!ok) unplanned.Add(def.Name);
         }
 
@@ -282,7 +282,7 @@ public static class Planner
         if (gate != Gate.Proceed) { if (gate == Gate.Waiting) ddlSteps.AddRange(local); return gate == Gate.Waiting; }
 
         // an incremental model whose query changed since its last load is blocked (rows already loaded came from the old query)
-        if (def.KindType is ModelKinds.IncrementalByUniqueKey or ModelKinds.IncrementalByTimeRange && c.Input.LastLoadDefinitionHashes.TryGetValue(def.Name, out var lastHash) && lastHash != c.Model.DefinitionHash)
+        if (def.Kind is ModelKinds.IncrementalByUniqueKey or ModelKinds.IncrementalByTimeRange && c.Input.LastLoadDefinitionHashes.TryGetValue(def.Name, out var lastHash) && lastHash != c.Model.DefinitionHash)
         {
             var key = Acknowledgements.Key(DiagnosticCatalog.LoadDefinitionChanged.Code, def.Name, c.Model.DefinitionHash);
             if (!c.Input.Acknowledged.Contains(key))

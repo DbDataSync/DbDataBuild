@@ -13,7 +13,7 @@ public class ModelDefinitionTests
         Assert.Empty(diags);
         Assert.NotNull(def);
         Assert.Equal("marts.fct_orders", def!.Name);
-        Assert.Equal(ModelKinds.IncrementalByUniqueKey, def.KindType);
+        Assert.Equal(ModelKinds.IncrementalByUniqueKey, def.Kind);
         Assert.Equal(["order_id"], def.UniqueKey);
         Assert.Equal(["sqlserver", "fabric"], def.Targets);
         Assert.Equal(3, def.Columns.Count);
@@ -25,14 +25,14 @@ public class ModelDefinitionTests
     [Fact]
     public void Missing_unique_key_matches_the_documented_diagnostic()
     {
-        var yaml = ValidModel.Replace("  unique_key: [order_id]\n", "");
+        var yaml = ValidModel.Replace("    unique_key: [order_id]\n", "");
         var (_, diags) = Load(yaml);
         var d = Assert.Single(diags, x => x.Code == "DDB-214");
         Assert.Equal(
             "error DDB-214  models/marts/fct_orders.yml:3\n" +
             "  Kind incremental_by_unique_key requires a unique_key, but none is set.\n" +
             "  Supported: unique_key: [<column>, ...]\n" +
-            "  Fix: add under `kind:`  unique_key: [order_id]\n" +
+            "  Fix: add under `incremental_by_unique_key:`  unique_key: [order_id]\n" +
             "  Docs: dbdatabuild explain DDB-214\n",
             DiagnosticFormatter.Format(d));
     }
@@ -43,8 +43,7 @@ public class ModelDefinitionTests
         var (def, diags) = Load("""
             name: marts.wrong
             surprise: 1
-            kind:
-              type: incremental_by_unique_key
+            kind: incremental_by_unique_key
             connections: [oracle]
             columns:
               - name: a
@@ -58,14 +57,14 @@ public class ModelDefinitionTests
 
     [Theory]
     [InlineData("name: x\ncolumns: [{name: a, type: INT}]\n", "DDB-105")]               // missing kind
-    [InlineData("kind: {type: full}\ncolumns: [{name: a, type: INT}]\n", "DDB-105")]       // missing name
-    [InlineData("name: marts.fct_orders\nkind: {type: full}\n", "DDB-105")]                // columns required for all models
+    [InlineData("kind: full\ncolumns: [{name: a, type: INT}]\n", "DDB-105")]       // missing name
+    [InlineData("name: marts.fct_orders\nkind: full\n", "DDB-105")]                // columns required for all models
     [InlineData("name: marts.fct_orders\nkind: {type: nope}\ncolumns: [{name: a, type: INT}]\n", "DDB-106")]
-    [InlineData("name: marts.fct_orders\nkind: {type: full, unique_key: [a]}\ncolumns: [{name: a, type: INT}]\n", "DDB-104")]
-    [InlineData("name: marts.fct_orders\nkind: {type: incremental_by_time_range}\ngrain: [a]\ncolumns: [{name: a, type: INT}]\n", "DDB-215")]
-    [InlineData("name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [a]}\ncolumns: [{name: a, type: INT}]\n", "DDB-216")]
-    [InlineData("name: marts.fct_orders\nkind: {type: full}\ngrain: [zzz]\ncolumns: [{name: a, type: INT}]\n", "DDB-217")]
-    [InlineData("name: marts.fct_orders\nkind: {type: full}\ncolumns: [{name: a, type: INT}, {name: A, type: INT}]\n", "DDB-102")]
+    [InlineData("name: marts.fct_orders\nkind: {full: {unique_key: [a]}}\ncolumns: [{name: a, type: INT}]\n", "DDB-104")]
+    [InlineData("name: marts.fct_orders\nkind: incremental_by_time_range\ngrain: [a]\ncolumns: [{name: a, type: INT}]\n", "DDB-215")]
+    [InlineData("name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [a]}}\ncolumns: [{name: a, type: INT}]\n", "DDB-216")]
+    [InlineData("name: marts.fct_orders\nkind: full\ngrain: [zzz]\ncolumns: [{name: a, type: INT}]\n", "DDB-217")]
+    [InlineData("name: marts.fct_orders\nkind: full\ncolumns: [{name: a, type: INT}, {name: A, type: INT}]\n", "DDB-102")]
     public void Each_rule_produces_its_code(string yaml, string code)
     {
         var (def, diags) = Load(yaml);
@@ -92,7 +91,7 @@ public class ModelDefinitionTests
     public void Malformed_inputs_never_throw()
     {
         string[] inputs = ["", ":", "[", "{{", "a: &x\n  - *x", "name: [1, [2]]", "kind: 3", "columns: x", "\t\t", "a: |\n  block\n", "a: [1, 2\nb: : :\n", "---\n---\n",
-            "name: n\nkind: {type: full}\ncolumns:\n  - 1\n  - [a]\n  - {name: [x]}\nrenames: 5\nconnections: {a: b}\n"];
+            "name: n\nkind: full\ncolumns:\n  - 1\n  - [a]\n  - {name: [x]}\nrenames: 5\nconnections: {a: b}\n"];
         foreach (var input in inputs)
         {
             var ex = Record.Exception(() => Load(input));

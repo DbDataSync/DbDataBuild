@@ -1,6 +1,5 @@
 name: staging.bom
-kind:
-  type: view
+kind: view
 grain:
   - bill_of_materials_id
 columns:

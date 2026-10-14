@@ -71,7 +71,7 @@ public class FlightSqlServerConformanceTests
 
     private static void Ok((int Exit, string Out, string Err) r, string what) => FlightRun.Ok(r, what);
 
-    private static string Model(string schema, string table) => $"name: {schema}.{table}\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}";
+    private static string Model(string schema, string table) => $"name: {schema}.{table}\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}";
 
     [SkippableTheory, MemberData(nameof(Destinations))]
     public async Task The_rows_of_a_real_flight_sql_server_arrive_intact_with_a_user_and_password_the_handshake_giving_the_token(string destination)
@@ -81,7 +81,7 @@ public class FlightSqlServerConformanceTests
         await using var to = run.Destination;
         var s = origin.Schema;
         run.Write($"models/{s}/items.yml", Model(s, "items"));
-        run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{type: copy, from: {s}.items}}\nindexes:\n  - {{name: ix_items_code, columns: [code]}}\n");
+        run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{copy: {{from: {s}.items}}}}\nindexes:\n  - {{name: ix_items_code, columns: [code]}}\n");
         await origin.ExecAsync(FlightRun.ItemsDdl.Replace("{s}", s), FlightRun.ItemsRows.Replace("{s}", s));
 
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
@@ -114,7 +114,7 @@ public class FlightSqlServerConformanceTests
         await using var to = run.Destination;
         var s = origin.Schema;
         run.Write($"models/{s}/items.yml", Model(s, "items"));
-        run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{type: copy, from: {s}.items}}\n");
+        run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{copy: {{from: {s}.items}}}}\n");
         await origin.ExecAsync(FlightRun.ItemsDdl.Replace("{s}", s), FlightRun.ItemsRows.Replace("{s}", s));
         Ok(run.Cli("connection", "init", "postgres", "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
@@ -264,8 +264,8 @@ public class FlightSqlServerConformanceTests
 
             // the structure check of a copy from a table the metadata calls described: a declared NOT NULL is not held against an Arrow schema that says nullable
             var s = "main";
-            run.Write($"models/{s}/{prefix}_items.yml", $"name: {s}.{prefix}_items\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
-            run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{type: copy, from: {s}.{prefix}_items}}\n");
+            run.Write($"models/{s}/{prefix}_items.yml", $"name: {s}.{prefix}_items\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
+            run.Write("models/dst/items.yml", $"name: dst.items\nkind: {{copy: {{from: {s}.{prefix}_items}}}}\n");
             await origin.ExecAsync(FlightRun.ItemsDdl.Replace("{s}.items", $"main.{prefix}_items"), FlightRun.ItemsRows.Replace("{s}.items", $"main.{prefix}_items"));
             Ok(run.Cli("connection", "init", destination, "--apply"), "init");
             Ok(run.Cli("project", "compile"), "compile");
@@ -296,8 +296,8 @@ public class FlightSqlServerConformanceTests
         await using var to = run.Destination;
         var s = origin.Schema;
         // the server binds every parameter as text, so the query casts them: `CAST(? AS BIGINT)` is the dialect of a server like this one
-        run.Write($"models/{s}/picked.yml", $"name: {s}.picked\nkind:\n  type: native\n  query: SELECT id, upper(code) AS code FROM {s}.items WHERE id >= CAST(${{project.min_id}} AS BIGINT) AND (id = CAST(${{project.min_id}} AS BIGINT) OR born >= CAST(${{project.since}} AS DATE))\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: code, type: \"VARCHAR(40)\"}}\n");
-        run.Write("models/dst/picked.yml", $"name: dst.picked\nkind: {{type: copy, from: {s}.picked}}\n");
+        run.Write($"models/{s}/picked.yml", $"name: {s}.picked\nkind:\n  native:\n    query: SELECT id, upper(code) AS code FROM {s}.items WHERE id >= CAST(${{project.min_id}} AS BIGINT) AND (id = CAST(${{project.min_id}} AS BIGINT) OR born >= CAST(${{project.since}} AS DATE))\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: code, type: \"VARCHAR(40)\"}}\n");
+        run.Write("models/dst/picked.yml", $"name: dst.picked\nkind: {{copy: {{from: {s}.picked}}}}\n");
         await origin.ExecAsync($"CREATE TABLE {s}.items (id BIGINT NOT NULL, code VARCHAR, born DATE)",
             $"INSERT INTO {s}.items VALUES (1, 'a', DATE '2024-03-01'), (2, 'b', DATE '2024-03-01'), (3, 'c', DATE '2024-01-01'), (4, 'd', DATE '2024-03-01'), (5, 'e', DATE '2023-01-01')");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");

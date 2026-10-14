@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "source.schema.json",
   "title": "DbDataBuild mapped or native model",
-  "description": "A mapped model: the declaration of a table that exists and that the tool does not build (models/<schema name>/<table>.yml with `kind: {type: mapped}` and no .sql). Models refer to it by plain table name, and `dbdatabuild project model update` builds empty DuckDB tables from it. `indexes` and `foreign_keys` are what the table has, as exported by `dbdatabuild project import`; the tool reads them (metadata, advice) and never creates them. In an editor this applies to a file that says `kind: {type: mapped}` itself (model.schema.json hands such files to this schema); a file that gets its kind from a folder's _dbdatabuild.yml is read as a model definition. A **native** model (`kind: {type: native, access: select, query: ...}`, or the text in a `.native.sql` file beside the definition) is a table the engine computes from its own query (a table function, an engine-native select); it is bound by queries from its declared columns and inlined into the queries that read it, on its one connection.",
+  "description": "A mapped model: the declaration of a table that exists and that the tool does not build (models/<schema name>/<table>.yml with `kind: mapped` and no .sql). Models refer to it by plain table name, and `dbdatabuild project model update` builds empty DuckDB tables from it. `indexes` and `foreign_keys` are what the table has, as exported by `dbdatabuild project import`; the tool reads them (metadata, advice) and never creates them. In an editor this applies to a file that says `kind: mapped` itself (model.schema.json hands such files to this schema); a file that gets its kind from a folder's _dbdatabuild.yml is read as a model definition. A **native** model (`kind: {native: {access: select, query: ...}}`, or the text in a `.native.sql` file beside the definition) is a table the engine computes from its own query (a table function, an engine-native select); it is bound by queries from its declared columns and inlined into the queries that read it, on its one connection.",
   "type": "object",
   "additionalProperties": false,
   "patternProperties": {
@@ -22,31 +22,59 @@
       "minLength": 1
     },
     "kind": {
-      "description": "`{type: mapped}`: a table that exists. `{type: native, access: select, query: ...}`: a table the engine computes from its own text (`query` may be left out when a `.native.sql` file sits beside the definition).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "type"
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "mapped",
+      "description": "`mapped`: a table that exists (a plain value, since it has no settings). `{native: {access: select, query: ...}}`: a table the engine computes from its own text (`query` may be left out when a `.native.sql` file sits beside the definition; then `kind: native` alone is enough).",
+      "oneOf": [
+        {
+          "title": "mapped",
+          "const": "mapped"
+        },
+        {
+          "title": "mapped (with an empty mapping)",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mapped"
+          ],
+          "properties": {
+            "mapped": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
+            }
+          }
+        },
+        {
+          "title": "native (text in a .native.sql file)",
+          "const": "native"
+        },
+        {
+          "title": "native",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "native"
-          ]
-        },
-        "access": {
-          "description": "`select`: a query can contain it (it is inlined). `command` is not built yet.",
-          "enum": [
-            "select",
-            "command"
-          ]
-        },
-        "query": {
-          "type": "string",
-          "minLength": 1
+          ],
+          "properties": {
+            "native": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "access": {
+                  "description": "`select`: a query can contain it (it is inlined). `command`: a procedure call that returns rows; it can only be run.",
+                  "enum": [
+                    "select",
+                    "command"
+                  ]
+                },
+                "query": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
         }
-      }
+      ]
     },
     "connections": {
       "description": "The connections the table exists on. Without it, the project's default connections. A list adds to what the project files above the model give; write `connections=` to replace it.",

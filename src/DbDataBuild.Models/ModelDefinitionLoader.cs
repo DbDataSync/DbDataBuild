@@ -76,7 +76,7 @@ public static class ModelDefinitionLoader
             {
                 from = (kindNode as YamlMapping)?.Get("from") as YamlScalar;
                 if (from == null || !System.Text.RegularExpressions.Regex.IsMatch(from.Value, @"^[^.\s/\\]+\.[^.\s/\\]+$"))
-                    Add(DiagnosticCatalog.InvalidValue, (YamlNode?)from ?? kindNode ?? top, "A copy names the model it copies, `kind: {type: copy, from: schema_name.table_name}`.");
+                    Add(DiagnosticCatalog.InvalidValue, (YamlNode?)from ?? kindNode ?? top, "A copy names the model it copies, `kind: {copy: {from: schema_name.table_name}}`.");
                 if (top.Get("columns") is { } own) Add(DiagnosticCatalog.InvalidValue, own, "A copy has no `columns`: it has the columns of the model it copies.", "Remove `columns:`.");
                 (slice, onMismatch) = ReadCopySettings(kindNode as YamlMapping);
                 watermark = ReadCopyWatermark(kindNode as YamlMapping, uniqueKey);
@@ -147,7 +147,7 @@ public static class ModelDefinitionLoader
             if (lookback != null && LoadDuration.TryParse(lookback.Value) == null)
                 Add(DiagnosticCatalog.InvalidValue, lookback, $"lookback is `{lookback.Value}`.", "A number and a unit, for example `3 days` (minutes, hours, days, weeks or months).");
             if (kind.Get("unique_key") == null || uniqueKey is { Count: 0 })
-                Add(DiagnosticCatalog.MissingUniqueKey, map, "An incremental copy (`watermark`) needs a `unique_key`: the rows it reads again replace the rows with the same key.", fix: "add under `kind:`  unique_key: [order_id]");
+                Add(DiagnosticCatalog.MissingUniqueKey, map, "An incremental copy (`watermark`) needs a `unique_key`: the rows it reads again replace the rows with the same key.", fix: "add under `copy:`  unique_key: [order_id]");
             return column == null ? null : new CopyWatermark(column.Value, lookback?.Value, map.Line);
         }
 
@@ -183,28 +183,28 @@ public static class ModelDefinitionLoader
 
         private (YamlScalar? Type, List<YamlScalar>? UniqueKey, YamlScalar? TimeColumn, YamlScalar? Lookback, YamlNode? Node) ReadKind(YamlMapping top)
         {
-            var node = top.Get("kind");
-            if (node == null) { Add(DiagnosticCatalog.MissingKey, top, "Required key `kind` is missing.", fix: "Add `kind:` with a `type:`."); return default; }
-            if (node is not YamlMapping kind) { Add(DiagnosticCatalog.InvalidValue, node, "`kind` must be a mapping with a `type`."); return default; }
+            if (ModelKindShape.Read(top.Get("kind"), top, (d, n, f, fix) => Add(d, n, f, fix: fix)) is not { } reading) return default;
+            var kind = reading.Settings;
+            var name = reading.Name;
+            var type = reading.NameNode as YamlScalar ?? new YamlScalar(name, reading.NameNode.Line, reading.NameNode.Column);
+            var valid = ModelKinds.All.Contains(name);
+            if (!valid)
+                Add(DiagnosticCatalog.InvalidValue, reading.NameNode, $"Unknown kind `{name}`.", $"One of: {string.Join(", ", ModelKinds.All)}.");
 
-            var type = Scalar(kind, "type", required: true, at: kind);
-            var valid = type != null && ModelKinds.All.Contains(type.Value);
-            if (type != null && !valid)
-                Add(DiagnosticCatalog.InvalidValue, type, $"Unknown kind `{type.Value}`.", $"One of: {string.Join(", ", ModelKinds.All)}.");
-
-            var allowed = new List<string> { "type" };
-            if (type?.Value == ModelKinds.IncrementalByUniqueKey) allowed.Add("unique_key");
-            if (type?.Value == ModelKinds.IncrementalByTimeRange) { allowed.Add("time_column"); allowed.Add("lookback"); }
-            if (type?.Value == ModelKinds.Copy) { allowed.Add("from"); allowed.Add("slice"); allowed.Add("on_mismatch"); allowed.Add("unique_key"); allowed.Add("watermark"); }
-            if (valid) CheckKeys(kind, allowed, $"kind `{type!.Value}`");
+            var allowed = new List<string>();
+            if (reading.OldForm) allowed.Add(ModelKindShape.OldKey);
+            if (name == ModelKinds.IncrementalByUniqueKey) allowed.Add("unique_key");
+            if (name == ModelKinds.IncrementalByTimeRange) { allowed.Add("time_column"); allowed.Add("lookback"); }
+            if (name == ModelKinds.Copy) { allowed.Add("from"); allowed.Add("slice"); allowed.Add("on_mismatch"); allowed.Add("unique_key"); allowed.Add("watermark"); }
+            if (valid) CheckKeys(kind, allowed, $"kind `{name}`");
 
             var uniqueKey = StringList(kind, "unique_key", required: false);
             var timeColumn = kind.Get("time_column") as YamlScalar;
-            if (type?.Value == ModelKinds.IncrementalByUniqueKey && (kind.Get("unique_key") == null || uniqueKey is { Count: 0 }))
-                Add(DiagnosticCatalog.MissingUniqueKey, kind, "Kind incremental_by_unique_key requires a unique_key, but none is set.",
-                    fix: "add under `kind:`  unique_key: [order_id]");
-            if (type?.Value == ModelKinds.IncrementalByTimeRange && timeColumn == null)
-                Add(DiagnosticCatalog.MissingTimeColumn, kind, "Kind incremental_by_time_range requires a time_column, but none is set.");
+            if (name == ModelKinds.IncrementalByUniqueKey && (kind.Get("unique_key") == null || uniqueKey is { Count: 0 }))
+                Add(DiagnosticCatalog.MissingUniqueKey, reading.NameNode, "Kind incremental_by_unique_key requires a unique_key, but none is set.",
+                    fix: "add under `incremental_by_unique_key:`  unique_key: [order_id]");
+            if (name == ModelKinds.IncrementalByTimeRange && timeColumn == null)
+                Add(DiagnosticCatalog.MissingTimeColumn, reading.NameNode, "Kind incremental_by_time_range requires a time_column, but none is set.");
             var lookback = kind.Get("lookback") as YamlScalar;
             if (lookback != null && LoadDuration.TryParse(lookback.Value) == null)
                 Add(DiagnosticCatalog.InvalidValue, lookback, $"lookback is `{lookback.Value}`.", "A number and a unit, for example `3 days` (minutes, hours, days, weeks or months).");

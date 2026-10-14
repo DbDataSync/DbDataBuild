@@ -1,6 +1,5 @@
 name: humanresources.employee_pay_history
-kind:
-  type: mapped
+kind: mapped
 grain: [employee_id, rate_change_date]
 columns:
   - {name: employee_id, type: INTEGER, nullable: false}

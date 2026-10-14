@@ -162,7 +162,7 @@ public class DefineEngineTests
         answers.AddRange(Columns(m, ["order_id", "amount"]));
         var o = One(Run(Engine(), [Target(m, "SELECT o.order_id, o.amount FROM staging.orders o")], answers.ToArray()));
         Assert.Equal(DefineStatus.Created, o.Status);
-        Assert.StartsWith("name: marts.v_orders\nkind:\n  type: view\ncolumns:\n", o.NewText);
+        Assert.StartsWith("name: marts.v_orders\nkind: view\ncolumns:\n", o.NewText);
     }
 
     [Fact]
@@ -276,8 +276,8 @@ public class DefineEngineTests
         # Orders fact (hand-written)
         name: marts.fct_orders
         kind:
-          type: incremental_by_unique_key   # keyed upsert
-          unique_key: [order_id]
+          incremental_by_unique_key:   # keyed upsert
+            unique_key: [order_id]
 
         grain: [order_id]
         connections: [sqlserver, fabric]
@@ -365,7 +365,7 @@ public class DefineEngineTests
         Assert.Equal(DefineStatus.Unchanged, kept.Status);
     }
 
-    private const string RenameYaml = "name: marts.dim_customer\nkind: {type: incremental_by_unique_key, unique_key: [cust_id]}\ngrain: [cust_id]\ncolumns:\n  - {name: cust_id, type: BIGINT, nullable: false}\n  - {name: cust_nm, type: \"VARCHAR(50)\"}\n";
+    private const string RenameYaml = "name: marts.dim_customer\nkind: {incremental_by_unique_key: {unique_key: [cust_id]}}\ngrain: [cust_id]\ncolumns:\n  - {name: cust_id, type: BIGINT, nullable: false}\n  - {name: cust_nm, type: \"VARCHAR(50)\"}\n";
     private const string RenameSql = "SELECT c.customer_id AS cust_id, c.name AS customer_name FROM staging.customers c";
 
     [Fact]
@@ -432,7 +432,7 @@ public class DefineEngineTests
     public void Declared_not_null_is_kept_even_when_lineage_says_nullable_and_it_is_only_a_note()
     {
         var m = "marts.x";
-        const string yaml = "name: marts.x\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: cname, type: VARCHAR(50), nullable: false}\n";
+        const string yaml = "name: marts.x\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: cname, type: VARCHAR(50), nullable: false}\n";
         const string sql = "SELECT o.order_id, c.name AS cname FROM staging.orders o LEFT JOIN staging.customers c ON o.customer_id = c.customer_id";
         var o = One(Run(Engine(), [Target(m, sql, yaml)]));
         Assert.Equal(DefineStatus.InSync, o.Status);
@@ -443,7 +443,7 @@ public class DefineEngineTests
     [Fact]
     public void Declared_varchar_lengths_and_synonyms_are_not_differences()
     {
-        const string yaml = "name: marts.x\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: INT8}\n  - {name: tagged, type: VARCHAR(99)}\n  - {name: amount, type: \"NUMERIC(14,2)\"}\n";
+        const string yaml = "name: marts.x\nkind: full\ncolumns:\n  - {name: order_id, type: INT8}\n  - {name: tagged, type: VARCHAR(99)}\n  - {name: amount, type: \"NUMERIC(14,2)\"}\n";
         const string sql = "SELECT o.order_id, o.code || 'x' AS tagged, o.amount FROM staging.orders o";
         Assert.Empty(Engine().Check([Target("marts.x", sql, yaml)]));
     }
@@ -470,7 +470,7 @@ public class DefineEngineTests
         var diags = Engine(graph).Check([
             Target("marts.fct_orders", Orders, ExistingText),
             Target("marts.new_one", "SELECT 1 AS a"),
-            Target("marts.broken", "SELECT * FROM staging.nope", "name: marts.broken\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\n"),
+            Target("marts.broken", "SELECT * FROM staging.nope", "name: marts.broken\nkind: full\ncolumns:\n  - {name: a, type: INT}\n"),
         ]);
         Assert.Contains(diags, d => d.Code == "DDB-420" && d.Found.Contains("declared DECIMAL(14, 2), but the query resolves DECIMAL(18, 2)"));
         Assert.Contains(diags, d => d.Code == "DDB-420" && d.Found.Contains("has no definition file"));
@@ -546,7 +546,7 @@ public class DefineEngineTests
     [Fact]
     public void A_flow_list_of_columns_cannot_be_spliced_and_is_reported_not_rewritten()
     {
-        const string yaml = "name: marts.x\nkind: {type: full}\ncolumns: [{name: order_id, type: BIGINT}]\n";
+        const string yaml = "name: marts.x\nkind: full\ncolumns: [{name: order_id, type: BIGINT}]\n";
         var m = "marts.x";
         var o = One(Run(Engine(), [Target(m, "SELECT o.order_id, o.amount FROM staging.orders o", yaml)], Columns(m, ["amount"]).ToArray()));
         Assert.Equal(DefineStatus.Failed, o.Status);

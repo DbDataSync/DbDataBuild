@@ -1,6 +1,5 @@
 name: staging.artists
-kind:
-  type: view
+kind: view
 grain:
   - artist_id
 columns:

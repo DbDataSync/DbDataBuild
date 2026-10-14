@@ -12,13 +12,13 @@ namespace DbDataBuild.Tests.Unit;
 public class RefreshPlansTests
 {
     private const string Config = "defaults: {connections: [sqlserver]}\nstring_semantics:\n  case: sensitive\n  trailing_space: ignored\n  collations:\n    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS }\n";
-    private const string Events = "name: staging.events\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Events = "name: staging.events\nkind: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     private const string Cols = "grain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     private const string Loads = "loads:\n  incremental:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max, on_null: initial, initial: \"2000-01-01 00:00:00\"}\n" +
                                  "  reload:\n    strategy: delete_insert_by_range\n    column: event_ts\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n    max_span: 10 days\n";
-    private const string FctHead = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_ts}\n";
+    private const string FctHead = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_ts}}\n";
     private const string FctSql = "SELECT e.event_id, e.event_ts, e.amount FROM staging.events e\n";
-    private const string SummaryYaml = "name: marts.summary\nkind: {type: full}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n";
+    private const string SummaryYaml = "name: marts.summary\nkind: full\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n";
     private const string SummarySql = "SELECT event_id FROM marts.fct_events\n";
 
     private static string Project(string fctRefresh, string configExtra = "", string? summaryRefresh = null, string? folderFile = null)
@@ -70,7 +70,7 @@ public class RefreshPlansTests
         foreach (var bad in new[] { "refresh: 3\n", "refresh:\n  Hourly: default\n", "refresh:\n  hourly: []\n", "refresh:\n  hourly: { load: default, inputs: [1] }\n", "refresh:\n  hourly: { load: default, inputs: { 'a b': 1 } }\n",
                                     "refresh:\n  hourly: { load: default, on_failure: sometimes }\n", "refresh:\n  hourly: { load: default, extra: 1 }\n", "refresh:\n  hourly: { as: x }\n", "refresh:\n  hourly: { load: default, as: Bad Name }\n", "refresh:\n  hourly: [[default]]\n" })
             Assert.NotEqual("", Codes(bad));
-        var view = Load("name: marts.fct_orders\nkind: {type: view}\ncolumns:\n  - {name: a, type: BIGINT}\nrefresh:\n  hourly: default\n").Diags;
+        var view = Load("name: marts.fct_orders\nkind: view\ncolumns:\n  - {name: a, type: BIGINT}\nrefresh:\n  hourly: default\n").Diags;
         Assert.Contains(view, d => d.Code == "DDB-106");                                                      // a view has no load to put in a plan
     }
 

@@ -26,13 +26,13 @@ public class StringEmulationTests
     {
         var dir = NewProjectDir();
         Write(dir, "dbdatabuild.yml", Config(@case, trailing));
-        Write(dir, "models/src/codes.yml", "name: src.codes\nkind: {type: mapped}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(10)\", nullable: false}\n");
+        Write(dir, "models/src/codes.yml", "name: src.codes\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(10)\", nullable: false}\n");
         const string cols = "grain: [n]\ncolumns:\n  - {name: n, type: BIGINT, nullable: false}\n";
-        Write(dir, "models/marts/groups.yml", "name: marts.groups\nkind: {type: full}\n" + cols);
+        Write(dir, "models/marts/groups.yml", "name: marts.groups\nkind: full\n" + cols);
         Write(dir, "models/marts/groups.sql", "SELECT count(*) AS n FROM (SELECT code FROM src.codes GROUP BY code) g\n");
-        Write(dir, "models/marts/joined.yml", "name: marts.joined\nkind: {type: full}\n" + cols);
+        Write(dir, "models/marts/joined.yml", "name: marts.joined\nkind: full\n" + cols);
         Write(dir, "models/marts/joined.sql", "SELECT count(*) AS n FROM src.codes a JOIN src.codes b ON a.code = b.code\n");
-        Write(dir, "models/marts/filtered.yml", "name: marts.filtered\nkind: {type: full}\n" + cols);
+        Write(dir, "models/marts/filtered.yml", "name: marts.filtered\nkind: full\n" + cols);
         Write(dir, "models/marts/filtered.sql", "SELECT count(*) AS n FROM src.codes WHERE code = 'a' AND code IN ('a', 'q')\n");
         const string given = "    given:\n      src.codes:\n        - {id: 1, code: \"a\"}\n        - {id: 2, code: \"A\"}\n        - {id: 3, code: \"a \"}\n";
         Write(dir, "tests/models/marts/groups.yml", $"model: marts.groups\ncases:\n  - name: groups\n{given}    expect: [{{n: {groups}}}]\n");

@@ -1,6 +1,5 @@
 name: marts.dim_track
-kind:
-  type: full
+kind: full
 grain:
   - track_id
 columns:

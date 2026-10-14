@@ -30,8 +30,8 @@ internal static class TestSupport
     public const string ValidModel = """
         name: marts.fct_orders
         kind:
-          type: incremental_by_unique_key
-          unique_key: [order_id]
+          incremental_by_unique_key:
+            unique_key: [order_id]
         grain: [order_id]
         connections: [sqlserver, fabric]
         columns:

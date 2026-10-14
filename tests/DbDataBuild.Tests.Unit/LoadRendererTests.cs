@@ -34,18 +34,18 @@ public class LoadRendererTests
 
     // ---- the models ----
 
-    internal const string FullYaml = "name: marts.dim_customer\nkind: {type: full}\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n";
+    internal const string FullYaml = "name: marts.dim_customer\nkind: full\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n";
     internal const string FullSql = "SELECT c.customer_id, c.name FROM staging.customers c";
 
-    internal const string UniqueYaml = "name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [order_id]}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    internal const string UniqueYaml = "name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     internal const string UniqueSql = "WITH recent AS (SELECT * FROM staging.orders WHERE order_date >= DATE '2024-01-01')\nSELECT r.order_id, r.customer_id, r.amount FROM recent r ORDER BY r.order_id";
 
-    internal const string TimeYaml = "name: marts.fct_daily\nkind: {type: incremental_by_time_range, time_column: order_date, lookback: 3 days}\ngrain: [order_date]\ncolumns:\n  - {name: order_date, type: DATE, nullable: false}\n  - {name: total, type: \"DECIMAL(18, 2)\"}\n";
+    internal const string TimeYaml = "name: marts.fct_daily\nkind: {incremental_by_time_range: {time_column: order_date, lookback: 3 days}}\ngrain: [order_date]\ncolumns:\n  - {name: order_date, type: DATE, nullable: false}\n  - {name: total, type: \"DECIMAL(18, 2)\"}\n";
     internal const string TimeSql = "SELECT o.order_date, SUM(o.amount) AS total FROM staging.orders o GROUP BY o.order_date";
 
     internal const string AllOpsYaml = """
         name: marts.fct_events
-        kind: {type: incremental_by_time_range, time_column: event_ts}
+        kind: {incremental_by_time_range: {time_column: event_ts}}
         grain: [event_id]
         columns:
           - {name: event_id, type: BIGINT, nullable: false}
@@ -206,7 +206,7 @@ public class LoadRendererTests
         Assert.Equal(["default:full_replace"], Render(Def(FullYaml), FullSql, ["sqlserver"]).Operations.Select(o => $"{o.Operation}:{o.Strategy}"));
         Assert.Equal(["default:delete_insert_by_key"], Render(Def(UniqueYaml), UniqueSql, ["postgres"]).Operations.Select(o => $"{o.Operation}:{o.Strategy}"));
         Assert.Equal(["default:watermark_append"], Render(Def(TimeYaml), TimeSql, ["sqlserver"]).Operations.Select(o => $"{o.Operation}:{o.Strategy}"));
-        var view = Render(Def("name: marts.v\nkind: {type: view}\ncolumns:\n  - {name: a, type: INTEGER}\n"), "SELECT 1 AS a");
+        var view = Render(Def("name: marts.v\nkind: view\ncolumns:\n  - {name: a, type: INTEGER}\n"), "SELECT 1 AS a");
         Assert.Empty(view.Files);
         Assert.Empty(view.Operations);
         Assert.Empty(view.Diagnostics);

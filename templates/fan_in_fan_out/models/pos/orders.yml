@@ -1,7 +1,6 @@
 # The same table in two systems: `connections=:` lists where it exists. It is mapped (the tool builds nothing here).
 name: pos.orders
-kind:
-  type: mapped
+kind: mapped
 connections=: [store_east, store_west]
 grain: [order_id]
 columns:

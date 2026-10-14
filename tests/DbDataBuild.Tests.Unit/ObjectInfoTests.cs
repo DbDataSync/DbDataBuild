@@ -14,7 +14,7 @@ public class ObjectInfoTests
     private const string Words = "title: Orders fact\ndescription: \"One row per order.\"\ntags: [finance]\nproperties:\n  owner: finance\n  tier: 1\n  live: true\n  code: \"007\"\n";
 
     private static string ModelWith(string extra, string columnExtra = "", string indexes = "") =>
-        "name: marts.fct_orders\nkind: {type: view}\n" + extra + "columns:\n  - {name: order_id, type: BIGINT, nullable: false" + columnExtra + "}\n" + indexes;
+        "name: marts.fct_orders\nkind: view\n" + extra + "columns:\n  - {name: order_id, type: BIGINT, nullable: false" + columnExtra + "}\n" + indexes;
 
     private static (int Exit, string Out, string Err) Cli(params string[] args)
     {
@@ -25,7 +25,7 @@ public class ObjectInfoTests
     [Fact]
     public void A_model_a_column_and_an_index_carry_the_four_and_a_property_keeps_the_type_it_was_written_with()
     {
-        var yaml = "name: marts.fct_orders\nkind: {type: full}\n" + Words + "columns:\n" +
+        var yaml = "name: marts.fct_orders\nkind: full\n" + Words + "columns:\n" +
                    "  - name: order_id\n    type: BIGINT\n    nullable: false\n    title: Order id\n    description: The key\n    tags: [key]\n    properties: {pk: true, width: 8}\n" +
                    "indexes:\n  - {name: ix_order, columns: [order_id], title: By order, description: Lookups, tags: [lookup], properties: {rank: 0.5}}\n";
         var (def, diags) = Load(yaml);
@@ -134,7 +134,7 @@ public class ObjectInfoTests
         File.WriteAllText(Path.Combine(dir, "models/finance/_dbdatabuild.yml"), "defaults:\n  tags: [finance]\n  properties: {owner: finance, tier: 1}\n");
         void Model(string path, string name, string words)
         {
-            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {{type: view}}\n{words}columns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n");
+            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: view\n{words}columns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n");
             File.WriteAllText(Path.Combine(dir, "models", path + ".sql"), "SELECT 1 AS order_id\n");
         }
         Model("finance/revenue", "finance.revenue", "title: Revenue\ndescription: Money in\nproperties: {reviewed: true}\n");
@@ -249,7 +249,7 @@ public class ObjectInfoTests
     [Fact]
     public void A_mapped_model_carries_them_the_writer_writes_them_back_and_the_definition_hash_ignores_them()
     {
-        var yaml = "name: staging.orders\ntitle: Orders\ndescription: \"From the shop\"\ntags: [raw]\nproperties: {system: shop, rows: 12}\nkind:\n  type: mapped\ncolumns:\n" +
+        var yaml = "name: staging.orders\ntitle: Orders\ndescription: \"From the shop\"\ntags: [raw]\nproperties: {system: shop, rows: 12}\nkind: mapped\ncolumns:\n" +
                    "  - {name: order_id, type: BIGINT, nullable: false, title: Id, properties: {pk: true}}\nindexes:\n  - {name: ix_order, columns: [order_id], title: Key, tags: [pk]}\n";
         var diags = new List<Diagnostic>();
         var d = SourceDescriptorLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
@@ -269,14 +269,14 @@ public class ObjectInfoTests
         Assert.Equal(written, SourceDescriptorWriter.Yaml(back));                                         // stable
 
         Assert.DoesNotContain("title", SourceDescriptorWriter.Yaml(d, withInfo: false));                   // what the hash is made of
-        var plain = SourceDescriptorLoader.Load("name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\nindexes:\n  - {name: ix_order, columns: [order_id]}\n", "models/staging/orders.yml", "staging.orders", diags)!;
+        var plain = SourceDescriptorLoader.Load("name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\nindexes:\n  - {name: ix_order, columns: [order_id]}\n", "models/staging/orders.yml", "staging.orders", diags)!;
         Assert.Equal(SourceDescriptorWriter.Yaml(plain), SourceDescriptorWriter.Yaml(d, withInfo: false));
     }
 
     [Fact]
     public void An_import_refresh_keeps_what_a_person_said_about_the_table_its_columns_and_its_indexes()
     {
-        var yaml = "name: staging.orders\ntitle: Orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, description: The key}\nindexes:\n  - {name: ix_order, columns: [order_id], tags: [pk]}\n";
+        var yaml = "name: staging.orders\ntitle: Orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, description: The key}\nindexes:\n  - {name: ix_order, columns: [order_id], tags: [pk]}\n";
         var diags = new List<Diagnostic>();
         var committed = SourceDescriptorLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
         var live = new ImportedObject("staging", "orders", ObjectKind.Table, "models/staging/orders.yml",
@@ -329,7 +329,7 @@ public class ObjectInfoTests
         var dir = NewProjectDir();
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "title: Sales\nconnections:\n  sqlserver: {title: Warehouse, tags: [prod]}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"),
-            "name: marts.fct_orders\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, title: Id, properties: {pk: true}}\nindexes:\n  - {name: ix_order, columns: [order_id], description: By id}\n");
+            "name: marts.fct_orders\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, title: Id, properties: {pk: true}}\nindexes:\n  - {name: ix_order, columns: [order_id], description: By id}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT 1 AS order_id\n");
         var docs = MetadataPublisher.Collect(ProjectContext.Load(dir), null, null);
         var project = MetadataInfoRows.From("project", docs.Single(d => d.Kind == "project").Json);
@@ -349,7 +349,7 @@ public class ObjectInfoTests
         var dir = NewProjectDir();
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "title: Sales\nconnections:\n  sqlserver: {title: Warehouse, tags: [prod]}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"),
-            "name: marts.fct_orders\ntitle: Orders\ntags: [finance]\nproperties: {tier: 2, live: true, owner: me}\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, title: Id}\nindexes:\n  - {name: ix_order, columns: [order_id], description: By id}\n");
+            "name: marts.fct_orders\ntitle: Orders\ntags: [finance]\nproperties: {tier: 2, live: true, owner: me}\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, title: Id}\nindexes:\n  - {name: ix_order, columns: [order_id], description: By id}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT 1 AS order_id\n");
         var ctx = ProjectContext.Load(dir);
         var documents = MetadataPublisher.Collect(ctx, null, null);

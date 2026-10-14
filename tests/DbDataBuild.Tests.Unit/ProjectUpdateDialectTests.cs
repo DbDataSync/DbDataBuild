@@ -58,8 +58,8 @@ public class ProjectUpdateDialectTests : IDisposable
     private void Project(string proxyEngine = "readonly flightsql")
     {
         Write("dbdatabuild.yml", $"defaults: {{connections: [sqlserver]}}\ntracking: {{ connection: sqlserver }}\nconnections:\n  proxy_erp: {{ engine: {proxyEngine} }}\n  proxy_fixed: {{ engine: readonly flightsql postgres }}\n  files: {{ engine: readonly duckdb }}\n");
-        Write("models/src/events.yml", "name: src.events\nkind: {type: mapped}\nconnections=: [proxy_erp]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
-        Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n");
+        Write("models/src/events.yml", "name: src.events\nkind: mapped\nconnections=: [proxy_erp]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
+        Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n");
     }
 
     private static string Env(string v) => v is "DBDATABUILD_PROXY_ERP_READ" or "DBDATABUILD_PROXY_FIXED_READ" ? "grpc://127.0.0.1:9;token=x" : v == "DBDATABUILD_FILES_READ" ? ":memory:" : "";

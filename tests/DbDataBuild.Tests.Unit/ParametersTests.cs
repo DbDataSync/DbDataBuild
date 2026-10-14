@@ -26,7 +26,7 @@ public class ParametersTests
     private static void Model(string dir, string name, string extra = "")
     {
         var stem = "models/" + name.Replace('.', '/');
-        Write(dir, stem + ".yml", $"name: {name}\nkind: {{type: view}}\n{extra}columns:\n  - {{name: a, type: BIGINT}}\n");
+        Write(dir, stem + ".yml", $"name: {name}\nkind: view\n{extra}columns:\n  - {{name: a, type: BIGINT}}\n");
         Write(dir, stem + ".sql", "SELECT 1 AS a\n");
     }
 
@@ -105,18 +105,18 @@ public class ParametersTests
     public void A_slice_may_use_project_and_model_parameters_and_a_missing_one_is_named()
     {
         var dir = Project("parameters:\n  region: eu\nconnections:\n  crm: { engine: postgres, parameters: { id: \"1\" } }\n  wh: { engine: sqlserver }\ndefaults: {connections: [wh]}\n");
-        Write(dir, "models/crm/c.yml", "name: crm.c\nkind: {type: mapped}\nconnections=: [crm]\ngrain: [a]\ncolumns:\n  - {name: a, type: BIGINT, nullable: false}\n");
-        Write(dir, "models/dst/c.yml", "name: dst.c\nkind:\n  type: copy\n  from: crm.c\n  slice: {column: region, value: \"${project.region}-${origin.id}\", type: \"VARCHAR(20)\"}\n");
+        Write(dir, "models/crm/c.yml", "name: crm.c\nkind: mapped\nconnections=: [crm]\ngrain: [a]\ncolumns:\n  - {name: a, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/dst/c.yml", "name: dst.c\nkind:\n  copy:\n    from: crm.c\n    slice: {column: region, value: \"${project.region}-${origin.id}\", type: \"VARCHAR(20)\"}\n");
         var ok = ProjectValidator.Validate(dir);
         Assert.False(ok.HasErrors, string.Join("\n", ok.Diagnostics.Select(DiagnosticFormatter.Format)));
-        Write(dir, "models/dst/c.yml", "name: dst.c\nkind:\n  type: copy\n  from: crm.c\n  slice: {column: region, value: \"${project.nothing}-${origin.id}\", type: \"VARCHAR(20)\"}\n");
+        Write(dir, "models/dst/c.yml", "name: dst.c\nkind:\n  copy:\n    from: crm.c\n    slice: {column: region, value: \"${project.nothing}-${origin.id}\", type: \"VARCHAR(20)\"}\n");
         Assert.Contains(ProjectValidator.Validate(dir).Diagnostics, d => d.Found.Contains("there is no such project parameter"));
     }
 
     // ---- parameters as values in a model's query ----
 
-    private const string Staging = "name: staging.t\nkind: {type: mapped}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n  - {name: d, type: DATE}\n  - {name: ts, type: TIMESTAMP}\n  - {name: n, type: INTEGER}\n";
-    private const string Marts = "name: marts.m\nkind: {type: full}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n";
+    private const string Staging = "name: staging.t\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n  - {name: d, type: DATE}\n  - {name: ts, type: TIMESTAMP}\n  - {name: n, type: INTEGER}\n";
+    private const string Marts = "name: marts.m\nkind: full\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n";
     private const string Typed = "parameters:\n  region: eu\n  cutoff: { type: DATE, value: \"2024-01-03\" }\n  since: { type: TIMESTAMP, value: \"2024-01-04 00:00:00\" }\n  limit: { type: BIGINT, value: 5 }\n  small: { type: INTEGER, value: 7 }\n  tiny: { type: SMALLINT, value: 3 }\ndefaults: {connections: [sqlserver, postgres]}\nstring_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C, sqlserver: Latin1_General_100_BIN2 }\n";
     private const string Query = "SELECT id, region FROM staging.t WHERE region = ${project.region} AND d >= ${project.cutoff} AND ts >= ${project.since} AND n < ${project.small} AND id < ${project.limit} AND n > ${project.tiny}\n";
 
@@ -195,7 +195,7 @@ public class ParametersTests
     public void A_view_cannot_use_a_parameter_because_ddl_binds_no_values_and_a_table_can()
     {
         var dir = QueryProject("SELECT id, region FROM staging.t WHERE region = ${project.region}\n", OnSqlServer);
-        File.WriteAllText(Path.Combine(dir, "models/marts/m.yml"), Marts.Replace("kind: {type: full}", "kind: {type: view}"));
+        File.WriteAllText(Path.Combine(dir, "models/marts/m.yml"), Marts.Replace("kind: full", "kind: view"));
         var (exit, _, err) = Cli("project", "compile", "--project", dir);
         Assert.NotEqual(0, exit);
         Assert.Contains("a view's query cannot use parameters", err);

@@ -1,6 +1,5 @@
 name: marts.agg_top_tracks
-kind:
-  type: full
+kind: full
 grain:
   - genre_name
   - genre_rank

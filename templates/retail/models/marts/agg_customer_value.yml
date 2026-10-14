@@ -1,5 +1,5 @@
 name: marts.agg_customer_value
-kind: {type: full}
+kind: full
 grain: [customer_id]
 columns:
   - {name: customer_id, type: INTEGER, nullable: false}

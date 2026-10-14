@@ -28,7 +28,7 @@ public static class IndexAdvisor
 {
     public static IReadOnlyList<IndexAdvice> For(ModelDefinition def, IReadOnlyList<string> targets)
     {
-        if (def.KindType == ModelKinds.View || targets.Count == 0) return [];
+        if (def.Kind == ModelKinds.View || targets.Count == 0) return [];
         var wanted = new List<(IndexReason Reason, IReadOnlyList<string> Columns, string Target)>();
         foreach (var target in targets)
             foreach (var op in LoadPlan.For(def, target))

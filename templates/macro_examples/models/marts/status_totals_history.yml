@@ -1,5 +1,5 @@
 name: marts.status_totals_history
-kind: {type: full}
+kind: full
 grain: [as_of_date, status]
 columns:
   - {name: as_of_date, type: DATE, nullable: false}

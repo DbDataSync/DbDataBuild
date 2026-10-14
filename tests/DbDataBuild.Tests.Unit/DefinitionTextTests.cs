@@ -90,8 +90,8 @@ public class DefinitionWriterTests
         Assert.Equal("""
             name: marts.fct_orders
             kind:
-              type: incremental_by_unique_key
-              unique_key: [order_id]
+              incremental_by_unique_key:
+                unique_key: [order_id]
             grain: [order_id]
             connections=: [sqlserver, fabric]
             columns:
@@ -115,7 +115,7 @@ public class DefinitionWriterTests
     {
         var text = DefinitionWriter.Create(Def("incremental_by_time_range", time: "order_date", lookback: "3 days", grain: ["order_date"],
             cols: [new("order_date", "DATE", false, "default")], renames: [new("old", "order_date")]));
-        Assert.Equal("name: marts.fct_orders\nkind:\n  type: incremental_by_time_range\n  time_column: order_date\n  lookback: 3 days\ngrain: [order_date]\n" +
+        Assert.Equal("name: marts.fct_orders\nkind:\n  incremental_by_time_range:\n    time_column: order_date\n    lookback: 3 days\ngrain: [order_date]\n" +
                      "columns:\n  - name: order_date\n    type: DATE\n    nullable: false\n    collation: default\nrenames:\n  - from: old\n    to: order_date\n", text);
     }
 
@@ -161,8 +161,8 @@ public class DefinitionEditorTests
         # Orders fact table (hand-written comment)
         name: marts.fct_orders
         kind:
-          type: incremental_by_unique_key   # keyed upsert
-          unique_key: [order_id]
+          incremental_by_unique_key:   # keyed upsert
+            unique_key: [order_id]
 
         grain: [order_id]
         connections: [sqlserver, fabric]
@@ -267,7 +267,7 @@ public class DefinitionEditorTests
     [Fact]
     public void Renaming_a_key_or_time_column_updates_every_reference_and_nothing_else()
     {
-        const string text = "name: marts.fct_orders\nkind:\n  type: incremental_by_time_range\n  time_column: order_date   # the clock\n  lookback: 3 days\n" +
+        const string text = "name: marts.fct_orders\nkind:\n  incremental_by_time_range:\n    time_column: order_date   # the clock\n    lookback: 3 days\n" +
                             "grain: [order_date, Order_ID]\ncolumns:\n  - {name: order_date, type: DATE}\n  - {name: order_id, type: BIGINT}\n";
         var result = Edit(text, new RenameColumn("order_date", "day"), new RenameColumn("order_id", "id"));
         Assert.Contains("time_column: day   # the clock", result);
@@ -283,13 +283,13 @@ public class DefinitionEditorTests
         Assert.Equal(["name", "kind", "grain", "connections", "columns", "renames"], keys);
     }
 
-    private const string FlowItems = "name: marts.fct_orders\nkind: {type: full}\ncolumns:\n  - {name: a, type: INTEGER}\n  - {name: b, type: VARCHAR(5), nullable: false}\n";
+    private const string FlowItems = "name: marts.fct_orders\nkind: full\ncolumns:\n  - {name: a, type: INTEGER}\n  - {name: b, type: VARCHAR(5), nullable: false}\n";
 
     [Fact]
     public void Flow_style_items_are_edited_in_flow_style()
     {
         var result = Edit(FlowItems, new SetColumnNullable("a", false), new AddColumn("c", "DECIMAL(10, 2)", false), new SetColumnType("b", "VARCHAR(9)"));
-        Assert.Equal("name: marts.fct_orders\nkind: {type: full}\ncolumns:\n  - {name: a, type: INTEGER, nullable: false}\n  - {name: b, type: VARCHAR(9), nullable: false}\n" +
+        Assert.Equal("name: marts.fct_orders\nkind: full\ncolumns:\n  - {name: a, type: INTEGER, nullable: false}\n  - {name: b, type: VARCHAR(9), nullable: false}\n" +
                      "  - {name: c, type: \"DECIMAL(10, 2)\", nullable: false}\n", result);
     }
 
@@ -315,17 +315,17 @@ public class DefinitionEditorTests
     [Fact]
     public void Structures_that_cannot_be_spliced_are_reported_not_rewritten()
     {
-        var (_, flowList) = DefinitionEditor.Apply("name: m\nkind: {type: full}\ncolumns: [{name: a, type: INT}]\n", "m.yml", [new AddColumn("b", "INT", true)]);
+        var (_, flowList) = DefinitionEditor.Apply("name: m\nkind: full\ncolumns: [{name: a, type: INT}]\n", "m.yml", [new AddColumn("b", "INT", true)]);
         Assert.Equal("DDB-422", flowList!.Code);
         Assert.Contains("flow list", flowList.Found);
 
-        var (_, flowRenames) = DefinitionEditor.Apply("name: m\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\nrenames: []\n", "m.yml", [new RenameColumn("a", "b")]);
+        var (_, flowRenames) = DefinitionEditor.Apply("name: m\nkind: full\ncolumns:\n  - {name: a, type: INT}\nrenames: []\n", "m.yml", [new RenameColumn("a", "b")]);
         Assert.Equal("DDB-422", flowRenames!.Code);
 
-        var (_, onlyColumn) = DefinitionEditor.Apply("name: m\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\n", "m.yml", [new RemoveColumn("a")]);
+        var (_, onlyColumn) = DefinitionEditor.Apply("name: m\nkind: full\ncolumns:\n  - {name: a, type: INT}\n", "m.yml", [new RemoveColumn("a")]);
         Assert.Equal("DDB-422", onlyColumn!.Code);
 
-        var (_, missing) = DefinitionEditor.Apply("name: m\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\n", "m.yml", [new SetColumnType("zzz", "INT")]);
+        var (_, missing) = DefinitionEditor.Apply("name: m\nkind: full\ncolumns:\n  - {name: a, type: INT}\n", "m.yml", [new SetColumnType("zzz", "INT")]);
         Assert.Equal("DDB-422", missing!.Code);
 
         var (_, broken) = DefinitionEditor.Apply("a: [1, 2\n", "m.yml", [new RemoveColumn("a")]);

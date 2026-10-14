@@ -1,6 +1,5 @@
 name: marts.dim_customer
-kind:
-  type: full
+kind: full
 columns:
   - name: customer_id
     type: BIGINT

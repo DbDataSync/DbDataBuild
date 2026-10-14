@@ -1,6 +1,5 @@
 name: staging.albums
-kind:
-  type: view
+kind: view
 grain:
   - album_id
 columns:

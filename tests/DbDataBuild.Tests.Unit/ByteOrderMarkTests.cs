@@ -13,8 +13,8 @@ public class ByteOrderMarkTests
         var dir = NewProjectDir();
         void Write(string rel, string text) { var p = Path.Combine(dir, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllText(p, text, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: bom)); }
         Write("dbdatabuild.yml", "defaults: {connections: [sqlserver]}\n");
-        Write("models/staging/orders.yml", "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
-        Write("models/marts/plain.yml", "name: marts.plain\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        Write("models/staging/orders.yml", "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        Write("models/marts/plain.yml", "name: marts.plain\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         Write("models/marts/plain.sql", "SELECT order_id FROM staging.orders\n");
         // a query file with a head: the head must still be seen as one
         Write("models/marts/headed.yml", "columns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");

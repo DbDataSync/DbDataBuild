@@ -14,11 +14,11 @@ public class ModelTagTests
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         Directory.CreateDirectory(Path.Combine(dir, "models/finance"));
         Directory.CreateDirectory(Path.Combine(dir, "models/ops"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         File.WriteAllText(Path.Combine(dir, "models/finance/_dbdatabuild.yml"), "defaults:\n  tags: [finance]\n");
         void Model(string path, string name, string tags)
         {
-            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {{type: view}}\n{tags}columns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n");
+            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: view\n{tags}columns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n");
             File.WriteAllText(Path.Combine(dir, "models", path + ".sql"), "SELECT order_id FROM staging.orders\n");
         }
         Model("finance/revenue", "finance.revenue", "tags: [critical]\n");
@@ -70,7 +70,7 @@ public class ModelTagTests
         var none = Cli("project", "show", "metadata", "tag:nothing", "--project", dir);
         Assert.Equal(CliApp.ExitUsage, none.Exit);
         Assert.Contains("no model has the tag `nothing`", none.Err);
-        File.WriteAllText(Path.Combine(dir, "models/ops/queue.yml"), "name: ops.queue\nkind: {type: view}\ntags: [\"bad tag\"]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/ops/queue.yml"), "name: ops.queue\nkind: view\ntags: [\"bad tag\"]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         Assert.Contains("`bad tag` is not a tag", Cli("project", "compile", "--project", dir).Err);
     }
 }

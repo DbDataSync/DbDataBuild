@@ -1,5 +1,5 @@
 name: marts.dim_store
-kind: {type: full}
+kind: full
 grain: [store_id]
 columns:
   - {name: store_id, type: INTEGER, nullable: false}

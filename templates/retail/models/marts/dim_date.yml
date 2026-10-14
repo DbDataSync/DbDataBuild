@@ -1,5 +1,5 @@
 name: marts.dim_date
-kind: {type: full}
+kind: full
 grain: [date_key]
 columns:
   - {name: date_key, type: BIGINT, nullable: false}

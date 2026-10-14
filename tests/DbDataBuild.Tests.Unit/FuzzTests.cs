@@ -60,7 +60,7 @@ public class FuzzTests
             - { name: grant, event: post_create, script: hooks/grant.sql }
         """;
 
-    private const string Source = "name: staging.events\ntitle: Events\ndescription: \"Raw events\"\ntags: [raw]\nproperties: {system: crm}\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false, title: \"Event id\", description: \"The key\", tags: [key], properties: {pk: true}}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: seq, type: BIGINT, nullable: false}\n  - {name: payload, type: \"VARCHAR(100)\"}\n";
+    private const string Source = "name: staging.events\ntitle: Events\ndescription: \"Raw events\"\ntags: [raw]\nproperties: {system: crm}\nkind: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false, title: \"Event id\", description: \"The key\", tags: [key], properties: {pk: true}}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: seq, type: BIGINT, nullable: false}\n  - {name: payload, type: \"VARCHAR(100)\"}\n";
 
     /// <summary>The words about the model, its columns' neighbours and its index: appended to the model's definition so the mutations reach them.</summary>
     private const string ModelExtras = "\ntitle: Events\ndescription: \"Facts about events\"\ntags: [facts]\nproperties:\n  owner: data\n  tier: 1\n  reviewed: false\nindexes:\n  - {name: ix_seq, columns: [seq], title: \"By sequence\", description: \"Lookups by seq\", tags: [lookup], properties: {rank: 1}}\nhooks:\n  - {use: standard}\n";
@@ -127,12 +127,48 @@ public class FuzzTests
         }
     }
 
+    private static readonly string[] KindTexts =
+    [
+        "name: marts.k\nkind: {incremental_by_unique_key: {unique_key: [event_id]}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT}\n",
+        "name: marts.k\nkind:\n  incremental_by_time_range:\n    time_column: event_ts   # the clock\n    lookback: 3 days\ngrain: [event_ts]\ncolumns:\n  - {name: event_ts, type: TIMESTAMP}\n",
+        "name: marts.k\nkind: {copy: {from: staging.events, slice: {column: s, value: \"${origin.s}\", type: \"VARCHAR(5)\"}, unique_key: [event_id], watermark: {column: event_ts, lookback: 1 days}}}\n",
+        "name: staging.k\nkind:\n  native:\n    access: select\n    query: SELECT 1 AS n\ncolumns:\n  - {name: n, type: INTEGER}\n",
+        "name: marts.k\nkind: view\ncolumns:\n  - {name: n, type: INTEGER}\n",
+        // the old form, which still reads and is rewritten
+        "name: marts.k\nkind:\n  type: incremental_by_unique_key   # keyed\n  unique_key: [event_id]\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT}\n",
+        "name: marts.k\nkind: {type: copy, from: staging.events, unique_key: [event_id]}\n",
+    ];
+
+    [Fact]
+    public void A_damaged_kind_is_answered_with_diagnostics_and_the_rewrite_never_makes_a_file_that_does_not_load()
+    {
+        var n = 0;
+        foreach (var text in KindTexts)
+            foreach (var mutated in Mutations(text, Seed + text.Length, Rounds))
+            {
+                var label = $"kind mutation {n++}: {mutated.Replace("\n", "\\n")}";
+                var diags = new List<Diagnostic>();
+                var def = ModelDefinitionLoader.Load(mutated, "models/marts/k.yml", null, diags);
+                Assert.True(def == null || diags.All(d => d.Severity != Severity.Error), label);
+                Assert.DoesNotContain(diags, d => d.Code == "DDB-900");
+                var source = new List<Diagnostic>();
+                SourceDescriptorLoader.Load(mutated, "models/staging/k.yml", null, source);
+                var rewritten = DbDataBuild.Define.KindFormRewriter.Rewrite(mutated, "models/marts/k.yml", projectFile: false);
+                if (rewritten.NewText != null)
+                {
+                    var again = new List<Diagnostic>();
+                    Assert.NotNull(DbDataBuild.Models.Yaml.StrictYamlReader.Read(rewritten.NewText, "k.yml", again));
+                    Assert.Empty(again);
+                }
+            }
+    }
+
     private static readonly (string Name, string Path, string Text)[] Auxiliary =
     [
         ("hook", "hooks/grant.sql", "-- grants\nGRANT SELECT ON marts.fct_events TO reader;\nGO\nEXEC sp_addrolemember 'r', 'u';\n"),
         ("macros", "macros/m.sql", "CREATE MACRO twice(x) AS x * 2;\nCREATE MACRO pick(t, c) AS TABLE SELECT c FROM query_table(t);\nCREATE TYPE mood AS ENUM ('a', 'b');\n"),
         ("native", "models/staging/ext.native.sql", "SELECT 1 AS n, 'x' AS s\n"),
-        ("native_yaml", "models/staging/ext.yml", "name: staging.ext\nkind: {type: native, access: select}\nreads: [staging.events]\ntrack_definition: [dbo.fn_x, public.f(date)]\nparameters:\n  p: {type: NAME, value: events}\ncolumns:\n  - {name: n, type: INTEGER}\n  - {name: s, type: VARCHAR}\n"),
+        ("native_yaml", "models/staging/ext.yml", "name: staging.ext\nkind: {native: {access: select}}\nreads: [staging.events]\ntrack_definition: [dbo.fn_x, public.f(date)]\nparameters:\n  p: {type: NAME, value: events}\ncolumns:\n  - {name: n, type: INTEGER}\n  - {name: s, type: VARCHAR}\n"),
         ("metadata_test", "tests/metadata/rule.sql", "-- tags: naming\n-- severity: warn\nSELECT name FROM metadata_models WHERE name LIKE 'x%'\n"),
         ("model_test", "tests/models/marts/fct_events.yml", "tests:\n  - name: one row\n    given:\n      staging.events:\n        - {event_id: 1, event_ts: '2024-01-01 00:00:00', seq: 1}\n    expect:\n      - {event_id: 1}\n"),
         ("head", "models/marts/head.sql", "CREATE TABLE marts.head WITH (kind = full_replace, unique_key = (event_id), time_column = event_ts, lookback = 3) AS\nSELECT event_id FROM staging.events\n"),

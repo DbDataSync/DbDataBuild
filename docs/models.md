@@ -1,10 +1,10 @@
-# Model types: what each is and how it operates
+# Model kinds: what each is and how it operates
 
-A **model** is a table or view in a connection's database, described by files in `models/`. Its `kind.type` says what the tool does with it. There are seven. The reference for every key is `DESIGN.md` section 6 (6.1 kinds, 6.2 rules, 6.5.2 copies, 6.5.4 native models, 6.6 loads); this page is the summary.
+A **model** is a table or view in a connection's database, described by files in `models/`. Its **model kind** (`kind:`) says what the tool does with it. There are seven. The reference for every key is `DESIGN.md` section 6 (6.1 kinds, 6.2 rules, 6.5.2 copies, 6.5.4 native models, 6.6 loads); this page is the summary.
 
 ## At a glance
 
-| `kind.type` | What it is | Files | Built by the tool? | Persisted as | Default load |
+| Model kind | What it is | Files | Built by the tool? | Persisted as | Default load |
 |---|---|---|---|---|---|
 | `view` | A view over other models | `.sql` + `.yml` | yes (DDL) | a view | none: no rows move |
 | `full` | A table rebuilt from its query on every load | `.sql` + `.yml` | yes | a table | replace the table's contents (`full_replace`) |
@@ -31,24 +31,36 @@ A **model** is a table or view in a connection's database, described by files in
 | **Drift** | detected | detected | detected | detected | detected | checked against the database (`project import`, the structure check) | the routines it names (`track_definition`) |
 | **Typical use** | a mart over other tables | a small dimension | a fact table with a key | an event table by day | bring a shop system's orders into the warehouse | a source table you read but do not own | `STRING_SPLIT`, a table-valued function, a stored procedure result |
 
-## Settings inside `kind`
+## How a kind is written, and its settings
 
-`kind` is a mapping. `type` is the one setting every model has, and its values are the seven above. The other keys depend on the type; any key not listed for a type is an error (unknown keys are refused). Closed sets of values are marked.
+`kind` is the name of the model kind. A kind with settings is written as a mapping with **one key, the kind's name**, and that kind's settings beneath it; a kind with no settings may be written as a plain value:
 
-| Key | Used by | Required | Values | Meaning |
+```yaml
+kind: view                                                  # no settings: a plain value
+kind: {full: {}}                                            # the same, as a mapping
+kind:
+  incremental_by_unique_key:
+    unique_key: [order_id]
+kind: {copy: {from: pos.orders, unique_key: [order_id]}}    # flow style
+```
+
+Exactly one key is allowed under `kind`, and a setting that does not belong to the kind is an error (unknown keys are refused), because each kind's settings are a closed set in `schemas/model.schema.json`. A key such as `kind.copy:` is an ordinary key with a dot in its name; it does not nest and is not supported. A folder's `_dbdatabuild.yml` (or the project file) may give a default `kind` under `defaults:`; a model's own `kind` replaces it whole, never key by key. The form of the earlier releases, `kind: {type: copy, from: pos.orders}`, still loads for one more release with a warning (DDB-247); `dbdatabuild project model update` (or `project update`) rewrites it, and `--check` lists the files that have it.
+
+The kind names are closed: `view`, `full`, `incremental_by_unique_key`, `incremental_by_time_range`, `copy`, `mapped`, `native`. Closed sets of values are marked.
+
+| Setting | Of the kind | Required | Values | Meaning |
 |---|---|---|---|---|
-| `type` | all | yes | **closed:** `view`, `full`, `incremental_by_unique_key`, `incremental_by_time_range`, `copy`, `mapped`, `native` | what the model is |
 | `unique_key` | `incremental_by_unique_key`; `copy` (an incremental copy) | yes for `incremental_by_unique_key`; for a copy, needed with `watermark` | a list of column names | the rows of a load replace the rows with the same key; checked against `grain` |
 | `time_column` | `incremental_by_time_range` | yes | a `DATE` or `TIMESTAMP` column | the column the range is measured on |
 | `lookback` | `incremental_by_time_range` | no | a duration such as `3 days` (minutes, hours, days, weeks, months; a `DATE` column takes days, weeks or months) | how far before the newest value a load starts again, for late or changed rows |
 | `from` | `copy` | yes | `schema_name.table_name` of a model, mapped model or another copy, on exactly one connection other than the copy's | the origin |
-| `slice` | `copy` | no | `column`, `value` (may use `${origin.name}` or `${connection.name}`), `type` (when the origin has no such column) | which rows belong to an origin, for a copy from several connections; a load replaces only that origin's rows |
+| `slice` | `copy` | no | `column`, `value` (may use `${origin.name}` or `${connection.name}`), `type` (the column's SQL type, when the origin has no such column) | which rows belong to an origin, for a copy from several connections; a load replaces only that origin's rows |
 | `watermark` | `copy` | no | `column`, `lookback` | makes a copy incremental: read the rows at or after the newest value the destination holds, less `lookback` (needs `unique_key`) |
 | `on_mismatch` | `copy` | no | **closed:** `fail` (default), `skip` | what a deploy does about an origin whose table differs from its declaration: stop, or leave that origin out (never silently). A refresh does not make this check |
 | `access` | `native` | no (default `select`) | **closed:** `select`, `command` | `select`: a query can contain it (it is inlined as a derived table). `command`: it can only be run, as the origin of a copy |
 | `query` | `native` | yes, here or in a `.native.sql` file beside the definition (not both) | the engine's own text | a single `SELECT` for `select`; one call (`EXEC`, `EXECUTE`, `CALL` or `SELECT`) for `command` |
 
-`view`, `full` and `mapped` take no other key in `kind`. Settings that belong to the model rather than to its kind are outside `kind`: `columns`, `grain`, `indexes`, `connections`, `loads`, `refresh`, `hooks`, `renames`, `title`, `description`, `tags`, `properties`. A native model also has `reads`, `parameters` and `track_definition` outside `kind`.
+`view`, `full` and `mapped` take no settings. Settings that belong to the model rather than to its kind are outside `kind`: `columns`, `grain`, `indexes`, `connections`, `loads`, `refresh`, `hooks`, `renames`, `title`, `description`, `tags`, `properties`. A native model also has `reads`, `parameters` and `track_definition` outside `kind`.
 
 ## The seven in more detail
 
@@ -59,7 +71,7 @@ A view over other models. The tool writes the `CREATE`/`ALTER` through a deploy 
 ```yaml
 # models/marts/active_customers.yml (beside active_customers.sql)
 name: marts.active_customers
-kind: {type: view}
+kind: view
 columns: [...]
 ```
 
@@ -84,11 +96,11 @@ A table filled with the rows of another model that lives on **another connection
 ```yaml
 name: warehouse.orders
 kind:
-  type: copy
-  from: pos.orders
-  slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}   # fan-in: which rows are an origin's
-  unique_key: [order_id]
-  watermark: {column: ordered_on, lookback: 7 days}                           # incremental; leave out for a full copy
+  copy:
+    from: pos.orders
+    slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}   # fan-in: which rows are an origin's
+    unique_key: [order_id]
+    watermark: {column: ordered_on, lookback: 7 days}                           # incremental; leave out for a full copy
 connections=: [sqlserver, postgres]
 ```
 

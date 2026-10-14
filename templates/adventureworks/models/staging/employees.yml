@@ -1,6 +1,5 @@
 name: staging.employees
-kind:
-  type: view
+kind: view
 grain:
   - employee_id
 columns:

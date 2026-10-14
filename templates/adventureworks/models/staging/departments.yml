@@ -1,6 +1,5 @@
 name: staging.departments
-kind:
-  type: view
+kind: view
 grain:
   - department_id
 columns:

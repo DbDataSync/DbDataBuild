@@ -27,7 +27,7 @@ public class NativeCommandTests
     }
 
     private static void Command(string dir, string text = "EXEC dbo.usp_nums @list = ${project.list}", string extra = "")
-        => Write(dir, "models/erp/nums.yml", $"name: erp.nums\nkind:\n  type: native\n  access: command\n  query: {text}\n{extra}{Cols}");
+        => Write(dir, "models/erp/nums.yml", $"name: erp.nums\nkind:\n  native:\n    access: command\n    query: {text}\n{extra}{Cols}");
 
     private static string Diags(string dir) => string.Join("\n", ProjectValidator.Validate(dir).Diagnostics.Select(DiagnosticFormatter.Format));
 
@@ -72,7 +72,7 @@ public class NativeCommandTests
     {
         var dir = Project();
         Command(dir);
-        Write(dir, "models/marts/m.yml", "name: marts.m\nkind: {type: full}\n" + Cols);
+        Write(dir, "models/marts/m.yml", "name: marts.m\nkind: full\n" + Cols);
         Write(dir, "models/marts/m.sql", "SELECT n FROM erp.nums\n");
         var o = new StringWriter(); var e = new StringWriter();
         Assert.NotEqual(0, CliApp.Run(["project", "compile", "--project", dir], o, e, environment: _ => null));
@@ -85,7 +85,7 @@ public class NativeCommandTests
     {
         var dir = Project();
         Command(dir);
-        Write(dir, "models/marts/nums.yml", "name: marts.nums\nkind:\n  type: copy\n  from: erp.nums\n");        // the same connection: not a local copy
+        Write(dir, "models/marts/nums.yml", "name: marts.nums\nkind:\n  copy:\n    from: erp.nums\n");        // the same connection: not a local copy
         var result = ProjectValidator.Validate(dir);
         Assert.False(result.HasErrors, Diags(dir));
         Assert.False(result.Sources.Single().Definition.LocalCopy);
@@ -97,7 +97,7 @@ public class NativeCommandTests
     {
         var dir = Project();
         Command(dir);
-        Write(dir, "models/marts/nums.yml", "name: marts.nums\nkind:\n  type: copy\n  from: erp.nums\n  unique_key: [n]\n  watermark: {column: n}\n");
+        Write(dir, "models/marts/nums.yml", "name: marts.nums\nkind:\n  copy:\n    from: erp.nums\n    unique_key: [n]\n    watermark: {column: n}\n");
         Assert.Contains("must use `@watermark`", Diags(dir));
         Command(dir, "EXEC dbo.usp_nums @since = @watermark");
         Assert.DoesNotContain("@watermark`", Diags(dir));

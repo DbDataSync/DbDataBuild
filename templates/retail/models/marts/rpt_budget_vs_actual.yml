@@ -1,5 +1,5 @@
 name: marts.rpt_budget_vs_actual
-kind: {type: full}
+kind: full
 grain: [budget_month, region, category_code, store_id]
 columns:
   - {name: budget_month, type: INTEGER, nullable: false}

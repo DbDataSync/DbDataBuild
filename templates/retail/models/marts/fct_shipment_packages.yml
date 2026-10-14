@@ -1,5 +1,5 @@
 name: marts.fct_shipment_packages
-kind: {type: full}
+kind: full
 grain: [shipment_id, package_no]
 columns:
   - {name: shipment_id, type: INTEGER, nullable: false}

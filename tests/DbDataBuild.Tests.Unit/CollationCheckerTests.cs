@@ -69,7 +69,7 @@ public class CollationCheckerTests
     private static ModelSource Model(string targets, string columns = "  - {name: a, type: INT}")
     {
         var diags = new List<Diagnostic>();
-        var yaml = $"name: marts.fct_orders\nkind: {{type: full}}\n{(targets == "" ? "" : $"connections: {targets}\n")}columns:\n{columns}\n";
+        var yaml = $"name: marts.fct_orders\nkind: full\n{(targets == "" ? "" : $"connections: {targets}\n")}columns:\n{columns}\n";
         var def = ModelDefinitionLoader.Load(yaml, "models/marts/fct_orders.yml", "marts.fct_orders", diags);
         Assert.Empty(diags.Select(DiagnosticFormatter.Format));
         return new ModelSource(def!, "models/marts/fct_orders.yml", "models/marts/fct_orders.sql");

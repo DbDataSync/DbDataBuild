@@ -1,6 +1,5 @@
 name: chinook.artist
-kind:
-  type: mapped
+kind: mapped
 grain: [artist_id]
 columns:
   - {name: artist_id, type: INTEGER, nullable: false}

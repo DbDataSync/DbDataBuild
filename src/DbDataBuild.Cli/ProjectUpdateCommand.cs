@@ -95,6 +95,7 @@ internal static class ProjectUpdateCommand
         {
             checked_models = report.Data.TryGetValue("definitions", out var defs) && defs is int c ? (int?)c : null,
             models = report.Data.GetValueOrDefault("models"),
+            old_kind_forms = report.Data.GetValueOrDefault("old_kind_forms"),
         });
         return exit;
     }

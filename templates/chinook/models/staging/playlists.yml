@@ -1,6 +1,5 @@
 name: staging.playlists
-kind:
-  type: view
+kind: view
 grain:
   - playlist_id
 columns:

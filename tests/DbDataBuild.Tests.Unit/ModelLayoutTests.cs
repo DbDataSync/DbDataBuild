@@ -18,7 +18,7 @@ public class ModelLayoutTests
         {
             var full = Path.Combine(dir, "models", path + ".yml");
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            File.WriteAllText(full, $"name: {name}\nkind: {{type: full}}\n{Cols}");
+            File.WriteAllText(full, $"name: {name}\nkind: full\n{Cols}");
             File.WriteAllText(Path.Combine(dir, "models", path + ".sql"), "SELECT 1 AS n\n");
         }
         return dir;
@@ -69,7 +69,7 @@ public class ModelLayoutTests
 
         var dir = Project("none");
         Directory.CreateDirectory(Path.Combine(dir, "models", "elsewhere"));
-        File.WriteAllText(Path.Combine(dir, "models", "elsewhere", "orders.yml"), "name: erp.orders\nkind: {type: mapped}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models", "elsewhere", "orders.yml"), "name: erp.orders\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
         var ctx = ProjectContext.Load(dir);
         Assert.Equal("models/elsewhere/orders.yml", ctx.Project.Descriptors.Single().File);
         Assert.Equal("models/elsewhere/orders.yml", MetadataBuilder.SourceFile(ctx.Project.Descriptors.Single()));

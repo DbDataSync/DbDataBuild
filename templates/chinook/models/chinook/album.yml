@@ -1,6 +1,5 @@
 name: chinook.album
-kind:
-  type: mapped
+kind: mapped
 grain: [album_id]
 columns:
   - {name: album_id, type: INTEGER, nullable: false}

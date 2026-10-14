@@ -1,6 +1,5 @@
 name: sales.sales_person
-kind:
-  type: mapped
+kind: mapped
 grain: [sales_person_id]
 columns:
   - {name: sales_person_id, type: INTEGER, nullable: false}

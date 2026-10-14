@@ -56,7 +56,7 @@ public class CrossDiffConformanceTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models/xd"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{leftName}]}}\ntracking: {{ connection: {leftName} }}\n");
-            File.WriteAllText(Path.Combine(dir, "models/xd/items.yml"), $"name: xd.items\nkind: {{type: mapped}}\nconnections=: [{leftName}, {rightName}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n");
+            File.WriteAllText(Path.Combine(dir, "models/xd/items.yml"), $"name: xd.items\nkind: mapped\nconnections=: [{leftName}, {rightName}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n");
             foreach (var (engine, isLeft) in new[] { (left, true), (right, false) })
             {
                 await engine.ExecAsync(engine.Name == "postgres" ? "CREATE SCHEMA xd" : "EXEC('CREATE SCHEMA xd')");
@@ -125,7 +125,7 @@ public class CrossDiffConformanceTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models/xd"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\ntracking: { connection: sqlserver }\n");
-            File.WriteAllText(Path.Combine(dir, "models/xd/t.yml"), "name: xd.t\nkind: {type: mapped}\nconnections=: [sqlserver, postgres]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            File.WriteAllText(Path.Combine(dir, "models/xd/t.yml"), "name: xd.t\nkind: mapped\nconnections=: [sqlserver, postgres]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
             await left.ExecAsync("EXEC('CREATE SCHEMA xd')");
             await left.ExecAsync("CREATE TABLE xd.t (id BIGINT NOT NULL, a INT, code NVARCHAR(20))");
             await left.ExecAsync("INSERT INTO xd.t SELECT TOP (5000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), 1, N'same' FROM sys.all_objects a CROSS JOIN sys.all_objects b");

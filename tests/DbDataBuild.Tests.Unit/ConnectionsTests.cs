@@ -67,7 +67,7 @@ public class ConnectionsTests
     [Fact]
     public void A_model_may_name_a_declared_connection_and_only_a_declared_one()
     {
-        const string Yaml = "name: marts.m\nkind: {type: full}\nconnections: [wh]\ncolumns:\n  - {name: a, type: BIGINT}\n";
+        const string Yaml = "name: marts.m\nkind: full\nconnections: [wh]\ncolumns:\n  - {name: a, type: BIGINT}\n";
         var known = new HashSet<string> { "wh", "sqlserver" };
         var ok = new List<Diagnostic>();
         Assert.Equal(["wh"], ModelDefinitionLoader.Load(Yaml, "m.yml", "marts.m", ok, known)!.Targets);
@@ -78,7 +78,7 @@ public class ConnectionsTests
 
     // ---- through the commands ----
 
-    private const string Source = "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: note, type: \"VARCHAR(40)\"}\n";
+    private const string Source = "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: note, type: \"VARCHAR(40)\"}\n";
 
     private static string Project(string config, params (string Name, string Targets, string Sql)[] models)
     {
@@ -90,7 +90,7 @@ public class ConnectionsTests
         {
             var stem = Path.Combine(dir, "models", name.Replace('.', '/'));
             Directory.CreateDirectory(Path.GetDirectoryName(stem)!);
-            File.WriteAllText(stem + ".yml", $"name: {name}\nkind: {{type: full}}\nconnections: [{targets}]\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: label, type: \"VARCHAR(40)\"}}\n");
+            File.WriteAllText(stem + ".yml", $"name: {name}\nkind: full\nconnections: [{targets}]\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: label, type: \"VARCHAR(40)\"}}\n");
             File.WriteAllText(stem + ".sql", sql);
         }
         return dir;

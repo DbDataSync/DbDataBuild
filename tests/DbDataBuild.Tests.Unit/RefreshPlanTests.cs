@@ -9,14 +9,14 @@ namespace DbDataBuild.Tests.Unit;
 public class RefreshPlanTests
 {
     private const string Config = "defaults: {connections: [sqlserver]}\nstring_semantics:\n  case: sensitive\n  trailing_space: ignored\n  collations:\n    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS }\n";
-    private const string Events = "name: staging.events\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string FctYaml = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_ts}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n" +
+    private const string Events = "name: staging.events\nkind: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string FctYaml = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_ts}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n" +
         "loads:\n  daily:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max, on_null: initial, initial: \"2000-01-01 00:00:00\"}\n" +
         "  reload:\n    strategy: delete_insert_by_range\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n    max_span: 10 days\n";
     private const string FctSql = "SELECT e.event_id, e.event_ts, e.amount FROM staging.events e\n";
-    private const string ViewYaml = "name: marts.v_events\nkind: {type: view}\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n";
+    private const string ViewYaml = "name: marts.v_events\nkind: view\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n";
     private const string ViewSql = "SELECT event_id FROM marts.fct_events\n";
-    private const string DailyYaml = "name: marts.daily\nkind: {type: full}\ngrain: [d]\ncolumns:\n  - {name: d, type: DATE, nullable: false}\n";
+    private const string DailyYaml = "name: marts.daily\nkind: full\ngrain: [d]\ncolumns:\n  - {name: d, type: DATE, nullable: false}\n";
     private const string DailySql = "SELECT CAST(event_ts AS DATE) AS d FROM marts.fct_events GROUP BY ALL\n";
 
     private static string Project()

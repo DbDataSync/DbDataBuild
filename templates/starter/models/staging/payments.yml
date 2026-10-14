@@ -1,5 +1,5 @@
 name: staging.payments
-kind: {type: view}
+kind: view
 grain: [payment_id]
 columns:
   - {name: payment_id, type: INTEGER, nullable: false}

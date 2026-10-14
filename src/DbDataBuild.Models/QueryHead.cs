@@ -29,7 +29,7 @@ public sealed record QueryHead(string Name, bool IsView, IReadOnlyList<HeadPrope
     public bool KindIsExplicit => IsView || Property("kind") != null;
 
     /// <summary>The kind the head stands for.</summary>
-    public string KindType => IsView ? ModelKinds.View : Property("kind")?.Value.Text ?? Full;
+    public string Kind => IsView ? ModelKinds.View : Property("kind")?.Value.Text ?? Full;
 }
 
 /// <summary>
@@ -248,7 +248,9 @@ public static class QueryHeadParser
         var entries = new List<YamlEntry> { new(new YamlScalar("name", head.NameLine, head.NameColumn), new YamlScalar(head.Name, head.NameLine, head.NameColumn)) };
         if (withKind)
         {
-            var kind = new List<YamlEntry> { new(new YamlScalar("type", head.Line, head.Column), new YamlScalar(head.KindType, head.Property("kind")?.Value.Line ?? head.Line, head.Property("kind")?.Value.Column ?? head.Column)) };
+            var kindLine = head.Property("kind")?.Value.Line ?? head.Line;
+            var kindColumn = head.Property("kind")?.Value.Column ?? head.Column;
+            var settings = new List<YamlEntry>();
             foreach (var key in new[] { "unique_key", "time_column", "lookback" })
                 if (head.Property(key) is { } property)
                 {
@@ -256,9 +258,13 @@ public static class QueryHeadParser
                         ? new YamlSequence(property.Value.Items.Select(x => (YamlNode)new YamlScalar(x, property.Value.Line, property.Value.Column)).ToList(), property.Value.Line, property.Value.Column) { Flow = true }
                         : key == "unique_key" ? new YamlSequence([new YamlScalar(property.Value.Text!, property.Value.Line, property.Value.Column)], property.Value.Line, property.Value.Column) { Flow = true }
                         : new YamlScalar(property.Value.Text!, property.Value.Line, property.Value.Column);
-                    kind.Add(new YamlEntry(new YamlScalar(key, property.Line, property.Column), value));
+                    settings.Add(new YamlEntry(new YamlScalar(key, property.Line, property.Column), value));
                 }
-            entries.Add(new YamlEntry(new YamlScalar("kind=", head.Line, head.Column), new YamlMapping(kind, head.Line, head.Column)));
+            // the kind keyed by its name, with its settings beneath it; a plain value when the head gives none
+            YamlNode kind = settings.Count == 0
+                ? new YamlScalar(head.Kind, kindLine, kindColumn)
+                : new YamlMapping([new YamlEntry(new YamlScalar(head.Kind, kindLine, kindColumn), new YamlMapping(settings, head.Line, head.Column))], head.Line, head.Column);
+            entries.Add(new YamlEntry(new YamlScalar("kind=", head.Line, head.Column), kind));
         }
         return new YamlMapping(entries, head.Line, head.Column);
     }
@@ -268,10 +274,17 @@ public static class QueryHeadParser
     {
         var sb = new StringBuilder();
         sb.Append("name: ").Append(YamlText.Scalar(head.Name)).Append('\n');
-        sb.Append("kind:\n  type: ").Append(head.KindType).Append('\n');
-        foreach (var key in new[] { "unique_key", "time_column", "lookback" })
-            if (head.Property(key) is { } property)
-                sb.Append("  ").Append(key).Append(": ").Append(property.Value.Items != null || key == "unique_key" ? YamlText.FlowList(property.Value.Items ?? [property.Value.Text!]) : YamlText.Scalar(property.Value.Text!)).Append('\n');
+        var settings = new[] { "unique_key", "time_column", "lookback" }.Where(k => head.Property(k) != null).ToList();
+        if (settings.Count == 0) sb.Append("kind: ").Append(head.Kind).Append('\n');
+        else
+        {
+            sb.Append("kind:\n  ").Append(head.Kind).Append(":\n");
+            foreach (var key in settings)
+            {
+                var property = head.Property(key)!;
+                sb.Append("    ").Append(key).Append(": ").Append(property.Value.Items != null || key == "unique_key" ? YamlText.FlowList(property.Value.Items ?? [property.Value.Text!]) : YamlText.Scalar(property.Value.Text!)).Append('\n');
+            }
+        }
         return sb.ToString();
     }
 }

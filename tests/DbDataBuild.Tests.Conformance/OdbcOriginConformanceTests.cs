@@ -144,8 +144,8 @@ public class OdbcOriginConformanceTests
         using var run = await SetUp(destination);
         await using var to = run.Destination;
         await using var from = run.Origin;
-        run.Write("models/src/items.yml", $"name: src.items\nkind: {{type: mapped}}\nconnections=: [legacy]\ngrain: [id]\n{Columns}");
-        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
+        run.Write("models/src/items.yml", $"name: src.items\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\n{Columns}");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
         await from.ExecAsync(ItemsDdl);
         await from.ExecAsync(ItemsRows);
 
@@ -184,9 +184,9 @@ public class OdbcOriginConformanceTests
         await using var to = run.Destination;
         await using var from = run.Origin;
         const string events = "columns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: v, type: \"VARCHAR(20)\"}\n";
-        run.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [legacy]\ngrain: [id]\n{events}");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}\nrefresh: { hourly: default }\n");
-        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: {type: full}\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
+        run.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\n{events}");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}}\nrefresh: { hourly: default }\n");
+        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: full\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
         run.Write("models/dst/summary.sql", "SELECT day, COUNT(*) AS n FROM dst.events GROUP BY day\n");
         await from.ExecAsync("CREATE SCHEMA src; CREATE TABLE src.events (id BIGINT NOT NULL, day DATE NOT NULL, v VARCHAR(20)); INSERT INTO src.events VALUES (1, '2026-03-01', 'a'), (2, '2026-03-02', 'b'), (3, '2026-03-03', 'c')");
         Deploy(run);
@@ -236,8 +236,8 @@ public class OdbcOriginConformanceTests
         using var run = await SetUp(destination);
         await using var to = run.Destination;
         await using var from = run.Origin;
-        run.Write("models/src/events.yml", "name: src.events\nkind: {type: mapped}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n" +
+        run.Write("models/src/events.yml", "name: src.events\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n" +
             "loads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
             "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n" +
             "      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n");
@@ -260,8 +260,8 @@ public class OdbcOriginConformanceTests
         using var run = await SetUp(destination, "parameters:\n  min_id: { type: BIGINT, value: \"3\" }\n");
         await using var to = run.Destination;
         await using var from = run.Origin;
-        run.Write("models/src/picked.yml", "name: src.picked\nkind:\n  type: native\n  query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id} AND (id = ${project.min_id} OR id > ${project.min_id})\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(40)\"}\n");
-        run.Write("models/dst/picked.yml", "name: dst.picked\nkind: {type: copy, from: src.picked}\n");
+        run.Write("models/src/picked.yml", "name: src.picked\nkind:\n  native:\n    query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id} AND (id = ${project.min_id} OR id > ${project.min_id})\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(40)\"}\n");
+        run.Write("models/dst/picked.yml", "name: dst.picked\nkind: {copy: {from: src.picked}}\n");
         await from.ExecAsync("CREATE SCHEMA src; CREATE TABLE src.items (id BIGINT NOT NULL, code VARCHAR(40)); INSERT INTO src.items VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
@@ -275,8 +275,8 @@ public class OdbcOriginConformanceTests
         Assert.Equal(["3:C", "4:D"], await to.RowsAsync(destination == "postgres" ? "SELECT CAST(id AS VARCHAR(10)) || ':' || code FROM dst.picked ORDER BY id" : "SELECT CAST(id AS VARCHAR(10)) + ':' + code FROM dst.picked ORDER BY id"));
 
         // the native text is described by the driver without running it, and a declaration that disagrees is named
-        run.Write("models/src/bad.yml", "name: src.bad\nkind:\n  type: native\n  query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: INTEGER}\n");
-        run.Write("models/dst/bad.yml", "name: dst.bad\nkind: {type: copy, from: src.bad}\n");
+        run.Write("models/src/bad.yml", "name: src.bad\nkind:\n  native:\n    query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: INTEGER}\n");
+        run.Write("models/dst/bad.yml", "name: dst.bad\nkind: {copy: {from: src.bad}}\n");
         Ok(run.Cli("project", "compile"), "compile again");
         var wrongPlan = run.Cli("connection", "deploy", destination, "--write-plan");
         var wrong = run.Cli("connection", "deploy", "--apply-plan", PlanOf(run, wrongPlan.Out));
@@ -299,8 +299,8 @@ public class OdbcOriginConformanceTests
         await using var to = run.Destination;
         await using var from = run.Origin;
         await from.ExecAsync("CREATE SCHEMA \"SRC\"; CREATE TABLE \"SRC\".\"ITEMS\" (id BIGINT NOT NULL PRIMARY KEY, label VARCHAR(20)); INSERT INTO \"SRC\".\"ITEMS\" VALUES (1, 'a')");
-        run.Write("models/src/items.yml", "name: src.items\nkind: {type: mapped}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(20)\"}\n");
-        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\n");
+        run.Write("models/src/items.yml", "name: src.items\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(20)\"}\n");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\n");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
         var plan = run.Cli("connection", "deploy", destination, "--write-plan");
@@ -319,7 +319,7 @@ public class OdbcOriginConformanceTests
         await using var from = run.Origin;
         await from.ExecAsync("CREATE SCHEMA src; CREATE TABLE src.parents (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(30) NOT NULL); " +
             "CREATE TABLE src.kids (id BIGINT NOT NULL, parent_id BIGINT NOT NULL, born DATE, price NUMERIC(10,2), payload BYTEA, CONSTRAINT pk_kids PRIMARY KEY (id), CONSTRAINT fk_kids_parent FOREIGN KEY (parent_id) REFERENCES src.parents (id)); CREATE INDEX ix_kids_born ON src.kids (born)");
-        run.Write("models/src/parents.yml", "name: src.parents\nkind: {type: mapped}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(30)\", nullable: false}\n");
+        run.Write("models/src/parents.yml", "name: src.parents\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(30)\", nullable: false}\n");
         var check = run.Cli("project", "import", "legacy", "src.*", "--check");
         Assert.True(check.Exit is 0 or 1, check.Out + check.Err);
         Assert.Contains("src.parents", check.Out);
@@ -334,7 +334,7 @@ public class OdbcOriginConformanceTests
         else Assert.Contains("BLOB", descriptor);                                                                      // the dialect `postgres` knows the driver's own name for it
         Assert.Contains("ix_kids_born", descriptor);                                                                   // the index, from the driver's statistics whichever way the columns were read
 
-        run.Write("models/dst/parents.yml", "name: dst.parents\nkind: {type: copy, from: src.parents}\n");
+        run.Write("models/dst/parents.yml", "name: dst.parents\nkind: {copy: {from: src.parents}}\n");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
         await from.ExecAsync("INSERT INTO src.parents VALUES (1, 'a')");
@@ -357,8 +357,8 @@ public class OdbcOriginConformanceTests
         foreach (var n in new[] { "1", "2", "3" })
         {
             await from.ExecAsync($"CREATE VIEW src.slow{n} AS SELECT CAST({n} AS BIGINT) AS id FROM pg_sleep(1.5)");          // a view that takes a second and a half to answer
-            run.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: {{type: mapped}}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
-            run.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{type: copy, from: src.slow{n}}}\nrefresh: {{ fan: default }}\n");
+            run.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: mapped\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
+            run.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{copy: {{from: src.slow{n}}}}}\nrefresh: {{ fan: default }}\n");
         }
         Deploy(run);
         SessionLimits? seen = null;

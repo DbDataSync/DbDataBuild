@@ -1,6 +1,5 @@
 name: staging.product_cost_history
-kind:
-  type: view
+kind: view
 grain:
   - product_id
   - valid_from

@@ -115,12 +115,12 @@ internal static class ProjectChecks
                 if (source.HasNames(ctx.Root, ctx.Config) && targets.All(t => !ctx.BaseTablesOf(source, source.ReadQuery(ctx.Root, ctx.Config, t)).Contains(read, StringComparer.OrdinalIgnoreCase)) && !read.EndsWith("()", StringComparison.Ordinal)) continue;
                 if (ctx.Project.NativeModels.FirstOrDefault(n => string.Equals(n.Name, read, StringComparison.OrdinalIgnoreCase)) is { Native.Access: NativeQuery.Command })
                     found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(source.DefinitionFile, 0, 0), $"{source.Definition.Name} reads `{read}`, a native command: a command can only be run, never read inside a query.",
-                        Fix: $"Copy it (`kind: {{type: copy, from: {read}}}`, on its own connection or another) and read the copy."));
+                        Fix: $"Copy it (`kind: {{copy: {{from: {read}}}}}`, on its own connection or another) and read the copy."));
                 if (ConnectionsOf(read) is { } where)
                     foreach (var target in targets.Where(t => !where.Contains(t, StringComparer.Ordinal) && ReadsOn(source, t, read)))
                         found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(source.DefinitionFile, 0, 0),
                             $"{source.Definition.Name} is built on `{target}` and reads `{read}`, which is on {string.Join(", ", where.Select(w => $"`{w}`"))}, not on `{target}`.",
-                            Fix: $"Copy `{read}` to `{target}` (a model of `kind: {{type: copy, from: {read}}}` on `{target}`) and read the copy, or build {source.Definition.Name} on {where[0]}."));
+                            Fix: $"Copy `{read}` to `{target}` (a model of `kind: {{copy: {{from: {read}}}}}` on `{target}`) and read the copy, or build {source.Definition.Name} on {where[0]}."));
             }
         }
         // a copy that reads from a Flight SQL server whose dialect nobody has said: its read is written for ansi until `project update` has asked the server and committed the answer

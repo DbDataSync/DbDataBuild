@@ -1,6 +1,5 @@
 name: marts.dim_product
-kind:
-  type: full
+kind: full
 grain:
   - product_id
 columns:

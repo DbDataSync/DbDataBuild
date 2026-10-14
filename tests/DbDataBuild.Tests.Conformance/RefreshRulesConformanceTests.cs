@@ -21,7 +21,7 @@ public partial class ApplyConformanceTests
     private static void Model(Run run, string table, string columns, string sql, string extra = "")
     {
         var schema = table.Split('.')[0];
-        run.Write($"models/{schema}/{table.Split('.')[1]}.yml", $"name: {table}\nkind: {{type: full}}\ncolumns:\n{columns}{extra}");
+        run.Write($"models/{schema}/{table.Split('.')[1]}.yml", $"name: {table}\nkind: full\ncolumns:\n{columns}{extra}");
         run.Write($"models/{schema}/{table.Split('.')[1]}.sql", sql);
     }
 
@@ -225,8 +225,8 @@ public partial class ApplyConformanceTests
             await engine.ExecAsync("INSERT INTO staging.big VALUES (1), (2), (3)");
             run.Write("dbdatabuild.yml", File.ReadAllText(Path.Combine(run.Dir, "dbdatabuild.yml")) + "refresh:\n  plans:\n    m: { max_runtime: 1h }\n");
             // the load's own max_runtime wins over the plan's
-            run.Write("models/staging/big.yml", "name: staging.big\nkind:\n  type: mapped\ngrain: [i]\ncolumns:\n  - {name: i, type: BIGINT, nullable: false}\n");
-            run.Write("models/marts/heavy.yml", "name: marts.heavy\nkind: {type: full}\ncolumns:\n  - {name: n, type: BIGINT}\nloads:\n  default: { default: true, strategy: full_replace, max_runtime: 2s }\nrefresh: { m: default }\n");
+            run.Write("models/staging/big.yml", "name: staging.big\nkind: mapped\ngrain: [i]\ncolumns:\n  - {name: i, type: BIGINT, nullable: false}\n");
+            run.Write("models/marts/heavy.yml", "name: marts.heavy\nkind: full\ncolumns:\n  - {name: n, type: BIGINT}\nloads:\n  default: { default: true, strategy: full_replace, max_runtime: 2s }\nrefresh: { m: default }\n");
             run.Write("models/marts/heavy.sql", "SELECT COUNT(*) AS n FROM staging.big a CROSS JOIN staging.big b CROSS JOIN staging.big c CROSS JOIN staging.big d\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "compile");

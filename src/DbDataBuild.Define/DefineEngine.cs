@@ -173,7 +173,7 @@ public sealed class DefineEngine(ModelGraph graph, ProjectConfig config, MatrixL
 
         var a1 = answers.ToDictionary(a => a.QuestionId);
         var name = head?.Name ?? a1[QuestionIds.Define(t.ModelName, "name")].Value!;
-        var kind = head?.KindType ?? a1[QuestionIds.Define(t.ModelName, "kind")].Choice;
+        var kind = head?.Kind ?? a1[QuestionIds.Define(t.ModelName, "kind")].Choice;
         var targets = ParseTargets(a1[QuestionIds.Define(t.ModelName, "connections")], out var targetProblem);
         if (targetProblem != null) return Failed(t, answers, notes, targetProblem);
 

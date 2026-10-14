@@ -9,7 +9,7 @@ namespace DbDataBuild.Tests.Unit;
 public class CopyModelTests
 {
     private const string Config = "connections:\n  crm: { engine: postgres }\n  wh: { engine: sqlserver }\n  lake: { engine: postgres }\ndefaults:\n  connections: [wh]\n";
-    private const string Customers = "name: crm.customers\nkind: {type: mapped}\nconnections=: [crm]\ngrain: [customer_id]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n  - {name: born, type: DATE}\n";
+    private const string Customers = "name: crm.customers\nkind: mapped\nconnections=: [crm]\ngrain: [customer_id]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n  - {name: born, type: DATE}\n";
 
     private static string Project(string config = Config)
     {
@@ -28,7 +28,7 @@ public class CopyModelTests
 
     private static void Copy(string dir, string name, string from, string extra = "")
     {
-        Write(dir, "models/" + name.Replace('.', '/') + ".yml", $"name: {name}\nkind: {{type: copy, from: {from}}}\n{extra}");
+        Write(dir, "models/" + name.Replace('.', '/') + ".yml", $"name: {name}\nkind: {{copy: {{from: {from}}}}}\n{extra}");
     }
 
     private static (ProjectValidationResult Result, string Text) Validate(string dir)
@@ -45,7 +45,7 @@ public class CopyModelTests
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var copy = result.Sources.Single();
-        Assert.Equal((ModelKinds.Copy, "crm.customers"), (copy.Definition.KindType, copy.Definition.From));
+        Assert.Equal((ModelKinds.Copy, "crm.customers"), (copy.Definition.Kind, copy.Definition.From));
         Assert.Equal(["customer_id", "name", "born"], copy.Definition.Columns.Select(c => c.Name));
         Assert.Equal(["customer_id"], copy.Definition.Grain);
         Assert.False(copy.Definition.Columns[0].Nullable);
@@ -76,7 +76,7 @@ public class CopyModelTests
         var dir = Project();
         Copy(dir, "warehouse.customers", "crm.customers");                                              // on wh
         Copy(dir, "lake.customers", "warehouse.customers", "connections=: [lake]\n");                    // on lake, from the copy on wh
-        Write(dir, "models/crm/recent.yml", "name: crm.recent\nkind: {type: view}\nconnections=: [crm]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/crm/recent.yml", "name: crm.recent\nkind: view\nconnections=: [crm]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
         Write(dir, "models/crm/recent.sql", "SELECT customer_id FROM crm.customers\n");
         Copy(dir, "lake.recent", "crm.recent", "connections=: [lake]\n");
         var (result, text) = Validate(dir);
@@ -116,7 +116,7 @@ public class CopyModelTests
     private static string StoreProject(string orders = "")
     {
         var dir = Project(Stores);
-        Write(dir, "models/pos/orders.yml", "name: pos.orders\nkind: {type: mapped}\nconnections=: [store_17, store_18]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: total, type: \"DECIMAL(10, 2)\"}\n" + orders);
+        Write(dir, "models/pos/orders.yml", "name: pos.orders\nkind: mapped\nconnections=: [store_17, store_18]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: total, type: \"DECIMAL(10, 2)\"}\n" + orders);
         return dir;
     }
 
@@ -125,7 +125,7 @@ public class CopyModelTests
     {
         var dir = StoreProject();
         Copy(dir, "warehouse.orders", "pos.orders", "");
-        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var copy = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
@@ -142,7 +142,7 @@ public class CopyModelTests
     public void A_slice_on_a_column_the_origin_already_has_adds_nothing()
     {
         var dir = StoreProject("  - {name: store_code, type: \"VARCHAR(10)\"}\n");
-        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  slice: {column: store_code, value: \"${origin.store_id}\"}\n");
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    slice: {column: store_code, value: \"${origin.store_id}\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var copy = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
@@ -152,15 +152,15 @@ public class CopyModelTests
 
     [Theory]
     [InlineData("", "needs `slice`")]                                                                                                                       // several origins, nothing to tell their rows apart
-    [InlineData("  slice: {column: store_id, value: \"fixed\", type: \"VARCHAR(10)\"}\n", "is the same for every origin")]
-    [InlineData("  slice: {column: store_id, value: \"${origin.nothing}\", type: \"VARCHAR(10)\"}\n", "has no parameter `nothing`")]
-    [InlineData("  slice: {column: store_id, value: \"${origin.store_id}\"}\n", "needs a `type`")]
-    [InlineData("  slice: {column: store_id, value: \"${nothing.store_id}\", type: \"VARCHAR(10)\"}\n", "is not a parameter scope")]
-    [InlineData("  on_mismatch: maybe\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n", "`fail` or `skip`")]
+    [InlineData("    slice: {column: store_id, value: \"fixed\", type: \"VARCHAR(10)\"}\n", "is the same for every origin")]
+    [InlineData("    slice: {column: store_id, value: \"${origin.nothing}\", type: \"VARCHAR(10)\"}\n", "has no parameter `nothing`")]
+    [InlineData("    slice: {column: store_id, value: \"${origin.store_id}\"}\n", "needs a `type`")]
+    [InlineData("    slice: {column: store_id, value: \"${nothing.store_id}\", type: \"VARCHAR(10)\"}\n", "is not a parameter scope")]
+    [InlineData("    on_mismatch: maybe\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n", "`fail` or `skip`")]
     public void A_copy_from_several_connections_that_cannot_work_says_why(string kindExtra, string expected)
     {
         var dir = StoreProject();
-        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n" + kindExtra);
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n" + kindExtra);
         var (result, text) = Validate(dir);
         Assert.True(result.HasErrors);
         Assert.Contains(expected, text);
@@ -224,7 +224,7 @@ public class CopyModelTests
     public void A_model_that_reads_a_table_on_another_connection_is_refused_until_the_table_is_copied_there()
     {
         var dir = Project();
-        Write(dir, "models/marts/local.yml", "name: marts.local\nkind: {type: view}\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/marts/local.yml", "name: marts.local\nkind: view\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
         Write(dir, "models/marts/local.sql", "SELECT customer_id FROM crm.customers\n");
         var (exit, text) = CliValidate(dir);
         Assert.NotEqual(0, exit);
@@ -242,10 +242,10 @@ public class CopyModelTests
     public void A_model_may_read_a_copy_built_on_another_default_connection_and_models_on_the_connection_of_the_table_are_fine()
     {
         var dir = Project(Config + "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C, sqlserver: Latin1_General_100_BIN2 }\n");
-        Write(dir, "models/crm/recent.yml", "name: crm.recent\nkind: {type: view}\nconnections=: [crm]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/crm/recent.yml", "name: crm.recent\nkind: view\nconnections=: [crm]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
         Write(dir, "models/crm/recent.sql", "SELECT customer_id FROM crm.customers\n");                    // on crm, where crm.customers is
         Copy(dir, "lake.customers", "crm.customers", "connections=: [lake]\n");
-        Write(dir, "models/lake/summary.yml", "name: lake.summary\nkind: {type: view}\nconnections=: [lake]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/lake/summary.yml", "name: lake.summary\nkind: view\nconnections=: [lake]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n");
         Write(dir, "models/lake/summary.sql", "SELECT customer_id FROM lake.customers\n");                  // the copy's own connection
         var (exit, text) = CliValidate(dir);
         Assert.True(exit == 0, text);
@@ -257,7 +257,7 @@ public class CopyModelTests
     public void An_incremental_copy_names_a_unique_key_and_a_watermark_column_and_loads_by_key()
     {
         var dir = Project();
-        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  type: copy\n  from: crm.customers\n  unique_key: [customer_id]\n  watermark: {column: born, lookback: 3 days}\n");
+        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  copy:\n    from: crm.customers\n    unique_key: [customer_id]\n    watermark: {column: born, lookback: 3 days}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var copy = result.Sources.Single().Definition;
@@ -267,15 +267,15 @@ public class CopyModelTests
     }
 
     [Theory]
-    [InlineData("  watermark: {column: born}\n", "needs a `unique_key`")]
-    [InlineData("  unique_key: [customer_id]\n  watermark: {column: nowhere}\n", "watermark.column refers to `nowhere`")]
-    [InlineData("  unique_key: [ghost]\n  watermark: {column: born}\n", "unique_key refers to `ghost`")]
-    [InlineData("  unique_key: [customer_id]\n  watermark: {column: born, lookback: soon}\n", "lookback is `soon`")]
-    [InlineData("  unique_key: [customer_id]\n  watermark: [born]\n", "`watermark` is a mapping")]
+    [InlineData("    watermark: {column: born}\n", "needs a `unique_key`")]
+    [InlineData("    unique_key: [customer_id]\n    watermark: {column: nowhere}\n", "watermark.column refers to `nowhere`")]
+    [InlineData("    unique_key: [ghost]\n    watermark: {column: born}\n", "unique_key refers to `ghost`")]
+    [InlineData("    unique_key: [customer_id]\n    watermark: {column: born, lookback: soon}\n", "lookback is `soon`")]
+    [InlineData("    unique_key: [customer_id]\n    watermark: [born]\n", "`watermark` is a mapping")]
     public void An_incremental_copy_that_cannot_work_says_why(string kindExtra, string expected)
     {
         var dir = Project();
-        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  type: copy\n  from: crm.customers\n" + kindExtra);
+        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  copy:\n    from: crm.customers\n" + kindExtra);
         var (result, text) = Validate(dir);
         Assert.True(result.HasErrors);
         Assert.Contains(expected, text);
@@ -285,7 +285,7 @@ public class CopyModelTests
     public void A_sliced_incremental_copy_loads_by_its_key_and_the_slice()
     {
         var dir = StoreProject();
-        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  unique_key: [order_id]\n  watermark: {column: order_id}\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    unique_key: [order_id]\n    watermark: {column: order_id}\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var load = Assert.Single(LoadPlan.For(result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition, "wh"));
@@ -296,7 +296,7 @@ public class CopyModelTests
     public void A_sliced_copy_can_declare_a_full_load_that_replaces_everything_of_an_origin_and_reads_it_in_full()
     {
         var dir = StoreProject();
-        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  unique_key: [order_id]\n  watermark: {column: order_id}\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n"
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    unique_key: [order_id]\n    watermark: {column: order_id}\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n"
             + "loads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
@@ -313,7 +313,7 @@ public class CopyModelTests
     public void A_copy_without_a_slice_replaces_the_whole_table_with_its_full_load()
     {
         var dir = Project();
-        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  type: copy\n  from: crm.customers\n  unique_key: [customer_id]\n  watermark: {column: born}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
+        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  copy:\n    from: crm.customers\n    unique_key: [customer_id]\n    watermark: {column: born}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
         var full = LoadPlan.For(result.Sources.Single().Definition, "wh").Single(l => l.Name == "full");
@@ -361,7 +361,7 @@ public class CopyModelTests
     public void A_local_copy_is_a_full_replace_so_incremental_options_are_refused_with_the_reason()
     {
         var dir = Project();
-        Write(dir, "models/crm/snapshot.yml", "name: crm.snapshot\nkind:\n  type: copy\n  from: crm.customers\n  unique_key: [customer_id]\nconnections=: [crm]\n");
+        Write(dir, "models/crm/snapshot.yml", "name: crm.snapshot\nkind:\n  copy:\n    from: crm.customers\n    unique_key: [customer_id]\nconnections=: [crm]\n");
         var (result, text) = Validate(dir);
         Assert.True(result.HasErrors);
         Assert.Contains("a local copy is a full replace", text);

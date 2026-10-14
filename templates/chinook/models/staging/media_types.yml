@@ -1,6 +1,5 @@
 name: staging.media_types
-kind:
-  type: view
+kind: view
 grain:
   - media_type_id
 columns:

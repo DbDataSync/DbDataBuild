@@ -1,6 +1,5 @@
 name: staging.currency_rates
-kind:
-  type: view
+kind: view
 grain:
   - rate_date
   - currency_code

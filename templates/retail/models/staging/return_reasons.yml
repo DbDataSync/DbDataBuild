@@ -1,5 +1,5 @@
 name: staging.return_reasons
-kind: {type: view}
+kind: view
 grain: [reason_code]
 columns:
   - {name: reason_code, type: "VARCHAR(4)", nullable: false}

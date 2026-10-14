@@ -1,5 +1,5 @@
 name: marts.fct_sales_lines
-kind: {type: incremental_by_unique_key, unique_key: [order_id, line_no]}
+kind: {incremental_by_unique_key: {unique_key: [order_id, line_no]}}
 # The routine load adds the lines that arrived. A line can also change after it was loaded (a return, a corrected price), so the plan `daily` also runs `reconcile`:
 # it reloads the last `days` days by their `date_key`, and the window is computed by a resolver (a DuckDB expression, evaluated by the tool on the day the refresh runs,
 # in UTC unless `timezone:` in dbdatabuild.yml says another). The keys are whole numbers (20260301), so the expressions cast to BIGINT. A person can ask for another window:

@@ -1,6 +1,5 @@
 name: humanresources.department
-kind:
-  type: mapped
+kind: mapped
 grain: [department_id]
 columns:
   - {name: department_id, type: INTEGER, nullable: false}

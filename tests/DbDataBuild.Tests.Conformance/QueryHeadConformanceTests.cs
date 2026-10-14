@@ -39,7 +39,7 @@ public class QueryHeadConformanceTests
             await engine.ExecAsync("INSERT INTO src.orders VALUES (1, 10.00), (2, 20.00)");
 
             Write("dbdatabuild.yml", Config(name));
-            Write("models/src/orders.yml", "name: src.orders\nkind: {type: mapped}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n");
+            Write("models/src/orders.yml", "name: src.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n");
             const string cols = "grain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n";
             // no `name:` and no `kind:` in the definitions: the heads say them
             Write("models/marts/plain.yml", cols);

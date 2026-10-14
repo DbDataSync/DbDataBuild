@@ -1,6 +1,5 @@
 name: finance.budgets
-kind:
-  type: mapped
+kind: mapped
 grain: [budget_month, region, category_code]
 columns:
   - {name: budget_month, type: INTEGER, nullable: false}

@@ -1,6 +1,5 @@
 name: chinook.playlist
-kind:
-  type: mapped
+kind: mapped
 grain: [playlist_id]
 columns:
   - {name: playlist_id, type: INTEGER, nullable: false}

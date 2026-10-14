@@ -1,6 +1,5 @@
 name: staging.customers
-kind:
-  type: view
+kind: view
 grain:
   - customer_id
 columns:

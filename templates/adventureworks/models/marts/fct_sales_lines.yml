@@ -1,7 +1,7 @@
 name: marts.fct_sales_lines
 kind:
-  type: incremental_by_unique_key
-  unique_key: [sales_order_id, sales_order_detail_id]
+  incremental_by_unique_key:
+    unique_key: [sales_order_id, sales_order_detail_id]
 grain: [sales_order_id, sales_order_detail_id]
 columns:
   - name: sales_order_id

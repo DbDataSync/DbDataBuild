@@ -39,9 +39,9 @@ internal static partial class ModelCreateCommand
         var timeRange = kind == ModelKinds.IncrementalByTimeRange;
         var kindText = kind switch
         {
-            ModelKinds.IncrementalByUniqueKey => "kind: {type: incremental_by_unique_key, unique_key: [id]}",
-            ModelKinds.IncrementalByTimeRange => "kind: {type: incremental_by_time_range, time_column: event_ts}",
-            _ => $"kind: {{type: {kind}}}",
+            ModelKinds.IncrementalByUniqueKey => "kind: {incremental_by_unique_key: {unique_key: [id]}}",
+            ModelKinds.IncrementalByTimeRange => "kind: {incremental_by_time_range: {time_column: event_ts}}",
+            _ => $"kind: {kind}",
         };
         var def = new StringBuilder();
         def.AppendLineLf($"name: {name}");

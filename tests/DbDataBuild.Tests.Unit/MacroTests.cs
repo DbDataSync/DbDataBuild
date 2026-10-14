@@ -29,12 +29,12 @@ public class MacroTests
     {
         var dir = NewProjectDir();
         Write(dir, "dbdatabuild.yml", config ?? "defaults: {connections: [sqlserver]}\ntracking: none\n");
-        Write(dir, "models/src/orders.yml", "name: src.orders\nkind: {type: mapped}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
-        Write(dir, "models/src/orders_snap.yml", "name: src.orders_snap\nkind: {type: mapped}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
+        Write(dir, "models/src/orders.yml", "name: src.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n");
+        Write(dir, "models/src/orders_snap.yml", "name: src.orders_snap\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: snap_date, type: DATE, nullable: false}\n");
         const string cols = "grain: [as_of_date, status]\ncolumns:\n  - {name: as_of_date, type: DATE, nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: total, type: \"DECIMAL(38,2)\", nullable: false}\n";
-        Write(dir, "models/marts/live_totals.yml", "name: marts.live_totals\nkind: {type: full}\n" + cols);
+        Write(dir, "models/marts/live_totals.yml", "name: marts.live_totals\nkind: full\n" + cols);
         Write(dir, "models/marts/live_totals.sql", "SELECT * FROM status_totals('src.orders', NULL)\n");
-        Write(dir, "models/marts/snap_totals.yml", "name: marts.snap_totals\nkind: {type: full}\n" + cols);
+        Write(dir, "models/marts/snap_totals.yml", "name: marts.snap_totals\nkind: full\n" + cols);
         Write(dir, "models/marts/snap_totals.sql", "SELECT * FROM status_totals('src.orders_snap', 'snap_date')\n");
         if (macros.Length > 0) Write(dir, "macros/snapshots.sql", macros);
         return dir;
@@ -157,7 +157,7 @@ public class MacroTests
         Assert.Contains("`broken` could not be created", validate.Err);
         Assert.Contains("warning DDB-106", validate.Err);
         Assert.DoesNotContain("snap_totals cannot be lowered", validate.Err);            // the models that do not reach it are fine
-        Write(dir, "models/marts/uses_broken.yml", "name: marts.uses_broken\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        Write(dir, "models/marts/uses_broken.yml", "name: marts.uses_broken\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         Write(dir, "models/marts/uses_broken.sql", "SELECT order_id FROM broken(1)\n");
         Assert.Contains("uses_broken cannot be lowered", Cli("project", "compile", "--project", dir).Err);
     }
@@ -225,7 +225,7 @@ public class MacroTests
         var dir = Project(config: config);
         File.Delete(Path.Combine(dir, "models", "marts", "live_totals.yml")); File.Delete(Path.Combine(dir, "models", "marts", "live_totals.sql"));
         File.Delete(Path.Combine(dir, "models", "marts", "snap_totals.yml")); File.Delete(Path.Combine(dir, "models", "marts", "snap_totals.sql"));
-        Write(dir, "models/marts/totals.yml", "name: marts.totals\nkind: {type: full}\ngrain: [as_of_date, status]\ncolumns:\n  - {name: as_of_date, type: DATE, nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: total, type: \"DECIMAL(38,2)\", nullable: false}\n");
+        Write(dir, "models/marts/totals.yml", "name: marts.totals\nkind: full\ngrain: [as_of_date, status]\ncolumns:\n  - {name: as_of_date, type: DATE, nullable: false}\n  - {name: status, type: \"VARCHAR(20)\", nullable: false}\n  - {name: total, type: \"DECIMAL(38,2)\", nullable: false}\n");
         Write(dir, "models/marts/totals.sql", "SELECT * FROM status_totals(${connection.table}, ${connection.date_col})\n");
         return dir;
     }

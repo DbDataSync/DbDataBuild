@@ -34,8 +34,8 @@ public class StringProfileLintTests
         Write(dir, "dbdatabuild.yml", config);
         var t = trimmed ? ", trimmed: true" : "";
         foreach (var table in new[] { "a", "b" })
-            Write(dir, $"models/src/{table}.yml", $"name: src.{table}\nkind: {{type: mapped}}\ncolumns:\n  - {{name: code, type: \"VARCHAR(10)\", nullable: false{t}}}\n  - {{name: label, type: \"VARCHAR(10)\", nullable: false}}\n  - {{name: n, type: INTEGER, nullable: false}}\n");
-        Write(dir, "models/marts/m.yml", $"name: marts.m\nkind: {{type: full}}\n{extra}columns:\n  - {{name: code, type: \"VARCHAR(10)\", nullable: false}}\n  - {{name: n, type: INTEGER, nullable: false}}\n");
+            Write(dir, $"models/src/{table}.yml", $"name: src.{table}\nkind: mapped\ncolumns:\n  - {{name: code, type: \"VARCHAR(10)\", nullable: false{t}}}\n  - {{name: label, type: \"VARCHAR(10)\", nullable: false}}\n  - {{name: n, type: INTEGER, nullable: false}}\n");
+        Write(dir, "models/marts/m.yml", $"name: marts.m\nkind: full\n{extra}columns:\n  - {{name: code, type: \"VARCHAR(10)\", nullable: false}}\n  - {{name: n, type: INTEGER, nullable: false}}\n");
         Write(dir, "models/marts/m.sql", sql + "\n");
         return dir;
     }
@@ -94,7 +94,7 @@ public class StringProfileLintTests
         Assert.True(descriptor.Columns.First(c => c.Name == "code").Trimmed);
         Assert.False(descriptor.Columns.First(c => c.Name == "label").Trimmed);
         Assert.Contains("    trimmed: true\n", SourceDescriptorWriter.Yaml(descriptor));
-        Write(dir, "models/src/a.yml", "name: src.a\nkind: {type: mapped}\ncolumns:\n  - {name: code, type: \"VARCHAR(10)\", trimmed: maybe}\n");
+        Write(dir, "models/src/a.yml", "name: src.a\nkind: mapped\ncolumns:\n  - {name: code, type: \"VARCHAR(10)\", trimmed: maybe}\n");
         Assert.Contains("trimmed is `maybe`", Validate(dir));
     }
 }

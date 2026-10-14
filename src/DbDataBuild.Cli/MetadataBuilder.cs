@@ -62,7 +62,7 @@ internal static class MetadataBuilder
             models = ctx.Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).Select(s => new
             {
                 name = s.Definition.Name,
-                kind = s.Definition.KindType,
+                kind = s.Definition.Kind,
                 connections = ctx.TargetsOf(s.Definition),
                 definition_hash = ctx.DefinitionHashOf(s.ReadQuery(ctx.Root, ctx.Config)),
             }).ToList(),
@@ -226,7 +226,7 @@ internal static class MetadataBuilder
             schema = ModelSchema,
             name = def.Name,
             title = def.Info.Title, description = def.Info.Description,
-            kind = new { type = def.KindType, unique_key = def.UniqueKey, time_column = def.TimeColumn, lookback = def.Lookback },
+            kind = new { type = def.Kind, unique_key = def.UniqueKey, time_column = def.TimeColumn, lookback = def.Lookback },
             grain = def.Grain,
             tags = def.Info.TagsForDocument,
             properties = def.Info.PropertiesForDocument,

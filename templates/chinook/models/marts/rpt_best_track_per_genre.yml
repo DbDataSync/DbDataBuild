@@ -1,6 +1,5 @@
 name: marts.rpt_best_track_per_genre
-kind:
-  type: full
+kind: full
 grain:
   - genre_name
 columns:

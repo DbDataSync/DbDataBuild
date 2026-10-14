@@ -1,6 +1,5 @@
 name: chinook.genre
-kind:
-  type: mapped
+kind: mapped
 grain: [genre_id]
 columns:
   - {name: genre_id, type: INTEGER, nullable: false}

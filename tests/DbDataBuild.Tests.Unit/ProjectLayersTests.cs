@@ -16,7 +16,7 @@ public class ProjectLayersTests
     {
         var dir = NewProjectDir();
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), config);
         return dir;
     }
@@ -53,27 +53,27 @@ public class ProjectLayersTests
     [Fact]
     public void A_model_takes_what_it_does_not_say_from_the_folders_above_it_nearest_first()
     {
-        var dir = Project("defaults:\n  connections: [wh_sql]\n  kind: {type: view}\n" + TwoConnections);
-        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: {type: full}\n");
+        var dir = Project("defaults:\n  connections: [wh_sql]\n  kind: view\n" + TwoConnections);
+        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: full\n");
         Write(dir, "models/crm/eu/_dbdatabuild.yml", "defaults:\n  connections=: [wh_pg]\n");
         Model(dir, "crm.orders", "");                      // the root's connections, the folder's kind
         Model(dir, "crm.eu.orders", "");                   // the folder beneath replaces the connections
-        Model(dir, "crm.eu.own", "kind: {type: view}\n");  // and the model's own file is the nearest of all
+        Model(dir, "crm.eu.own", "kind: view\n");  // and the model's own file is the nearest of all
 
         var orders = Defined(dir, "crm.orders");
-        Assert.Equal($"{ModelKinds.Full} wh_sql", $"{orders.KindType} {string.Join(",", orders.Targets!)}");
+        Assert.Equal($"{ModelKinds.Full} wh_sql", $"{orders.Kind} {string.Join(",", orders.Targets!)}");
         var eu = Defined(dir, "crm.eu.orders");
-        Assert.Equal($"{ModelKinds.Full} wh_pg", $"{eu.KindType} {string.Join(",", eu.Targets!)}");
-        Assert.Equal(ModelKinds.View, Defined(dir, "crm.eu.own").KindType);
+        Assert.Equal($"{ModelKinds.Full} wh_pg", $"{eu.Kind} {string.Join(",", eu.Targets!)}");
+        Assert.Equal(ModelKinds.View, Defined(dir, "crm.eu.own").Kind);
     }
 
     [Fact]
     public void Lists_append_and_a_suffix_changes_that_for_the_key()
     {
         var dir = Project("defaults:\n  connections: [wh_sql]\n" + TwoConnections);
-        Model(dir, "marts.both", "kind: {type: full}\nconnections: [wh_pg]\n");           // appended to the inherited list
-        Model(dir, "marts.pg_only", "kind: {type: full}\nconnections=: [wh_pg]\n");       // replaces it
-        Model(dir, "marts.removed", "kind: {type: full}\nconnections-: [wh_sql]\nconnections+: [wh_pg]\n");   // removes one, adds one
+        Model(dir, "marts.both", "kind: full\nconnections: [wh_pg]\n");           // appended to the inherited list
+        Model(dir, "marts.pg_only", "kind: full\nconnections=: [wh_pg]\n");       // replaces it
+        Model(dir, "marts.removed", "kind: full\nconnections-: [wh_sql]\nconnections+: [wh_pg]\n");   // removes one, adds one
         Assert.Equal(["wh_sql", "wh_pg"], Defined(dir, "marts.both").Targets);
         Assert.Equal(["wh_pg"], Defined(dir, "marts.pg_only").Targets);
         Assert.Equal(["wh_pg"], Defined(dir, "marts.removed").Targets);
@@ -83,7 +83,7 @@ public class ProjectLayersTests
     public void A_folder_project_file_is_not_a_model_and_a_problem_in_it_is_reported_once_where_it_is()
     {
         var dir = Project("");
-        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: {type: full}\nsurprise: {a: 1}\n");
+        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: full\nsurprise: {a: 1}\n");
         Model(dir, "crm.a", "");
         Model(dir, "crm.b", "");
         var (result, messages) = Validate(dir);
@@ -97,20 +97,20 @@ public class ProjectLayersTests
     public void A_problem_in_an_inherited_setting_is_reported_in_the_file_that_has_it()
     {
         var dir = Project("");
-        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind:\n    type: nope\n");
+        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: nope\n");
         Model(dir, "crm.a", "");
         var (result, _) = Validate(dir);
         var d = Assert.Single(result.Diagnostics);
-        Assert.Equal(("models/crm/_dbdatabuild.yml", 3), (d.Location.File, d.Location.Line));
+        Assert.Equal(("models/crm/_dbdatabuild.yml", 2), (d.Location.File, d.Location.Line));
     }
 
     [Theory]
-    [InlineData("kind: {type: full}\ncolumns=: []\n", "DDB-104")]                     // `columns` does not inherit, so a suffix on it is just an unknown key
-    [InlineData("kind: [full]\n", "DDB-106")]                                          // a list where the folder has a mapping: `kind=` says replace
-    [InlineData("kind: {type: full}\nconnections: [nowhere]\n", "DDB-106")]
+    [InlineData("kind: full\ncolumns=: []\n", "DDB-104")]                     // `columns` does not inherit, so a suffix on it is just an unknown key
+    [InlineData("kind: [full]\n", "DDB-248")]                                          // a list is not a kind; the shape says so
+    [InlineData("kind: full\nconnections: [nowhere]\n", "DDB-106")]
     public void A_model_that_cannot_merge_or_validate_says_why(string yaml, string code)
     {
-        var dir = Project("defaults:\n  kind: {type: view}\n");
+        var dir = Project("defaults:\n  kind: view\n");
         Write(dir, "models/m.yml", "name: m\n" + yaml + (yaml.Contains("columns") ? "" : Columns));
         Write(dir, "models/m.sql", Sql);
         var (result, _) = Validate(dir);
@@ -121,19 +121,19 @@ public class ProjectLayersTests
     public void Validate_shows_what_each_model_inherited_and_where_it_came_from_and_the_metadata_carries_it()
     {
         var dir = Project("defaults:\n  connections: [wh_sql]\n" + TwoConnections);
-        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: {type: full}\n");
+        Write(dir, "models/crm/_dbdatabuild.yml", "defaults:\n  kind: full\n");
         Model(dir, "crm.a", "");
-        Model(dir, "marts.own", "kind: {type: view}\nconnections=: [wh_sql]\n");
+        Model(dir, "marts.own", "kind: view\nconnections=: [wh_sql]\n");
         var o = new StringWriter(); var e = new StringWriter();
         Assert.Equal(0, CliApp.Run(["project", "compile", "--project", dir], o, e, environment: _ => null));
         var text = o.ToString();
-        Assert.Contains("Inherited by crm.a: connections[0] = wh_sql (dbdatabuild.yml:2), kind.type = full (models/crm/_dbdatabuild.yml:2)", text);
+        Assert.Contains("Inherited by crm.a: connections[0] = wh_sql (dbdatabuild.yml:2), kind = full (models/crm/_dbdatabuild.yml:2)", text);
         Assert.DoesNotContain("Inherited by marts.own", text);                           // it says everything itself
 
         var j = new StringWriter();
         Assert.Equal(0, CliApp.Run(["project", "show", "metadata", "--project", dir, "--format", "json"], j, new StringWriter(), environment: _ => null));
         var model = JsonNode.Parse(j.ToString())!["data"]!["models"]!.AsArray().Single(m => (string?)m!["name"] == "crm.a")!;
-        Assert.Equal(["connections[0]|dbdatabuild.yml|2", "kind.type|models/crm/_dbdatabuild.yml|2"],
+        Assert.Equal(["connections[0]|dbdatabuild.yml|2", "kind|models/crm/_dbdatabuild.yml|2"],
             model["inherited"]!.AsArray().Select(i => $"{i!["path"]}|{i["file"]}|{i["line"]}"));
     }
 
@@ -141,7 +141,7 @@ public class ProjectLayersTests
     public void Renders_follow_the_effective_connections()
     {
         var dir = Project("defaults:\n  connections: [wh_sql]\n" + TwoConnections);
-        Write(dir, "models/lake/_dbdatabuild.yml", "defaults:\n  connections=: [wh_pg]\n  kind: {type: full}\n");
+        Write(dir, "models/lake/_dbdatabuild.yml", "defaults:\n  connections=: [wh_pg]\n  kind: full\n");
         Model(dir, "lake.events", "");
         var o = new StringWriter(); var e = new StringWriter();
         Assert.True(RenderFiles("--write", "--project", dir).Exit == 0);

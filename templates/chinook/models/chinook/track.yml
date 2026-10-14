@@ -1,6 +1,5 @@
 name: chinook.track
-kind:
-  type: mapped
+kind: mapped
 grain: [track_id]
 columns:
   - {name: track_id, type: INTEGER, nullable: false}

@@ -1,5 +1,5 @@
 name: staging.categories
-kind: {type: view}
+kind: view
 grain: [category_code]
 columns:
   - {name: category_code, type: "VARCHAR(10)", nullable: false}

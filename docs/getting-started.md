@@ -29,7 +29,7 @@ rendered/              generated load scripts: commit them
 plans/                 plan files from `connection deploy`: read them, apply them
 ```
 
-A model is a query and a declaration of the columns it returns. `dbdatabuild project model update models/marts/orders.sql` proposes the declaration from the query and asks before writing; `dbdatabuild project model update --check` fails in CI when they disagree. A table the tool does not build, but your models read, is a **mapped** model (`kind: {type: mapped}`); `dbdatabuild project import staging.*` writes them from the database's catalog.
+A model is a query and a declaration of the columns it returns. `dbdatabuild project model update models/marts/orders.sql` proposes the declaration from the query and asks before writing; `dbdatabuild project model update --check` fails in CI when they disagree. A table the tool does not build, but your models read, is a **mapped** model (`kind: mapped`); `dbdatabuild project import staging.*` writes them from the database's catalog.
 
 ## 3. Build on a database
 

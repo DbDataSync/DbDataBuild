@@ -1,6 +1,5 @@
 name: staging.purchase_lines
-kind:
-  type: view
+kind: view
 grain:
   - purchase_order_id
   - purchase_order_detail_id

@@ -1,6 +1,5 @@
 name: staging.product_subcategories
-kind:
-  type: view
+kind: view
 grain:
   - product_subcategory_id
 columns:

@@ -251,7 +251,7 @@ internal sealed class ProjectContext
             return names;
         }
         if (core is "all" or "*") return all.Select(s => s.Definition.Name).ToList();
-        if (core.StartsWith("kind:", StringComparison.Ordinal)) { var k = core[5..]; return Found(all.Where(s => string.Equals(s.Definition.KindType, k, StringComparison.OrdinalIgnoreCase)), $"no model has the kind `{k}`"); }
+        if (core.StartsWith("kind:", StringComparison.Ordinal)) { var k = core[5..]; return Found(all.Where(s => string.Equals(s.Definition.Kind, k, StringComparison.OrdinalIgnoreCase)), $"no model has the kind `{k}`"); }
         if (core.StartsWith("tag:", StringComparison.Ordinal)) { var t = core[4..]; return Found(all.Where(s => s.Definition.Tags.Contains(t, StringComparer.Ordinal)), $"no model has the tag `{t}`"); }
         if (core.StartsWith("property:", StringComparison.Ordinal))
         {

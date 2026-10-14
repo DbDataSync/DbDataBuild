@@ -26,7 +26,7 @@ public class CrossDiffScaleTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models/big"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\ntracking: { connection: sqlserver }\n");
-            File.WriteAllText(Path.Combine(dir, "models/big/t.yml"), "name: big.t\nkind: {type: mapped}\nconnections=: [sqlserver, postgres]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            File.WriteAllText(Path.Combine(dir, "models/big/t.yml"), "name: big.t\nkind: mapped\nconnections=: [sqlserver, postgres]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
             await left.ExecAsync("EXEC('CREATE SCHEMA big')");
             await left.ExecAsync("CREATE TABLE big.t (id BIGINT NOT NULL, a INT, price DECIMAL(18,2), code NVARCHAR(40), seen DATETIME2(6))");
             await left.ExecAsync($"INSERT INTO big.t SELECT TOP ({rows}) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 1000 AS INT), CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 9973 AS DECIMAL(18,2)) / 7, N'code-' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 5000 AS NVARCHAR(10)), DATEADD(SECOND, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), '2024-01-01') FROM sys.all_objects a CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c");

@@ -1,5 +1,5 @@
 name: marts.fct_budget_allocation
-kind: {type: full}
+kind: full
 grain: [budget_month, region, category_code, store_id]
 columns:
   - {name: budget_month, type: INTEGER, nullable: false}

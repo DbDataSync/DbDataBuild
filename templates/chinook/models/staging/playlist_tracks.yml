@@ -1,6 +1,5 @@
 name: staging.playlist_tracks
-kind:
-  type: view
+kind: view
 grain:
   - playlist_id
   - track_id

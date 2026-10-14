@@ -1,6 +1,5 @@
 name: staging.order_lines
-kind:
-  type: view
+kind: view
 grain:
   - sales_order_id
   - sales_order_detail_id

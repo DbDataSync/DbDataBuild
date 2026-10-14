@@ -1,6 +1,5 @@
 name: marts.fct_bom_explosion
-kind:
-  type: full
+kind: full
 grain:
   - finished_product_id
   - path

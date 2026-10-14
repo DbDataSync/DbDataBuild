@@ -106,7 +106,7 @@ public class SourceImportTests
         var live = SourceImport.Describe("postgres", Shape("sales", "line items", Col("bigint", nullable: false, name: "id"), Col("character varying", 12, name: "Sku Code")), ["id"]);
         var d = SourceImport.ToDescriptor(live, null);
         var yaml = SourceDescriptorWriter.Yaml(d);
-        Assert.Equal("name: sales.line items\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: Sku Code\n    type: VARCHAR(12)\n", yaml);
+        Assert.Equal("name: sales.line items\nkind: mapped\ngrain: [id]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: Sku Code\n    type: VARCHAR(12)\n", yaml);
         var diags = new List<Diagnostic>();
         var loaded = SourceDescriptorLoader.Load(yaml, "models/sales/line items.yml", "sales.line items", diags);
         Assert.Empty(diags);
@@ -220,9 +220,9 @@ public class SourceImportTests
         if (withSource)
         {
             Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-            File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
+            File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
         }
-        File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), "name: marts.fct_orders\nkind: {type: view}\nconnections: [sqlserver]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), "name: marts.fct_orders\nkind: view\nconnections: [sqlserver]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT o.order_id FROM staging.orders o\n");
         return dir;
     }

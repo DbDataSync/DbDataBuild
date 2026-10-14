@@ -62,7 +62,7 @@ public class CliTests
     public void Validate_fails_with_formatted_diagnostics()
     {
         var dir = NewProjectDir();
-        File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), ValidModel.Replace("  unique_key: [order_id]\n", ""));
+        File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), ValidModel.Replace("    unique_key: [order_id]\n", ""));
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT 1");
         var (exit, _, err) = Run("project", "compile", "--project", dir);
         Assert.Equal(1, exit);
@@ -74,7 +74,7 @@ public class CliTests
         var dir = NewProjectDir();
         if (config != null) File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), config);
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/t.yml"), "name: staging.t\nkind:\n  type: mapped\ncolumns:\n  - {name: a, type: INTEGER}\n  - {name: b, type: INTEGER}\n  - {name: s, type: VARCHAR(20)}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/t.yml"), "name: staging.t\nkind: mapped\ncolumns:\n  - {name: a, type: INTEGER}\n  - {name: b, type: INTEGER}\n  - {name: s, type: VARCHAR(20)}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), ValidModel.Replace("connections: [sqlserver, fabric]", $"connections: {targets}"));
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), sql);
         return dir;

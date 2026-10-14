@@ -6,8 +6,8 @@ namespace DbDataBuild.Tests.Conformance;
 
 public partial class ApplyConformanceTests
 {
-    private const string NamesYaml = "name: staging.names\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(50)}\n";
-    private const string RegexYaml = "name: marts.regex_probe\nkind: {type: full}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: replaced_first, type: VARCHAR(50)}\n  - {name: replaced_all, type: VARCHAR(50)}\n  - {name: group_one, type: VARCHAR(50)}\n  - {name: no_match, type: VARCHAR(50)}\n  - {name: whole, type: BOOLEAN}\n  - {name: starts_a, type: BOOLEAN}\n";
+    private const string NamesYaml = "name: staging.names\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(50)}\n";
+    private const string RegexYaml = "name: marts.regex_probe\nkind: full\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: replaced_first, type: VARCHAR(50)}\n  - {name: replaced_all, type: VARCHAR(50)}\n  - {name: group_one, type: VARCHAR(50)}\n  - {name: no_match, type: VARCHAR(50)}\n  - {name: whole, type: BOOLEAN}\n  - {name: starts_a, type: BOOLEAN}\n";
     private const string RegexSql = "SELECT id, regexp_replace(s, '[a-c]', 'x') AS replaced_first, regexp_replace(s, '[a-c]', 'x', 'g') AS replaced_all, regexp_extract(s, 'a(b)', 1) AS group_one, regexp_extract(s, 'zzz') AS no_match,\n       regexp_full_match(s, 'a.c') AS whole, regexp_matches(s, '^a') AS starts_a\nFROM staging.names\n";
     private static readonly string[] Names = ["abc", "ABC", "a,b,c", "", "xabbc"];
 

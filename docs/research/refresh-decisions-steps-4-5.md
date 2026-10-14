@@ -16,12 +16,12 @@ The copy that the samples use:
 # models/warehouse/orders.yml
 name: warehouse.orders
 kind:
-  type: copy
-  from: pos.orders
-  slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
-  unique_key: [order_id]
-  watermark: {column: ordered_on, lookback: 7 days}
-  on_mismatch: fail
+  copy:
+    from: pos.orders
+    slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
+    unique_key: [order_id]
+    watermark: {column: ordered_on, lookback: 7 days}
+    on_mismatch: fail
 connections=: [sqlserver, postgres]
 refresh: { hourly: default, daily: default }
 ```
@@ -96,7 +96,7 @@ The unreachable origin fails the **copy as a whole** (all origins are checked be
 
 ```yaml
 name: warehouse.orders_full
-kind: {type: copy, from: pos.orders, slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}, unique_key: [order_id]}
+kind: {copy: {from: pos.orders, slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}, unique_key: [order_id]}}
 refresh: { daily: default }
 ```
 

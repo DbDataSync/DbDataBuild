@@ -1,6 +1,5 @@
 name: marts.agg_customer_cohorts
-kind:
-  type: full
+kind: full
 grain:
   - cohort
   - months_since_first

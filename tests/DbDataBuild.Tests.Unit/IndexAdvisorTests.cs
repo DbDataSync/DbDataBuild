@@ -9,8 +9,8 @@ namespace DbDataBuild.Tests.Unit;
 public class IndexAdvisorTests
 {
     private const string Cols = "columns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: event_ts, type: TIMESTAMP}\n";
-    private const string KeyModel = "name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [order_id]}\ngrain: [order_id]\n" + Cols;
-    private const string TimeModel = "name: marts.fct_orders\nkind: {type: incremental_by_time_range, time_column: event_ts}\ngrain: [order_id]\n" + Cols;
+    private const string KeyModel = "name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\ngrain: [order_id]\n" + Cols;
+    private const string TimeModel = "name: marts.fct_orders\nkind: {incremental_by_time_range: {time_column: event_ts}}\ngrain: [order_id]\n" + Cols;
     private static readonly string[] Two = ["sqlserver", "postgres"];
 
     private static IReadOnlyList<IndexAdvice> Advise(string yaml, params string[] targets)
@@ -42,7 +42,7 @@ public class IndexAdvisorTests
     [Fact]
     public void An_index_that_leads_with_the_key_in_any_order_satisfies_a_composite_key()
     {
-        const string model = "name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [order_id, customer_id]}\ngrain: [order_id, customer_id]\n" + Cols;
+        const string model = "name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [order_id, customer_id]}}\ngrain: [order_id, customer_id]\n" + Cols;
         Assert.Single(Advise(model));
         Assert.Empty(Advise(model + "indexes:\n  - {name: u, columns: [customer_id, order_id], unique: true}\n"));
         Assert.Empty(Advise(model + "indexes:\n  - {name: u, columns: [order_id, customer_id], unique: true, include: [event_ts]}\n"));
@@ -80,7 +80,7 @@ public class IndexAdvisorTests
     [Fact]
     public void Declared_loads_are_each_advised_on_what_they_use()
     {
-        const string model = "name: marts.fct_orders\nkind: {type: incremental_by_time_range, time_column: event_ts}\ngrain: [order_id]\n" + Cols +
+        const string model = "name: marts.fct_orders\nkind: {incremental_by_time_range: {time_column: event_ts}}\ngrain: [order_id]\n" + Cols +
             "loads:\n  daily:\n    default: true\n    strategy: watermark_append\n    watermark: {column: order_id, resolver: target_max}\n  by_key:\n    strategy: merge_by_key\n    key: [customer_id]\n  reload:\n    strategy: delete_insert_by_range\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n    max_span: 30 days\n";
         var (def, diags) = Load(model);
         Assert.Empty(diags.Select(DiagnosticFormatter.Format));
@@ -92,7 +92,7 @@ public class IndexAdvisorTests
     [Fact]
     public void Full_and_view_models_need_no_index_advice()
     {
-        Assert.Empty(Advise("name: marts.fct_orders\nkind: {type: full}\n" + Cols));
+        Assert.Empty(Advise("name: marts.fct_orders\nkind: full\n" + Cols));
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class IndexAdvisorTests
         var dir = NewProjectDir();
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), config);
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/t.yml"), "name: staging.t\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: event_ts, type: TIMESTAMP}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/t.yml"), "name: staging.t\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: event_ts, type: TIMESTAMP}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.yml"), modelYaml);
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT order_id, customer_id, event_ts FROM staging.t");
         return dir;

@@ -255,9 +255,9 @@ The statement log is the pre-send safety net (a statement is not sent unless it 
 | allowance | permission given to run a risky or destructive step | `--allow-risky`, `--allow-destructive` |
 | backfill | reloading historical ranges of an incremental model | `--backfill model=operation` |
 | selector | a way to name models: name, `+model`, `model+`, `kind:`, `tag:`, `connection:`, `path:`, `changed:<ref>`, `exclude:` | arguments `[models]` |
-| mapped model | a table that exists and the tool does not build | `kind: {type: mapped}` |
-| native model | a table the engine computes from its own query | `kind: {type: native}` |
-| copy | a model that moves rows between connections | `kind: {type: copy}` |
+| mapped model | a table that exists and the tool does not build | `kind: mapped` |
+| native model | a table the engine computes from its own query | `kind: native` |
+| copy | a model that moves rows between connections | `kind: copy` |
 
 ## 7a. Lookup: settings
 

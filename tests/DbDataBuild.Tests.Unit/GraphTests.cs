@@ -77,8 +77,8 @@ public class GraphTests
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         Directory.CreateDirectory(Path.Combine(dir, "models/stg"));
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [postgres, sqlserver]}\nstring_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C, sqlserver: Latin1_General_100_BIN2 }\n");
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: customer_id, type: BIGINT}\n");
-        File.WriteAllText(Path.Combine(dir, "models/staging/customers.yml"), "name: staging.customers\nkind:\n  type: mapped\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: customer_id, type: BIGINT}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/customers.yml"), "name: staging.customers\nkind: mapped\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(50)\"}\n");
         Model(dir, "stg/orders", "stg.orders", "view", "SELECT order_id, amount, customer_id FROM staging.orders", "  - {name: order_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: customer_id, type: BIGINT}\n");
         Model(dir, "stg/customers", "stg.customers", "view", "SELECT customer_id, upper(name) AS name FROM staging.customers", "  - {name: customer_id, type: BIGINT}\n  - {name: name, type: \"VARCHAR(50)\"}\n");
         Model(dir, "marts/fct_orders", "marts.fct_orders", "view", "SELECT o.order_id, o.amount * 2 AS double_amount, c.name FROM stg.orders o JOIN stg.customers c ON c.customer_id = o.customer_id",
@@ -239,7 +239,7 @@ public class GraphTests
         Assert.Equal(["marts.big", "marts.fct_orders", "stg.orders"], Chosen("changed:HEAD+"));        // and what depends on it
         Assert.Equal(["stg.orders"], Chosen("changed:HEAD", "exclude:marts.big"));
 
-        File.WriteAllText(Path.Combine(dir, "models/marts/new_one.yml"), "name: marts.new_one\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/new_one.yml"), "name: marts.new_one\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/new_one.sql"), "SELECT order_id FROM stg.orders\n");
         Assert.Contains("marts.new_one", Chosen("changed:HEAD"));                                      // an untracked model counts
 

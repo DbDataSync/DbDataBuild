@@ -1,6 +1,5 @@
 name: production.product_list_price_history
-kind:
-  type: mapped
+kind: mapped
 grain: [product_id, start_date]
 columns:
   - {name: product_id, type: INTEGER, nullable: false}

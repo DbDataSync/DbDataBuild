@@ -23,7 +23,7 @@ internal static class HookLoader
         {
             var where = new SourceLocation(source.DefinitionFile, model.Hooks.FirstOrDefault(h => h.Name == hook.Name || h.Use == hook.Group)?.Line ?? 0, 1);
             var action = HookEvents.Find(hook.Event)!.Action;
-            if (model.KindType == ModelKinds.View && action is "load" or "backfill")
+            if (model.Kind == ModelKinds.View && action is "load" or "backfill")
             {
                 diags.Add(new Diagnostic(DiagnosticCatalog.HookScriptInvalid, where, $"Hook `{hook.Name}` of {model.Name} is on `{hook.Event}`, but a view has no {action}."));
                 continue;

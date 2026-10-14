@@ -1,6 +1,5 @@
 name: staging.pay_history
-kind:
-  type: view
+kind: view
 grain:
   - employee_id
   - rate_change_date

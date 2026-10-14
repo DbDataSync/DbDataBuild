@@ -1,10 +1,10 @@
-# Model kind: one word, one structure (decided 2026-10-14; not built)
+# Model kind: one word, one structure (decided 2026-10-14; built in entries 163 and 164)
 
-Status: decided by the owner; queued to run after `project update` is merged. Touches the model loader, so it must not run beside that work.
+Status: decided by the owner; built after `project update` was merged (entry 163: the structure, the old form read with a warning and rewritten by `project model update`; entry 164: the metadata exposure). The words of the old name for the key (a dotted path ending in "type") are kept out of the docs on purpose: a search of `docs/` and `DESIGN.md` for them finds only history.
 
 ## The problem
 
-The docs and files say both "kind" and "type" for the same thing (`kind: {type: copy, ...}`, "kind.type"). "Type" also means a column's SQL type (`columns[].type`, `slice.type`), so the word collides.
+The docs and files say both "kind" and "type" for the same thing (`kind: {type: copy, ...}`, and its dotted path). "Type" also means a column's SQL type (`columns[].type`, `slice.type`), so the word collides.
 
 ## Decision
 
@@ -36,8 +36,8 @@ Cons: one more level of nesting; a scalar shorthand makes two accepted forms for
 
 * Loader (`ModelDefinitionLoader`, `SourceDescriptorLoader` for mapped and native), `schemas/model.schema.json` (one-of keyed by kind), the shorthand, layering, diagnostics (new codes; never reuse) with fixtures.
 * Migration: the loader accepts the old form (`kind: {type: ...}`) for one release with a warning (new DDB code) that names the rewrite; `project model update` (and `project update`) rewrites old files mechanically; `--check` reports them. No old form is written by the tool from now on.
-* Every template, test fixture, golden, the agent-kit skill, `DESIGN.md` (6.1, 6.5.x), `docs/models.md` (drop "kind.type", say "kind"), `docs/concepts.md`, help text, the metadata documents and `metadata_models` views (check what names the kind), the TUI and the web page if they show it.
-* Docs say "model kind" everywhere; a grep for "kind.type" and "model type" finds nothing in `docs/` and `DESIGN.md` afterwards (history entries in `docs/progress/` keep their words).
+* Every template, test fixture, golden, the agent-kit skill, `DESIGN.md` (6.1, 6.5.x), `docs/models.md` (say "model kind", no dotted path), `docs/concepts.md`, help text, the metadata documents and `metadata_models` views (check what names the kind), the TUI and the web page if they show it.
+* Docs say "model kind" everywhere; a search for the dotted path of the old key, or for the words "model" and "type" together, finds nothing in `docs/` and `DESIGN.md` afterwards (history entries in `docs/progress/` keep their words).
 * Tests: the loader accepts the new forms and the shorthand, refuses two kinds, no kind, a foreign setting and an empty mapping; the old form still loads with the warning and produces byte-identical rendered output; fuzz coverage for the new shape; templates build on both engines as before.
 
 ## Metadata exposure (added 2026-10-14, same run)
@@ -47,7 +47,7 @@ Found by reading the code before this run:
 * The model metadata document (`dbdatabuild.model/1`, `schemas/metadata.schema.json`) has `kind` as an **object** (`{type: ..., unique_key: ...}`). With the new structure it would be a one-key object named by the kind, which a tool would have to unpick. The project document lists models with `kind` as a plain string already.
 * The stored metadata is `metadata_current` (one JSON `document` per subject; its `kind` column is the **subject** kind: project, model or source) and `object_info` (flattened title, description, tags, properties). The flattened views (`metadata_models`, `metadata_upstream`, `metadata_ancestors`, ...) are built in an in-memory DuckDB from the documents and **are not stored in the database**.
 * Dependencies: each model document carries its **direct** `upstream` (name and kind: model, source, native, macro, unknown); a source document carries `consumers` and a native's `reads`. The transitive tree (`metadata_ancestors`) is computed by a view from those, not stored. `project show graph` and selectors compute the graph from the project files.
-* The metadata schema's model `kind.type` enum lists four values (it may lack `copy`, `mapped`, `native`): check for drift.
+* The metadata schema's model kind enum (under the old key) lists four values (it may lack `copy`, `mapped`, `native`): check for drift.
 
 Decided (to build in the same run, after `project update`):
 

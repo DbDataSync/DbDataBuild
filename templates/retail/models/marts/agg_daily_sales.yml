@@ -1,5 +1,5 @@
 name: marts.agg_daily_sales
-kind: {type: full}
+kind: full
 grain: [date_key, region, channel_group]
 columns:
   - {name: date_key, type: BIGINT, nullable: false}

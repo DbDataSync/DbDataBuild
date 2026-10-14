@@ -1,7 +1,7 @@
 name: marts.fct_invoice_lines
 kind:
-  type: incremental_by_unique_key
-  unique_key: [invoice_line_id]
+  incremental_by_unique_key:
+    unique_key: [invoice_line_id]
 grain: [invoice_line_id]
 columns:
   - name: invoice_line_id

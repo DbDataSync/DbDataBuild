@@ -1,6 +1,5 @@
 name: production.bill_of_materials
-kind:
-  type: mapped
+kind: mapped
 grain: [bill_of_materials_id]
 columns:
   - {name: bill_of_materials_id, type: INTEGER, nullable: false}

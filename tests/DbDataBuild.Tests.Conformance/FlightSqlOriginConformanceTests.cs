@@ -138,8 +138,8 @@ public class FlightSqlOriginConformanceTests
         await using var server = await InProcessFlightSqlServer.StartAsync();
         using var run = await FlightRun.SetUpAsync(destination, server.Login("password"));
         await using var to = run.Destination;
-        run.Write("models/src/items.yml", $"name: src.items\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
-        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
+        run.Write("models/src/items.yml", $"name: src.items\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
         server.Exec("CREATE SCHEMA src", FlightRun.ItemsDdl.Replace("{s}", "src"), FlightRun.ItemsRows.Replace("{s}", "src"));
 
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
@@ -181,9 +181,9 @@ public class FlightSqlOriginConformanceTests
         using var run = await FlightRun.SetUpAsync(destination, server.Login("token"), "refresh:\n  plans:\n    hourly: { on_failure: continue }\n");
         await using var to = run.Destination;
         const string events = "columns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: v, type: \"VARCHAR(20)\"}\n";
-        run.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\n{events}");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}\nrefresh: { hourly: default }\n");
-        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: {type: full}\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
+        run.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\n{events}");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}}\nrefresh: { hourly: default }\n");
+        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: full\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
         run.Write("models/dst/summary.sql", "SELECT day, COUNT(*) AS n FROM dst.events GROUP BY day\n");
         server.Exec("CREATE SCHEMA src", "CREATE TABLE src.events (id BIGINT NOT NULL, day DATE NOT NULL, v VARCHAR)", "INSERT INTO src.events VALUES (1, '2026-03-01', 'a'), (2, '2026-03-02', 'b'), (3, '2026-03-03', 'c')");
         run.Deploy();
@@ -258,8 +258,8 @@ public class FlightSqlOriginConformanceTests
         await using var server = await InProcessFlightSqlServer.StartAsync();
         using var run = await FlightRun.SetUpAsync(destination, server.Login("token"));
         await using var to = run.Destination;
-        run.Write("models/src/events.yml", "name: src.events\nkind: {type: mapped}\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n" +
+        run.Write("models/src/events.yml", "name: src.events\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n" +
             "loads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
             "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n" +
             "      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n");
@@ -282,8 +282,8 @@ public class FlightSqlOriginConformanceTests
         await using var server = await InProcessFlightSqlServer.StartAsync();
         using var run = await FlightRun.SetUpAsync(destination, server.Login("token"), "parameters:\n  min_id: { type: BIGINT, value: \"3\" }\n");
         await using var to = run.Destination;
-        run.Write("models/src/picked.yml", "name: src.picked\nkind:\n  type: native\n  query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id} AND (id = ${project.min_id} OR id > ${project.min_id})\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: VARCHAR}\n");
-        run.Write("models/dst/picked.yml", "name: dst.picked\nkind: {type: copy, from: src.picked}\n");
+        run.Write("models/src/picked.yml", "name: src.picked\nkind:\n  native:\n    query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id} AND (id = ${project.min_id} OR id > ${project.min_id})\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: VARCHAR}\n");
+        run.Write("models/dst/picked.yml", "name: dst.picked\nkind: {copy: {from: src.picked}}\n");
         server.Exec("CREATE SCHEMA src", "CREATE TABLE src.items (id BIGINT NOT NULL, code VARCHAR)", "INSERT INTO src.items VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
@@ -301,8 +301,8 @@ public class FlightSqlOriginConformanceTests
         Assert.Equal([3L, 3L, 3L], read.Values);
 
         // the native text is described by the server without running it, and a declaration that disagrees is named
-        run.Write("models/src/bad.yml", "name: src.bad\nkind:\n  type: native\n  query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id}\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: INTEGER}\n");
-        run.Write("models/dst/bad.yml", "name: dst.bad\nkind: {type: copy, from: src.bad}\n");
+        run.Write("models/src/bad.yml", "name: src.bad\nkind:\n  native:\n    query: SELECT id, upper(code) AS code FROM src.items WHERE id >= ${project.min_id}\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: INTEGER}\n");
+        run.Write("models/dst/bad.yml", "name: dst.bad\nkind: {copy: {from: src.bad}}\n");
         Ok(run.Cli("project", "compile"), "compile again");
         var wrongPlan = run.Cli("connection", "deploy", destination, "--write-plan");
         var wrong = run.Cli("connection", "deploy", "--apply-plan", FlightRun.PlanOf(run, wrongPlan.Out));
@@ -318,7 +318,7 @@ public class FlightSqlOriginConformanceTests
         await using var to = run.Destination;
         server.Exec("CREATE SCHEMA src", "CREATE TABLE src.parents (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR NOT NULL)",
             "CREATE TABLE src.kids (id BIGINT NOT NULL PRIMARY KEY, parent_id BIGINT NOT NULL REFERENCES src.parents (id), born DATE, price DECIMAL(10,2), payload BLOB, tags INTEGER[])");
-        run.Write("models/src/parents.yml", "name: src.parents\nkind: {type: mapped}\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: VARCHAR, nullable: false}\n");
+        run.Write("models/src/parents.yml", "name: src.parents\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: VARCHAR, nullable: false}\n");
         var check = run.Cli("project", "import", "proxy", "src.*", "--check");
         Assert.True(check.Exit is 0 or 1, check.Out + check.Err);
         Assert.Contains("src.parents", check.Out);
@@ -331,7 +331,7 @@ public class FlightSqlOriginConformanceTests
         Assert.True(descriptor.Contains("grain"), descriptor);                                                                       // the primary key seeds it
         Assert.DoesNotContain("tags", descriptor);                                                                  // an array has no logical type, and is said not to be guessed
 
-        run.Write("models/dst/parents.yml", "name: dst.parents\nkind: {type: copy, from: src.parents}\n");
+        run.Write("models/dst/parents.yml", "name: dst.parents\nkind: {copy: {from: src.parents}}\n");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");
         Ok(run.Cli("project", "compile"), "compile");
         server.Exec("INSERT INTO src.parents VALUES (1, 'a')");
@@ -354,8 +354,8 @@ public class FlightSqlOriginConformanceTests
         foreach (var n in new[] { "1", "2", "3" })
         {
             server.Exec($"CREATE TABLE src.slow{n} AS SELECT CAST({n} AS BIGINT) AS id");                      // a table named slow*: the server takes a second and a half to answer for it
-            run.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
-            run.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{type: copy, from: src.slow{n}}}\nrefresh: {{ fan: default }}\n");
+            run.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
+            run.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{copy: {{from: src.slow{n}}}}}\nrefresh: {{ fan: default }}\n");
         }
         run.Deploy();
         SessionLimits? seen = null;

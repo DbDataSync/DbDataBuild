@@ -1,8 +1,7 @@
 # The same orders as they stood at the end of each month: the shape of ledger.orders and a day. The macros in macros/snapshots.sql
 # serve both tables because both have the columns they read (status, amount_cents).
 name: ledger.orders_history
-kind:
-  type: mapped
+kind: mapped
 grain: [snap_date, order_id]
 columns:
   - {name: snap_date, type: DATE, nullable: false}

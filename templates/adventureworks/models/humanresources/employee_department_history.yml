@@ -1,6 +1,5 @@
 name: humanresources.employee_department_history
-kind:
-  type: mapped
+kind: mapped
 grain: [employee_id, start_date]
 columns:
   - {name: employee_id, type: INTEGER, nullable: false}

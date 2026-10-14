@@ -65,8 +65,8 @@ public partial class CopyConformanceTests
         await to.StartAsync();
         var pair = new Pair(from, to, Path.Combine(Path.GetTempPath(), "ddb-copy-" + Guid.NewGuid().ToString("N")));
         pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
-        pair.Write("models/src/items.yml", $"name: src.items\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\n{Columns}");
-        pair.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
+        pair.Write("models/src/items.yml", $"name: src.items\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\n{Columns}");
+        pair.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
         await from.ExecAsync(origin == "postgres" ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
         var q = from.QuoteIdent;
         await from.ExecAsync($"CREATE TABLE src.items ({q("id")} BIGINT NOT NULL, {q("small")} SMALLINT, {q("n")} INTEGER, {q("ratio")} {(origin == "postgres" ? "DOUBLE PRECISION" : "FLOAT(53)")}, {q("flag")} {(origin == "postgres" ? "BOOLEAN" : "BIT")}, " +
@@ -234,8 +234,8 @@ public partial class CopyConformanceTests
                 await store.ExecAsync($"INSERT INTO pos.orders VALUES {rows}");
             }
             Write("dbdatabuild.yml", "connections:\n  store_17: { engine: postgres, parameters: { store_id: \"017\" } }\n  store_18: { engine: postgres, parameters: { store_id: \"018\" } }\ndefaults:\n  connections: [sqlserver]\ntracking: { connection: sqlserver }\n");
-            Write("models/pos/orders.yml", "name: pos.orders\nkind: {type: mapped}\nconnections=: [store_17, store_18]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: total, type: \"DECIMAL(10, 2)\"}\n");
-            Write("models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
+            Write("models/pos/orders.yml", "name: pos.orders\nkind: mapped\nconnections=: [store_17, store_18]\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: total, type: \"DECIMAL(10, 2)\"}\n");
+            Write("models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
 
             Ok(Cli("connection", "init", "sqlserver", "--apply"), "init");
             Ok(Cli("project", "compile"), "render --write");
@@ -259,7 +259,7 @@ public partial class CopyConformanceTests
             await store18.ExecAsync("ALTER TABLE pos.orders DROP COLUMN total");
             await store17.ExecAsync("INSERT INTO pos.orders VALUES (6, 60.00)");
             // a plan's id comes from its content, and an applied plan is applied once: each variant below gets an index of its own, so that its plan is not the plan of an earlier apply
-            string Variant(string onMismatch, params string[] indexes) => "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  on_mismatch: " + onMismatch + "\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\nindexes:\n" + string.Concat(indexes.Select(i => $"  - {{name: ix_orders_{i}, columns: [{i}]}}\n"));
+            string Variant(string onMismatch, params string[] indexes) => "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    on_mismatch: " + onMismatch + "\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\nindexes:\n" + string.Concat(indexes.Select(i => $"  - {{name: ix_orders_{i}, columns: [{i}]}}\n"));
             Write("models/warehouse/orders.yml", Variant("fail", "order_id"));
             Ok(Cli("project", "compile"), "render --write");
             var skew = Cli("connection", "deploy", "sqlserver", "--write-plan");
@@ -310,8 +310,8 @@ public partial class CopyConformanceTests
         try
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
-            pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: note, type: \"VARCHAR(40)\"}}\n  - {{name: updated_at, type: TIMESTAMP, nullable: false}}\n");
-            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  type: copy\n  from: src.events\n  unique_key: [id]\n  watermark: {column: updated_at, lookback: 1 hour}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
+            pair.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: note, type: \"VARCHAR(40)\"}}\n  - {{name: updated_at, type: TIMESTAMP, nullable: false}}\n");
+            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  copy:\n    from: src.events\n    unique_key: [id]\n    watermark: {column: updated_at, lookback: 1 hour}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
             await from.ExecAsync(origin == "postgres" ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
             var q = from.QuoteIdent;
             await from.ExecAsync($"CREATE TABLE src.events ({q("id")} BIGINT NOT NULL, {q("note")} {from.ColumnType("VARCHAR(40)")}, {q("updated_at")} {from.ColumnType("TIMESTAMP")} NOT NULL)");
@@ -403,10 +403,10 @@ public partial class CopyConformanceTests
             await server.ExecAsync("CREATE TABLE src.base_t (id bigint NOT NULL, name varchar(20) NOT NULL)");
             await server.ExecAsync("INSERT INTO src.base_t VALUES (1, 'a'), (2, 'b')");
             Write("dbdatabuild.yml", "defaults: {connections: [wh]}\ntracking: none\nconnections:\n  origin: {engine: sqlserver}\n  wh: {engine: sqlserver}\n");
-            Write("models/src/base_t.yml", "name: src.base_t\nkind: {type: mapped}\nconnections=: [origin]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(20)\", nullable: false}\n");
-            Write("models/marts/fct.yml", "name: marts.fct\nkind: {type: full}\nconnections=: [origin]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(20)\", nullable: false}\n");
+            Write("models/src/base_t.yml", "name: src.base_t\nkind: mapped\nconnections=: [origin]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(20)\", nullable: false}\n");
+            Write("models/marts/fct.yml", "name: marts.fct\nkind: full\nconnections=: [origin]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(20)\", nullable: false}\n");
             Write("models/marts/fct.sql", "SELECT id, name FROM src.base_t\n");
-            Write("models/dst/fct.yml", "name: dst.fct\nkind:\n  type: copy\n  from: marts.fct\n");
+            Write("models/dst/fct.yml", "name: dst.fct\nkind:\n  copy:\n    from: marts.fct\n");
             Ok(Cli("project", "compile"), "render");
 
             // the model is not built on its connection yet: the copy is planned, with a note that the origin was not checked
@@ -457,8 +457,8 @@ public partial class CopyConformanceTests
         try
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
-            pair.Write("models/src/typed.yml", $"name: src.typed\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: blob, type: BLOB}}\n  - {{name: uid, type: UUID}}\n  - {{name: tm, type: TIME}}\n  - {{name: tz, type: TIMESTAMP WITH TIME ZONE}}\n");
-            pair.Write("models/dst/typed.yml", "name: dst.typed\nkind: {type: copy, from: src.typed}\n");
+            pair.Write("models/src/typed.yml", $"name: src.typed\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: blob, type: BLOB}}\n  - {{name: uid, type: UUID}}\n  - {{name: tm, type: TIME}}\n  - {{name: tz, type: TIMESTAMP WITH TIME ZONE}}\n");
+            pair.Write("models/dst/typed.yml", "name: dst.typed\nkind: {copy: {from: src.typed}}\n");
             var pg = origin == "postgres";
             await from.ExecAsync(pg ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
             await from.ExecAsync(pg
@@ -492,8 +492,8 @@ public partial class CopyConformanceTests
         try
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
-            pair.Write("models/src/words.yml", $"name: src.words\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: w, type: \"VARCHAR(4000)\"}}\n  - {{name: u, type: VARCHAR}}\n");
-            pair.Write("models/dst/words.yml", "name: dst.words\nkind: {type: copy, from: src.words}\n");
+            pair.Write("models/src/words.yml", $"name: src.words\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: w, type: \"VARCHAR(4000)\"}}\n  - {{name: u, type: VARCHAR}}\n");
+            pair.Write("models/dst/words.yml", "name: dst.words\nkind: {copy: {from: src.words}}\n");
             var pg = origin == "postgres";
             await from.ExecAsync(pg ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
             await from.ExecAsync(pg ? "CREATE TABLE src.words (id BIGINT NOT NULL, w VARCHAR(4000), u TEXT)" : "CREATE TABLE src.words (id BIGINT NOT NULL, w NVARCHAR(4000), u NVARCHAR(MAX))");

@@ -1,6 +1,5 @@
 name: marts.agg_bom_rolled_cost
-kind:
-  type: full
+kind: full
 grain:
   - product_id
 columns:

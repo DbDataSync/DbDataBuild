@@ -1,6 +1,5 @@
 name: marts.dim_date
-kind:
-  type: full
+kind: full
 grain:
   - date_key
 columns:

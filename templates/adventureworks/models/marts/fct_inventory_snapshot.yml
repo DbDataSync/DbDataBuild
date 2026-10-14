@@ -1,6 +1,5 @@
 name: marts.fct_inventory_snapshot
-kind:
-  type: full
+kind: full
 grain:
   - snapshot_date
   - product_id

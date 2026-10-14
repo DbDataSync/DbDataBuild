@@ -7,12 +7,12 @@
 # `connections=:` puts it on the SQL Server warehouse and on the PostgreSQL reporting database, each filled from both shops.
 name: warehouse.orders
 kind:
-  type: copy
-  from: pos.orders
-  slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
-  unique_key: [order_id]
-  watermark: {column: ordered_on, lookback: 7 days}
-  on_mismatch: fail            # or skip: leave out a shop system whose table has drifted from its declaration, and load the others
+  copy:
+    from: pos.orders
+    slice: {column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)"}
+    unique_key: [order_id]
+    watermark: {column: ordered_on, lookback: 7 days}
+    on_mismatch: fail            # or skip: leave out a shop system whose table has drifted from its declaration, and load the others
 loads:
   default: {default: true, strategy: delete_insert_by_key}      # the key is unique_key plus the slice column
   full: {strategy: full_replace}                                # everything of an origin; the other origin's rows stay

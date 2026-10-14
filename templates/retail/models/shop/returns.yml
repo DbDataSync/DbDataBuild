@@ -1,6 +1,5 @@
 name: shop.returns
-kind:
-  type: mapped
+kind: mapped
 grain: [return_id]
 columns:
   - {name: return_id, type: INTEGER, nullable: false}

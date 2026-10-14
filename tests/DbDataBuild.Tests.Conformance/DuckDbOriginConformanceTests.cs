@@ -138,8 +138,8 @@ public class DuckDbOriginConformanceTests
     {
         using var run = await SetUp(destination);
         await using var to = run.Destination;
-        run.Write("models/src/items.yml", $"name: src.items\nkind: {{type: mapped}}\nconnections=: [analytics]\ngrain: [id]\n{Columns}");
-        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
+        run.Write("models/src/items.yml", $"name: src.items\nkind: mapped\nconnections=: [analytics]\ngrain: [id]\n{Columns}");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\nindexes:\n  - {name: ix_items_code, columns: [code]}\n");
         run.Origin("CREATE SCHEMA src",
             "CREATE TABLE src.items (id BIGINT NOT NULL PRIMARY KEY, small SMALLINT, n INTEGER, ratio DOUBLE, flag BOOLEAN, born DATE, seen TIMESTAMP, price DECIMAL(18,3), big DECIMAL(28,6), code VARCHAR, notes VARCHAR)",
             "INSERT INTO src.items VALUES " +
@@ -183,9 +183,9 @@ public class DuckDbOriginConformanceTests
         using var run = await SetUp(destination, "refresh:\n  plans:\n    hourly: { on_failure: continue }\n");
         await using var to = run.Destination;
         const string events = "columns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: v, type: \"VARCHAR(20)\"}\n";
-        run.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [analytics]\ngrain: [id]\n{events}");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}\nrefresh: { hourly: default }\n");
-        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: {type: full}\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
+        run.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [analytics]\ngrain: [id]\n{events}");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}}\nrefresh: { hourly: default }\n");
+        run.Write("models/dst/summary.yml", "name: dst.summary\nkind: full\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
         run.Write("models/dst/summary.sql", "SELECT day, COUNT(*) AS n FROM dst.events GROUP BY day\n");
         run.Origin("CREATE SCHEMA src", "CREATE TABLE src.events (id BIGINT NOT NULL, day DATE NOT NULL, v VARCHAR)", "INSERT INTO src.events VALUES (1, '2026-03-01', 'a'), (2, '2026-03-02', 'b'), (3, '2026-03-03', 'c')");
         Deploy(run);
@@ -228,8 +228,8 @@ public class DuckDbOriginConformanceTests
     {
         using var run = await SetUp(destination);
         await using var to = run.Destination;
-        run.Write("models/src/events.yml", "name: src.events\nkind: {type: mapped}\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
-        run.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n" +
+        run.Write("models/src/events.yml", "name: src.events\nkind: mapped\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n");
+        run.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n" +
             "loads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
             "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n" +
             "      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n");
@@ -263,8 +263,8 @@ public class DuckDbOriginConformanceTests
         {
             using var run = await SetUp(destination, $"parameters:\n  file: \"{parquet}\"\n  min_id: {{ type: BIGINT, value: \"3\" }}\n");
             await using var to = run.Destination;
-            run.Write("models/src/orders.yml", "name: src.orders\nkind:\n  type: native\n  query: SELECT id, label FROM read_parquet(${project.file}) WHERE id >= ${project.min_id}\nconnections=: [lake]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(20)\"}\n");
-            run.Write("models/dst/orders.yml", "name: dst.orders\nkind: {type: copy, from: src.orders}\n");
+            run.Write("models/src/orders.yml", "name: src.orders\nkind:\n  native:\n    query: SELECT id, label FROM read_parquet(${project.file}) WHERE id >= ${project.min_id}\nconnections=: [lake]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(20)\"}\n");
+            run.Write("models/dst/orders.yml", "name: dst.orders\nkind: {copy: {from: src.orders}}\n");
             Ok(run.Cli("connection", "init", destination, "--apply"), "init");
             Ok(run.Cli("project", "compile"), "compile");
             var plan = run.Cli("connection", "deploy", destination, "--write-plan");

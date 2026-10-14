@@ -5,8 +5,8 @@ namespace DbDataBuild.Tests.Conformance;
 /// <summary>Inputs and resolvers on the real engines (docs/research/refresh-plans.md, section 8): an expression on a frozen clock, a `target` resolver run on the read login, one resolver that provides two inputs, NULL and a value that does not fit, and an override that stops the resolver from running.</summary>
 public partial class ApplyConformanceTests
 {
-    private const string DaysStaging = "name: staging.days\nkind:\n  type: mapped\ngrain: [day]\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT, nullable: false}\n";
-    private const string DaysYaml = "name: marts.fct_days\nkind: {type: incremental_by_unique_key, unique_key: [day]}\ngrain: [day]\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT, nullable: false}\n";
+    private const string DaysStaging = "name: staging.days\nkind: mapped\ngrain: [day]\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT, nullable: false}\n";
+    private const string DaysYaml = "name: marts.fct_days\nkind: {incremental_by_unique_key: {unique_key: [day]}}\ngrain: [day]\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT, nullable: false}\n";
     private const string DaysSql = "SELECT d.day, d.n FROM staging.days d\n";
 
     private static string DaysLoads(string extra = "") =>

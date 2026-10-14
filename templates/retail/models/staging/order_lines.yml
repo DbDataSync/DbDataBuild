@@ -1,5 +1,5 @@
 name: staging.order_lines
-kind: {type: view}
+kind: view
 grain: [order_id, line_no]
 columns:
   - {name: order_id, type: INTEGER, nullable: false}

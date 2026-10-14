@@ -3,7 +3,7 @@ title: Customers
 description: "One row per customer, with their order counts, first and latest order and lifetime value."
 tags: [customer]
 properties: {owner: analytics, refresh: daily}
-kind: {type: full}
+kind: full
 grain: [customer_id]
 columns:
   - {name: customer_id, type: INTEGER, nullable: false, title: Customer, description: "The customer's id in the shop."}

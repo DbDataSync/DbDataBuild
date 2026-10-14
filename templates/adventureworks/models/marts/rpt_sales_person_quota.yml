@@ -1,6 +1,5 @@
 name: marts.rpt_sales_person_quota
-kind:
-  type: full
+kind: full
 grain:
   - sales_person_id
   - year

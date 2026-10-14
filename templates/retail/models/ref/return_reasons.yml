@@ -1,6 +1,5 @@
 name: ref.return_reasons
-kind:
-  type: mapped
+kind: mapped
 grain: [reason_code]
 columns:
   - {name: reason_code, type: "VARCHAR(4)", nullable: false}

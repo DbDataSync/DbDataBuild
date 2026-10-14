@@ -200,7 +200,7 @@ internal static class RenderCommand
         {
             var def = m.Source.Definition;
             var targets = ctx.TargetsOf(def);
-            if (def.KindType == ModelKinds.View)
+            if (def.Kind == ModelKinds.View)
             {
                 rows.Add([def.Name, string.Join(", ", targets), "-", "-", "-", "view: DDL only"]);
                 continue;

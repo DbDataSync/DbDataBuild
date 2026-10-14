@@ -1,6 +1,5 @@
 name: chinook.invoice_line
-kind:
-  type: mapped
+kind: mapped
 grain: [invoice_line_id]
 columns:
   - {name: invoice_line_id, type: INTEGER, nullable: false}

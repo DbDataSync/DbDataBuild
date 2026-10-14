@@ -1,6 +1,5 @@
 name: staging.inventory_snapshots
-kind:
-  type: view
+kind: view
 grain:
   - snapshot_date
   - product_id

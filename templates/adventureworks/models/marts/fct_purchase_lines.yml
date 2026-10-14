@@ -1,6 +1,5 @@
 name: marts.fct_purchase_lines
-kind:
-  type: full
+kind: full
 grain:
   - purchase_order_id
   - purchase_order_detail_id

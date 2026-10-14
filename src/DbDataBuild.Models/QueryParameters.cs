@@ -84,7 +84,7 @@ public static class QueryParameters
         if (refs.Count == 0) return (sql, [], []);
         var problems = new List<string>();
         var def = source.Definition;
-        if (def.KindType == ModelKinds.View) problems.Add("a view's query cannot use parameters: a view is DDL, and DDL binds no values (use a table, or write the value into the query)");
+        if (def.Kind == ModelKinds.View) problems.Add("a view's query cannot use parameters: a view is DDL, and DDL binds no values (use a table, or write the value into the query)");
         var connections = def.Targets ?? config.DefaultConnections;
         var parameters = new List<QueryParameter>();
         foreach (var (scope, name) in refs.OrderBy(r => $"{r.Scope}.{r.Name}", StringComparer.Ordinal))

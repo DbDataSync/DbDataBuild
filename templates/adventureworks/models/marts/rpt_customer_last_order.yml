@@ -1,6 +1,5 @@
 name: marts.rpt_customer_last_order
-kind:
-  type: full
+kind: full
 grain:
   - customer_id
 columns:

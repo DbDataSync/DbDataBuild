@@ -1,6 +1,5 @@
 name: production.product_subcategory
-kind:
-  type: mapped
+kind: mapped
 grain: [product_subcategory_id]
 columns:
   - {name: product_subcategory_id, type: INTEGER, nullable: false}

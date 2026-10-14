@@ -1,6 +1,5 @@
 name: sales.sales_person_quota_history
-kind:
-  type: mapped
+kind: mapped
 grain: [sales_person_id, quota_date]
 columns:
   - {name: sales_person_id, type: INTEGER, nullable: false}

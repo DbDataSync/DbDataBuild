@@ -15,7 +15,7 @@ public class HistoryConcernsTests
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         Directory.CreateDirectory(Path.Combine(dir, "models/stg"));
         Directory.CreateDirectory(Path.Combine(dir, "models/marts"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
         void Model(string path, string name, string kind, string sql, string columns)
         {
             File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {{type: {kind}}}\ncolumns:\n{columns}");

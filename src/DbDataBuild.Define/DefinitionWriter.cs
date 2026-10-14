@@ -16,10 +16,16 @@ public static class DefinitionWriter
         if (withNameAndKind)
         {
             sb.Append("name: ").Append(YamlText.Scalar(d.Name)).Append('\n');
-            sb.Append("kind:\n  type: ").Append(d.KindType).Append('\n');
-            if (d.UniqueKey.Count > 0) sb.Append("  unique_key: ").Append(YamlText.FlowList(d.UniqueKey)).Append('\n');
-            if (d.TimeColumn != null) sb.Append("  time_column: ").Append(YamlText.Scalar(d.TimeColumn)).Append('\n');
-            if (d.Lookback != null) sb.Append("  lookback: ").Append(YamlText.Scalar(d.Lookback)).Append('\n');
+            var settings = new List<string>();
+            if (d.UniqueKey.Count > 0) settings.Add("unique_key: " + YamlText.FlowList(d.UniqueKey));
+            if (d.TimeColumn != null) settings.Add("time_column: " + YamlText.Scalar(d.TimeColumn));
+            if (d.Lookback != null) settings.Add("lookback: " + YamlText.Scalar(d.Lookback));
+            if (settings.Count == 0) sb.Append("kind: ").Append(d.Kind).Append('\n');
+            else
+            {
+                sb.Append("kind:\n  ").Append(d.Kind).Append(":\n");
+                foreach (var line in settings) sb.Append("    ").Append(line).Append('\n');
+            }
         }
         if (d.Grain.Count > 0) sb.Append("grain: ").Append(YamlText.FlowList(d.Grain)).Append('\n');
         if (d.Targets is { Count: > 0 }) sb.Append("connections=: ").Append(YamlText.FlowList(d.Targets)).Append('\n');

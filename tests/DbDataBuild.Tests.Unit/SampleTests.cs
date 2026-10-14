@@ -134,8 +134,8 @@ public class SampleTests
         var dir = NewProjectDir();
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\nlint:\n  indexes: false\n");
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer, type: \"VARCHAR(20)\"}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
-        File.WriteAllText(Path.Combine(dir, "models/marts/by_customer.yml"), "name: marts.by_customer\nkind: {type: full}\ncolumns:\n  - {name: customer, type: \"VARCHAR(20)\"}\n  - {name: n, type: BIGINT}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer, type: \"VARCHAR(20)\"}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/by_customer.yml"), "name: marts.by_customer\nkind: full\ncolumns:\n  - {name: customer, type: \"VARCHAR(20)\"}\n  - {name: n, type: BIGINT}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/by_customer.sql"), "SELECT customer, COUNT(*) AS n FROM staging.orders GROUP BY customer\n");
         return dir;
     }

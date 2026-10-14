@@ -130,8 +130,8 @@ public class TableDiffTests
         var dir = NewProjectDir();
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\n");
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
-        File.WriteAllText(Path.Combine(dir, "models/staging/loose.yml"), "name: staging.loose\nkind:\n  type: mapped\ncolumns:\n  - {name: a, type: BIGINT}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/loose.yml"), "name: staging.loose\nkind: mapped\ncolumns:\n  - {name: a, type: BIGINT}\n");
         var exit = CliApp.Run(["connection", "compare", .. args, "--project", dir], o, e, environment: _ => null);
         return (exit, e.ToString());
     }

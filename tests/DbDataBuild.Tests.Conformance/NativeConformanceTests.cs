@@ -43,14 +43,14 @@ public partial class NativeConformanceTests
         try
         {
             Write("dbdatabuild.yml", Config(name));
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  query: |\n    " + NumsText(name) + "\n" + Cols);             // the text inline in the YAML
-            Write("models/src/fixed.yml", "name: src.fixed\nkind: {type: native}\n" + Cols);                                                       // the text in a file beside it
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    query: |\n      " + NumsText(name) + "\n" + Cols);             // the text inline in the YAML
+            Write("models/src/fixed.yml", "name: src.fixed\nkind: native\n" + Cols);                                                       // the text in a file beside it
             Write("models/src/fixed.native.sql", FixedText(name) + "\n");
-            Write("models/marts/big.yml", "name: marts.big\nkind: {type: full}\n" + Cols);
+            Write("models/marts/big.yml", "name: marts.big\nkind: full\n" + Cols);
             Write("models/marts/big.sql", "SELECT n FROM src.nums WHERE n > 1\n");
-            Write("models/marts/v.yml", "name: marts.v\nkind: {type: view}\n" + Cols);
+            Write("models/marts/v.yml", "name: marts.v\nkind: view\n" + Cols);
             Write("models/marts/v.sql", "SELECT n FROM src.fixed\n");
-            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  type: copy\n  from: src.nums\n");                           // a local copy: the native select, landed on its own connection
+            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  copy:\n    from: src.nums\n");                           // a local copy: the native select, landed on its own connection
 
             Ok(Cli("connection", "init", name, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
@@ -104,8 +104,8 @@ public partial class NativeConformanceTests
         try
         {
             Write("dbdatabuild.yml", "defaults: {connections: [sqlserver]}\ntracking: { connection: sqlserver }\nparameters:\n  list: \"7,8,9\"\n");
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  query: " + NumsText("postgres").Replace("${project.list}", "${project.list}") + "\nconnections=: [postgres]\n" + Cols);
-            Write("models/dst/nums.yml", "name: dst.nums\nkind:\n  type: copy\n  from: src.nums\n");
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    query: " + NumsText("postgres").Replace("${project.list}", "${project.list}") + "\nconnections=: [postgres]\n" + Cols);
+            Write("models/dst/nums.yml", "name: dst.nums\nkind:\n  copy:\n    from: src.nums\n");
             Ok(Cli("connection", "init", "sqlserver", "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
             var plan = Cli("connection", "deploy", "sqlserver", "--write-plan");
@@ -154,9 +154,9 @@ public partial class NativeConformanceTests
             await engine.ExecAsync(create);
 
             Write("dbdatabuild.yml", Config(name) + $"connections:\n  {name}: {{ allow_native_commands: true }}\n");
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  access: command\n  query: " + call + "\n" + Cols);
-            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  type: copy\n  from: src.nums\n");                      // on the command's own connection: still a transfer
-            Write("models/marts/reader.yml", "name: marts.reader\nkind: {type: full}\n" + Cols);
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    access: command\n    query: " + call + "\n" + Cols);
+            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  copy:\n    from: src.nums\n");                      // on the command's own connection: still a transfer
+            Write("models/marts/reader.yml", "name: marts.reader\nkind: full\n" + Cols);
             Write("models/marts/reader.sql", "SELECT n FROM src.nums\n");
 
             var broken = Cli("project", "compile");
@@ -228,8 +228,8 @@ public partial class NativeConformanceTests
 
             Write("dbdatabuild.yml", $"defaults: {{connections: [{destinationName}]}}\ntracking: {{ connection: {destinationName} }}\nconnections:\n  {originName}: {{ allow_native_commands: true }}\nparameters:\n  list: \"7,8,9\"\n" +
                 (destinationName == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  access: command\n  query: " + call + $"\nconnections=: [{originName}]\n" + Cols);
-            Write("models/dst/nums.yml", "name: dst.nums\nkind:\n  type: copy\n  from: src.nums\n");
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    access: command\n    query: " + call + $"\nconnections=: [{originName}]\n" + Cols);
+            Write("models/dst/nums.yml", "name: dst.nums\nkind:\n  copy:\n    from: src.nums\n");
             Ok(Cli("connection", "init", destinationName, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
             var plan = Cli("connection", "deploy", destinationName, "--write-plan");
@@ -259,7 +259,7 @@ public partial class NativeConformanceTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "models", "src"));
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), Config("sqlserver"));
-            File.WriteAllText(Path.Combine(dir, "models", "src", "nums.yml"), "name: src.nums\nkind:\n  type: native\n  access: command\n  query: EXEC dbo.usp_nums @list = 'a'\n" + Cols);
+            File.WriteAllText(Path.Combine(dir, "models", "src", "nums.yml"), "name: src.nums\nkind:\n  native:\n    access: command\n    query: EXEC dbo.usp_nums @list = 'a'\n" + Cols);
             var o = new StringWriter(); var e = new StringWriter();
             Assert.NotEqual(0, CliApp.Run(["project", "compile", "--project", dir], o, e, environment: Env));
             Assert.Contains("allow_native_commands", e.ToString() + o.ToString());
@@ -285,8 +285,8 @@ public partial class NativeConformanceTests
         try
         {
             Write("dbdatabuild.yml", Config(name));
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  query: |\n    " + NumsText(name) + "\n" + Cols);
-            Write("models/marts/big.yml", "name: marts.big\nkind: {type: full}\n" + Cols);
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    query: |\n      " + NumsText(name) + "\n" + Cols);
+            Write("models/marts/big.yml", "name: marts.big\nkind: full\n" + Cols);
             Write("models/marts/big.sql", "SELECT n FROM src.nums\n");
             Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
             Assert.Equal(0, Cli("project", "compile").Exit);
@@ -294,13 +294,13 @@ public partial class NativeConformanceTests
             Assert.True(fine.Exit == 0, fine.Out + fine.Err);                                                     // the declaration agrees with the engine
 
             // the text now returns a string and a column of another name
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  query: SELECT 'x' AS n, 1 AS extra, 2 AS gone\n" + Cols.Replace("columns:\n", "columns:\n  - {name: gone, type: INTEGER, nullable: false}\n").Replace("grain: [n]", "grain: [n]"));
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    query: SELECT 'x' AS n, 1 AS extra, 2 AS gone\n" + Cols.Replace("columns:\n", "columns:\n  - {name: gone, type: INTEGER, nullable: false}\n").Replace("grain: [n]", "grain: [n]"));
             var drift = Cli("connection", "deploy", name, "--write-plan");
             Assert.NotEqual(0, drift.Exit);
             Assert.Contains("returns something other than it declares", drift.Err + drift.Out);
             Assert.Contains("column `n` is returned as another type", drift.Err + drift.Out);
 
-            Write("models/src/nums.yml", "name: src.nums\nkind:\n  type: native\n  query: SELECT 1 AS m\n" + Cols);
+            Write("models/src/nums.yml", "name: src.nums\nkind:\n  native:\n    query: SELECT 1 AS m\n" + Cols);
             var missing = Cli("connection", "deploy", name, "--write-plan");
             Assert.NotEqual(0, missing.Exit);
             Assert.Contains("column `n` is not returned", missing.Err + missing.Out);
@@ -334,8 +334,8 @@ public partial class NativeConformanceTests
             await engine.ExecAsync(Function(">"));
             var routine = $"{schema}.fn_tracked";
             Write("dbdatabuild.yml", Config(name));
-            Write("models/src/tracked.yml", $"name: src.tracked\ntrack_definition: [{routine}, {schema}.fn_missing]\nkind:\n  type: native\n  query: SELECT n FROM {routine}(2)\n" + Cols);
-            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  type: copy\n  from: src.tracked\n");
+            Write("models/src/tracked.yml", $"name: src.tracked\ntrack_definition: [{routine}, {schema}.fn_missing]\nkind:\n  native:\n    query: SELECT n FROM {routine}(2)\n" + Cols);
+            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  copy:\n    from: src.tracked\n");
 
             Ok(Cli("connection", "init", name, "--apply"), "init");
             Ok(Cli("project", "compile"), "render");
@@ -394,8 +394,8 @@ public partial class NativeConformanceTests
         {
             await engine.ExecAsync("CREATE OR ALTER FUNCTION dbo.fn_tracked(@cutoff int) RETURNS TABLE AS RETURN SELECT CAST(value AS int) AS n FROM STRING_SPLIT('1,2,3,4,5', ',') WHERE CAST(value AS int) > @cutoff");
             Write("dbdatabuild.yml", Config("sqlserver"));
-            Write("models/src/tracked.yml", "name: src.tracked\ntrack_definition: [dbo.fn_tracked]\nkind:\n  type: native\n  query: SELECT n FROM dbo.fn_tracked(2)\n" + Cols);
-            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  type: copy\n  from: src.tracked\n");
+            Write("models/src/tracked.yml", "name: src.tracked\ntrack_definition: [dbo.fn_tracked]\nkind:\n  native:\n    query: SELECT n FROM dbo.fn_tracked(2)\n" + Cols);
+            Write("models/marts/snapshot.yml", "name: marts.snapshot\nkind:\n  copy:\n    from: src.tracked\n");
             Assert.Equal(0, Cli("connection", "init", "sqlserver", "--apply").Exit);
             Assert.Equal(0, Cli("project", "compile").Exit);
             var first = Cli("connection", "deploy", "sqlserver", "--write-plan");

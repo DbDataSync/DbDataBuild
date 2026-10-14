@@ -1589,6 +1589,13 @@
             "interactive"
           ]
         },
+        "old_kind_forms": {
+          "description": "The files that write a model kind in the old form (kind: {type: ...}): with --check, the ones that would be rewritten; otherwise, the ones that were. Both forms load for one more release.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "definitions": {
           "type": "integer"
         },
@@ -3431,6 +3438,12 @@
                 "integer",
                 "null"
               ]
+            },
+            "old_kind_forms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "models": {
               "type": "array",

@@ -1,6 +1,5 @@
 name: marts.agg_genre_revenue
-kind:
-  type: full
+kind: full
 grain:
   - year
   - genre_name

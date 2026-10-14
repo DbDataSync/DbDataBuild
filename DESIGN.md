@@ -104,8 +104,8 @@ SQLMesh-style concepts (kinds, grain, declared columns), with **no custom gramma
 # models/marts/fct_orders.yml
 name: marts.fct_orders
 kind:
-  type: incremental_by_unique_key
-  unique_key: [order_id]
+  incremental_by_unique_key:
+    unique_key: [order_id]
 grain: [order_id]
 connections=: [sqlserver, fabric]
 columns:
@@ -137,14 +137,28 @@ Upstream references are plain table names, resolved against the model graph and 
 
 ### 6.1 Supported kinds (first milestone)
 
-| `kind.type` | Meaning | Load behavior |
+| Model kind | Meaning | Load behavior |
 |---|---|---|
 | `view` | View over upstream | DDL only (create/alter via plan). `apply` issues no data statements |
 | `full` | Table fully reloaded | Transactional delete+insert of contents (table swap can be added later as a named load operation, section 6.6) |
 | `incremental_by_unique_key` | Upsert by key | Watermark-free: rows selected per model query, applied via delete+insert or MERGE per target. Requires `unique_key` |
 | `incremental_by_time_range` | Time-sliced incremental | Range derived from `MAX(time_column)` in the target minus `lookback`, never from a state table. Requires `time_column` |
 
-Kinds define table semantics and supply the **default** load operation. Explicit, additional load operations are declared with `loads` (section 6.6).
+Kinds define table semantics and supply the **default** load operation. Explicit, additional load operations are declared with `loads` (section 6.6). Beside these four there are `copy` (6.5.2), `mapped` and `native` (6.5.4); the seven are summarised in `docs/models.md`.
+
+**How a kind is written (as built, entry 163; decision `docs/research/model-kind-structure.md`).** The word for a model's kind is "model kind"; "type" is a column's SQL type and nothing else. `kind` is keyed by the kind's name, with that kind's settings beneath it, and exactly one key:
+
+```yaml
+kind:
+  incremental_by_unique_key:
+    unique_key: [order_id]
+kind: {copy: {from: pos.orders, unique_key: [order_id]}}     # flow form
+kind: view                                                   # a kind with no settings may be a plain value (so may `{view: {}}`)
+```
+
+`ModelKindShape` reads the node (a plain value, or a mapping of one key whose value is the settings mapping) and reports a malformed one as DDB-248 (two kinds, an empty mapping, a list, settings that are not a mapping, an empty value); whether the name is a kind, and which settings it takes, stay with the loaders (`ModelDefinitionLoader`, `SourceDescriptorLoader`), which refuse a setting of another kind as an unknown key (DDB-104) because the settings of each kind are a closed set. `schemas/model.schema.json` is a one-of per kind with closed keys (and `source.schema.json` for `mapped` and `native`), so an editor says the same. A key with a dot (`kind.copy:`) is an ordinary key, not a nesting, and is not supported. Layering: `kind` is a layered key, but a nearer layer's `kind` **replaces** the one above whole (`YamlMerge`), never key by key, because two kinds' settings would otherwise mix; `kind=` and `kind+` mean the same. The query head (6.5.7) builds its kind layer in the new form.
+
+The form of the earlier releases, `kind: {type: copy, from: pos.orders}`, **still loads for one more release** as the same kind with the same settings (the rendered files are byte-identical), with the warning DDB-247 for each file that writes it (a model's own file, or the folder or project file that gave the kind, once). `dbdatabuild project model update` (and so `project update`) rewrites it with text splices (`KindFormRewriter`: comments, key order and layout survive; the result is read again and must name the same kind with the same settings, or nothing is written); `--check` reports each file as a difference. The tool writes only the new form (`model create`, `define`, the head, `project import`). The metadata documents are in 9.4.1 and 12.
 
 ### 6.2 Definition rules
 
@@ -231,15 +245,14 @@ dbdatabuild project model update --check                                # CI: ex
 
 The text above is the design. This records what the implementation does, including the decisions the design left open.
 
-**Mapped models (as built).** A table that exists and that the tool does not build is a **mapped model**: `models/<schema name>/<table>.yml` with `kind: {type: mapped}` and no `.sql`, in the same column shape as a model definition (it replaces the old `sources/` folder, which is no longer read and is an error naming where its files go). A folder may be named `sources`, or anything, and `defaults: {kind: {type: mapped}}` in its `_dbdatabuild.yml` makes every file beneath it mapped. `name` must equal the path under `models/` with `/` replaced by `.` (as for models), a `.sql` beside a mapped model is an error, an optional `grain` feeds grain candidates, and `connections` (layered like a model's) says where the table exists (the project's default connections without it; not yet checked against the models that read it). The schema is `schemas/source.schema.json`, and `schemas/model.schema.json` hands any file that says `kind: {type: mapped}` to it; `validate` checks them. `import` exports them from a connection (below); they can still be written by hand.
+**Mapped models (as built).** A table that exists and that the tool does not build is a **mapped model**: `models/<schema name>/<table>.yml` with `kind: mapped` and no `.sql`, in the same column shape as a model definition (it replaces the old `sources/` folder, which is no longer read and is an error naming where its files go). A folder may be named `sources`, or anything, and `defaults: {kind: mapped}` in its `_dbdatabuild.yml` makes every file beneath it mapped. `name` must equal the path under `models/` with `/` replaced by `.` (as for models), a `.sql` beside a mapped model is an error, an optional `grain` feeds grain candidates, and `connections` (layered like a model's) says where the table exists (the project's default connections without it; not yet checked against the models that read it). The schema is `schemas/source.schema.json`, and `schemas/model.schema.json` hands any file that says `kind: mapped` to it; `validate` checks them. `import` exports them from a connection (below); they can still be written by hand.
 
 **Source descriptors**
 
 ```yaml
 # models/staging/orders.yml
 name: staging.orders
-kind:
-  type: mapped
+kind: mapped
 grain: [order_id]
 columns:
   - name: order_id
@@ -269,7 +282,7 @@ foreign_keys:
 
 ### 6.5.2 Copies: rows from one connection to another (as built)
 
-`kind: {type: copy, from: schema_name.table_name}` is a table filled with the rows of another model that lives on **another connection**, which is how data moves between connections (a query always runs on one connection; the tool
+`kind: {copy: {from: schema_name.table_name}}` is a table filled with the rows of another model that lives on **another connection**, which is how data moves between connections (a query always runs on one connection; the tool
 never joins across two, and uses no linked server and no DuckDB in the middle). It has no `.sql` and no `columns`: the columns (and the grain, unless it names its own) are the origin's. `from` is a model, a mapped model or
 another copy of the project; it is on one connection, or on several that each hold the same table (fan-in, with a `slice`, below), and the copy must be on others. It is always persisted, with the `full_replace` strategy, `indexes`, `hooks` and drift as
 for any table. `connections` places it like any model; `validate` and `render` need no database.
@@ -294,10 +307,10 @@ connections:
 # models/warehouse/orders.yml
 name: warehouse.orders
 kind:
-  type: copy
-  from: pos.orders                       # a mapped model on store_017 and store_018
-  slice: { column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)" }
-  on_mismatch: fail                      # or skip
+  copy:
+    from: pos.orders                       # a mapped model on store_017 and store_018
+    slice: { column: store_id, value: "${origin.store_id}", type: "VARCHAR(10)" }
+    on_mismatch: fail                      # or skip
 ```
 
 `${origin.name}` is the parameter of the connection a row came from (`${connection.name}` that of the destination); any other scope is refused when the project loads, and a connection without the parameter is named. If the origin has no
@@ -402,7 +415,7 @@ lowering (the support matrix, the transpile, the rendered files, the hashes) see
 
 ### 6.5.4 Native models and local copies (as built; design: `docs/research/native-queries.md`)
 
-A **native** model, `kind: {type: native, access: select, query: ...}` (or the text in a `.native.sql` file beside the definition, never both), is a table the **engine computes from its own query**: a
+A **native** model, `kind: {native: {access: select, query: ...}}` (or the text in a `.native.sql` file beside the definition, never both), is a table the **engine computes from its own query**: a
 table-valued function, `STRING_SPLIT`, `unnest`, an engine-native select. It declares its columns like a mapped model, so DuckDB binds queries against them offline as for any table, and lives on exactly one
 connection (the text is that engine's dialect, never lowered or transpiled). The text must be a single SELECT (the read guard, now in `Core`); a T-SQL text may not start with WITH.
 
@@ -467,8 +480,8 @@ A **load operation** is a named way to load one model on one target. A model can
 ```yaml
 # models/marts/fct_orders.yml (excerpt)
 kind:
-  type: incremental_by_time_range
-  time_column: order_date
+  incremental_by_time_range:
+    time_column: order_date
 # ... name, grain, targets as before; columns include order_id, order_date (DATE) and modified_at (TIMESTAMP)
 loads:
   daily:
@@ -928,7 +941,7 @@ model's own file, **the nearest winning**. A folder file has no other section ye
 `loads`, `indexes`, `renames`) stays in the model's own file.
 
 The merge (`YamlMerge`, one table, `YamlMergeTests`): a mapping merges by key, recursively, the nearer layer winning a conflict; a list appends, the inherited items first, a scalar already inherited kept once (a repeat
-inside one layer is left for the loader to report); a list of mappings with a `name` merges by `name`; a scalar replaces. A suffix on a key changes that for the key alone: `key=` replaces what was inherited, `key-: [..]` removes
+inside one layer is left for the loader to report); a list of mappings with a `name` merges by `name`; a scalar replaces. The one exception is `kind`: a model has one kind, so the nearer layer's `kind` replaces the one above whole (6.1). A suffix on a key changes that for the key alone: `key=` replaces what was inherited, `key-: [..]` removes
 the listed items (or keys), `key+` says "merge". A suffix on a single value other than `=`, and a key that is a list in one layer and a mapping in another, are errors that name the key and its file. A suffix is understood only on
 layered keys (and beneath them); on any other key it is just an unknown key. The model's own file is always the last layer, so `connections=: [pg]` means "exactly these" with or without anything above it; `define` writes
 exactly that.
@@ -948,7 +961,7 @@ A connection's `engine` is a list of **keywords**, space- or comma-separated (or
 
 **The row source.** `ReadSession` is built on `IRowSource` (`ExecuteAsync`, `ExecuteCommandAsync`, `DescribeAsync`), whose rows are an `IRowReader`; `AdoRowSource` (inside `ReadSession.cs`, so `GateInvariantTests` still names the same two files) serves every ADO.NET driver. Parameters are bound by name for a dialect whose `parameters` is `named_at` and by position otherwise (in the order given). `LoginSettings` carries the connection's dialect and read-only flag; `OpenRowSourceAsync` is internal, `ReadSession` the only way to a source.
 
-**A DuckDB origin (step 2).** `engine: readonly duckdb`: the login `DBDATABUILD_<NAME>_READ` is the **path of a `.duckdb` file**, opened with `access_mode=READ_ONLY` (a file that is not there is an error, `DuckDBException` and its number, and nothing is created; the path is not printed anywhere), or **`:memory:`**, a database with no file. The data in the file is what is read; Parquet and CSV are reached by a native query on a `:memory:` origin (`kind: {type: native, query: "SELECT * FROM read_parquet(${project.file})"}`, `connections=: [lake]`), the file name being a bound parameter like any other. The dialect is `duckdb` (quoting `"`, parameters positional `?`, so a copy's watermark and a native text's values are bound by position and the plan records the order), `DuckDbRowSource` answers the shape check by running the native text as `SELECT * FROM (...) LIMIT 0`. Everything an origin does works on it: a copy (a fan-in too, the origins being files), a mapped model (`project import` reads `information_schema` and `duckdb_constraints()`: tables, views, columns with types, primary keys, foreign keys, indexes from `duckdb_indexes()`), a native query, a `source` resolver (rendered as the lowered DuckDB text, not transpiled: `LoadRenderer.RenderInputQuery`), `connection inspect` (the dialect's ping, `SELECT 'DuckDB ' || version()`), the structure check DDB-230 at apply, a refresh (`ping` before an origin's turn is the dialect's). `connection compare` and native commands are not for it. Types: `SourceTypes` maps DuckDB's names (`tinyint` to SMALLINT widened, `timestamp_s/ms` widened, `timestamp_ns` lossy, `hugeint`, unsigned integers, `interval`, `list`, `struct`, `map` and enums have no logical type and are said so); a BLOB the driver hands over as a stream is read to bytes. DuckDB opens one connection per session, so a refresh with `max_parallel` reads a file with several read-only connections of one process.
+**A DuckDB origin (step 2).** `engine: readonly duckdb`: the login `DBDATABUILD_<NAME>_READ` is the **path of a `.duckdb` file**, opened with `access_mode=READ_ONLY` (a file that is not there is an error, `DuckDBException` and its number, and nothing is created; the path is not printed anywhere), or **`:memory:`**, a database with no file. The data in the file is what is read; Parquet and CSV are reached by a native query on a `:memory:` origin (`kind: {native: {query: "SELECT * FROM read_parquet(${project.file})"}}`, `connections=: [lake]`), the file name being a bound parameter like any other. The dialect is `duckdb` (quoting `"`, parameters positional `?`, so a copy's watermark and a native text's values are bound by position and the plan records the order), `DuckDbRowSource` answers the shape check by running the native text as `SELECT * FROM (...) LIMIT 0`. Everything an origin does works on it: a copy (a fan-in too, the origins being files), a mapped model (`project import` reads `information_schema` and `duckdb_constraints()`: tables, views, columns with types, primary keys, foreign keys, indexes from `duckdb_indexes()`), a native query, a `source` resolver (rendered as the lowered DuckDB text, not transpiled: `LoadRenderer.RenderInputQuery`), `connection inspect` (the dialect's ping, `SELECT 'DuckDB ' || version()`), the structure check DDB-230 at apply, a refresh (`ping` before an origin's turn is the dialect's). `connection compare` and native commands are not for it. Types: `SourceTypes` maps DuckDB's names (`tinyint` to SMALLINT widened, `timestamp_s/ms` widened, `timestamp_ns` lossy, `hugeint`, unsigned integers, `interval`, `list`, `struct`, `map` and enums have no logical type and are said so); a BLOB the driver hands over as a stream is read to bytes. DuckDB opens one connection per session, so a refresh with `max_parallel` reads a file with several read-only connections of one process.
 
 **An ODBC origin (step 3).** `engine: readonly odbc [dialect]` (the dialect is `ansi` unless one is named, a built-in or a name from `dialects:`; `ConnectionConfig.Profile` carries the project's own profile, so every way of asking for the login, `LoginSettings.FromEnvironment(ConnectionConfig...)` or `(ProjectConfig, name...)`, gets it). The login `DBDATABUILD_<NAME>_READ` is an **ODBC connection string** or a **DSN** with its credentials (`OdbcLogin`: a bare name is `DSN=name`; the value is handed to the driver manager as written, parsed only to name the user, `UID`/`User`/`Username`/`User Id`, in the header; it is never printed). `System.Data.Odbc` (`OdbcRowSource`, in `ReadSession.cs`) over the machine's driver manager (unixODBC on Linux and macOS, Windows' own) and the vendor's driver; the tool ships neither. Values are bound by position: `OdbcRowSource.BindPositional` maps the plan's ADO types to ODBC's (`DateTime2` to `DateTime`, `Date`, `BigInt`, `NVarChar`; a NULL gets a size; a decimal its scale) and takes them in the order `parameter_order` recorded, a placeholder used twice passed twice. The command timeout is set through the provider (`SQL_ATTR_QUERY_TIMEOUT`, which the driver may ignore) and the login timeout is 30 seconds; `max_parallel` is `SessionLimits` as for any origin (one ODBC connection per session). Reads are streamed (`SequentialAccess`); values are converted by the declared logical type as always, and `TransferValues` reads a boolean a driver hands over as text (`t`/`f`, `true`/`false`, `1`/`0`, `y`/`n`, which is what psqlodbc does unless `BoolsAsChar=0`). **The catalog** is read through the standard views when the dialect says `catalog: information_schema` (`CatalogReader` and `SourceCatalogReader`, positional parameters: tables and views with columns, primary keys through `table_constraints` and `key_column_usage`, foreign keys through `referential_constraints`; the indexes come from the driver's `SQLStatistics`, see below; the schema names `information_schema`, `pg_catalog` and `sys` are left out) and the types are the profile's `types:` (`SourceTypes.From("odbc", column, profile)`: the standard names of `information_schema` by default, `bytea` and the like have no logical type until a profile maps them, and the reason says so). With `catalog: none` the tool does not guess: `project import` says so and exits with findings, `connection inspect` says the schema names were not read, and a copy's structure check (DDB-230) is skipped with a note (the transfer's own check of the columns it reads stays); a native text is still described, by the driver's schema-only mode (`OdbcRowSource.DescribeAsync`, the ODBC types named as `information_schema` names). `connection inspect` pings with the dialect's `ping` and shows the driver and the server's version the driver reports; `connection compare` and native commands are not offered. A `source` resolver is sent as the lowered text, validated by DuckDB's parser (the origin's own text is the author's: write the SQL both accept). **A missing prerequisite** is said, not echoed: `DriverFailure` maps `DllNotFoundException` (the driver manager) and the SQLSTATEs `IM002`, `IM003`, the unixODBC warning for a driver it cannot open, `IM004`/`IM014`, `IM010`/`IM012` to a sentence that names what is missing, and any other failure is the exception type and the SQLSTATE (`OdbcException (error 08001)`); `connection inspect`, the check of an origin before a copy's transfer (`failed: origin`), a session that cannot be opened and a resolver at the origin all use it. The account's rights are the guarantee that nothing is written; `ReadGuard` refuses anything but a SELECT, and the session sets nothing read-only at the driver (ODBC has no portable way).
 

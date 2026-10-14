@@ -65,7 +65,7 @@ public sealed record ModelSource(ModelDefinition Definition, string DefinitionFi
     public IReadOnlyList<SettingOrigin> Inherited { get; init; } = [];
 }
 
-/// <summary>One scalar of a model's effective settings that was written in another file, by dotted path (`kind.type`, `connections[1]`).</summary>
+/// <summary>One scalar of a model's effective settings that was written in another file, by dotted path (`kind.copy.from`, `connections[1]`).</summary>
 public sealed record SettingOrigin(string Path, string File, int Line, string Value);
 
 public sealed record ProjectValidationResult(
@@ -119,7 +119,7 @@ public static class ProjectValidator
         if (Directory.Exists(Path.Combine(projectRoot, RetiredSourcesDir)))
             diags.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(RetiredSourcesDir, 0, 0),
                 $"`{RetiredSourcesDir}/` is no longer read: the tables the tool does not build are mapped models now.",
-                Fix: $"Move each `{RetiredSourcesDir}/<schema name>/<table>.yml` to `{ModelsDir}/<schema name>/<table>.yml` and add `kind: {{type: mapped}}` (or set it once in a folder's `{ProductInfo.FolderConfigFile}`)."));
+                Fix: $"Move each `{RetiredSourcesDir}/<schema name>/<table>.yml` to `{ModelsDir}/<schema name>/<table>.yml` and add `kind: mapped` (or set it once in a folder's `{ProductInfo.FolderConfigFile}`)."));
         var modelsRoot = Path.Combine(projectRoot, ModelsDir);
         if (!Directory.Exists(modelsRoot))
         {
@@ -139,6 +139,7 @@ public static class ProjectValidator
         var mappedStems = new HashSet<string>(StringComparer.Ordinal);      // files with no query: mapped models, native models and copies
         var nativeStems = new HashSet<string>(StringComparer.Ordinal);
         var copies = new List<(ModelDefinition Definition, string File)>();
+        var oldKindWarned = new HashSet<(string File, int Line)>();         // one warning for each place the old form is written, however many models inherit it
         var declared = new List<(string Name, string File)>();               // every model, mapped model and copy by the name its definition gives it
         // the parameters each file sees from the project files above it: the root's, overridden by each folder's, and the connection parameters the folders override
         var parameterFiles = new Dictionary<string, (IReadOnlyDictionary<string, ParameterValue> Project, IReadOnlyDictionary<string, IReadOnlyDictionary<string, ParameterValue>> Connections)>(StringComparer.Ordinal);
@@ -197,7 +198,7 @@ public static class ProjectValidator
                         diags.Add(new Diagnostic(DiagnosticCatalog.QueryHeadInvalid, headWhere, $"the kind is said in the head ({(head.IsView ? "CREATE VIEW" : "`kind` in `WITH`")}) and again in `{file}`: it is said in one place.", Fix: $"Remove `kind:` from `{file}` or the kind from the head."));
                         continue;
                     }
-                    if (ownKind && !head.IsView && ((own.Get("kind") as YamlMapping)?.Get("type") as YamlScalar)?.Value == ModelKinds.View)
+                    if (ownKind && !head.IsView && ModelKindShape.NameOf(own.Get("kind")) == ModelKinds.View)
                     {
                         diags.Add(new Diagnostic(DiagnosticCatalog.QueryHeadInvalid, headWhere, $"the head says `CREATE TABLE`, and `{file}` says the kind is `view`.", Fix: "Write `CREATE VIEW` in the head, or change the kind."));
                         continue;
@@ -206,7 +207,7 @@ public static class ProjectValidator
                 }
                 var merged = YamlMerge.Merge(headLayer == null ? [.. above, new YamlLayer(file, own)] : [.. above, headLayer, new YamlLayer(file, own)], ModelDefinitionLoader.LayeredKeys, diags);
                 if (diags.Count > before) continue;
-                var kindName = ((merged.Root.Get("kind") as YamlMapping)?.Get("type") as YamlScalar)?.Value;
+                var kindName = ModelKindShape.NameOf(merged.Root.Get("kind"));
                 if (kindName is SourceDescriptorLoader.MappedKind or NativeQuery.Kind)
                 {
                     mappedStems.Add(stem);
@@ -215,18 +216,20 @@ public static class ProjectValidator
                     if (SourceDescriptorLoader.LoadMerged(merged, file, expected, diags, connections, nativeFile) is { } mapped)
                     {
                         CheckLayout(effectiveConfig.Layout, file, mapped.Name, diags);
+                        WarnOldKindForm(merged, file, oldKindWarned, diags);
                         declared.Add((mapped.Name, file));
                         descriptors.Add((kindName == NativeQuery.Kind ? CheckNative(mapped, file, projectParameters, connectionOverrides, effectiveConfig, diags) : mapped) with { File = file });
                     }
                     continue;
                 }
-                var isCopy = ((merged.Root.Get("kind") as YamlMapping)?.Get("type") as YamlScalar)?.Value == ModelKinds.Copy;
+                var isCopy = kindName == ModelKinds.Copy;
                 if (isCopy) mappedStems.Add(stem);
                 else if (!set.Contains(stem + ".sql"))
                     diags.Add(new Diagnostic(DiagnosticCatalog.OrphanFile, new(file, 0, 0), $"`{file}` has no query file `{stem}.sql`.", Fix: $"Add `{stem}.sql`, or remove `{file}`."));
                 if (ModelDefinitionLoader.LoadMerged(merged, file, expected, diags, connections) is { } def)
                 {
                     CheckLayout(effectiveConfig.Layout, file, def.Name, diags);
+                    WarnOldKindForm(merged, file, oldKindWarned, diags);
                     declared.Add((def.Name, file));
                     CheckRefreshPlans(def, file, effectiveConfig, diags);
                     CheckDestinations(def, file, effectiveConfig, diags);
@@ -252,7 +255,7 @@ public static class ProjectValidator
             if (file.EndsWith(".native.sql", StringComparison.Ordinal))
             {
                 if (!nativeStems.Contains(file[..^".native.sql".Length]))
-                    diags.Add(new Diagnostic(DiagnosticCatalog.OrphanFile, new(file, 0, 0), $"`{file}` is native text, but `{file[..^".native.sql".Length]}.yml` is not a native model.", Fix: $"Give `{file[..^".native.sql".Length]}.yml` `kind: {{type: native}}`, or remove `{file}`."));
+                    diags.Add(new Diagnostic(DiagnosticCatalog.OrphanFile, new(file, 0, 0), $"`{file}` is native text, but `{file[..^".native.sql".Length]}.yml` is not a native model.", Fix: $"Give `{file[..^".native.sql".Length]}.yml` `kind: native`, or remove `{file}`."));
                 continue;
             }
             var stem = file[..^".sql".Length];
@@ -264,6 +267,17 @@ public static class ProjectValidator
 
         ResolveCopies(copies, models, descriptors, effectiveConfig, diags, WithParameters);
         return new(models, diags, descriptors, macros);
+    }
+
+    /// <summary>The old form of `kind` (`{type: copy, ...}`) reads as before; it is said once for the file that wrote it (the model's own, or a project file above it that gave the kind).</summary>
+    private static void WarnOldKindForm(MergedYaml merged, string file, HashSet<(string File, int Line)> warned, List<Diagnostic> diags)
+    {
+        if (merged.Root.Get("kind") is not { } node || !ModelKindShape.IsOldForm(node)) return;
+        var where = merged.FileOf.TryGetValue(node, out var origin) ? origin : file;
+        if (!warned.Add((where, node.Line))) return;
+        var name = ModelKindShape.NameOf(node);
+        diags.Add(new Diagnostic(DiagnosticCatalog.KindWrittenOldWay, new(where, node.Line, node.Column),
+            $"`kind` is written in the old form (`type: {name}`); the kind is now the key: `kind: {{{name}: {{...}}}}`, or `kind: {name}` when it has no settings."));
     }
 
     /// <summary>
@@ -302,7 +316,7 @@ public static class ProjectValidator
             if (origin == null)
             {
                 diags.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, At(), $"`{def.Name}` copies `{def.From}`, which is not a model, a mapped model or a copy of this project{(stack.Contains(def.From!, StringComparer.OrdinalIgnoreCase) ? " (it copies itself, through the others)" : "")}.",
-                    Fix: "Name the model to copy as `kind: {type: copy, from: schema_name.table_name}`."));
+                    Fix: "Name the model to copy as `kind: {copy: {from: schema_name.table_name}}`."));
                 failed.Add(def.Name);
                 return null;
             }

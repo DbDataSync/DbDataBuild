@@ -26,7 +26,7 @@ public class PlannerTests
     private static ObjectShape LiveOf(ModelDefinition def)
     {
         var (schema, name) = DdlGenerator.Split(def.Name);
-        return new ObjectShape(schema, name, def.KindType == ModelKinds.View ? ObjectKind.View : ObjectKind.Table, DdlGenerator.ExpectedShape(Ddl.MapAll(def)), []);
+        return new ObjectShape(schema, name, def.Kind == ModelKinds.View ? ObjectKind.View : ObjectKind.Table, DdlGenerator.ExpectedShape(Ddl.MapAll(def)), []);
     }
 
     private static PlanInput Empty(params PlannedModel[] models) => new(

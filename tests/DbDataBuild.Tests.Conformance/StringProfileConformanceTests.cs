@@ -33,8 +33,8 @@ public class StringProfileConformanceTests
             await engine.ExecAsync("CREATE TABLE src.codes (id bigint NOT NULL, code varchar(10) NOT NULL, label varchar(10) NOT NULL)");
             await engine.ExecAsync("INSERT INTO src.codes VALUES (1, 'a', 'x '), (2, 'b ', 'y'), (3, 'c  ', 'z')");
             Write("dbdatabuild.yml", $"defaults: {{connections: [{name}]}}\ntracking: none\n" + (name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
-            Write("models/src/codes.yml", "name: src.codes\nkind: {type: mapped}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(10)\", nullable: false, trimmed: true}\n  - {name: label, type: \"VARCHAR(10)\", nullable: false}\n");
-            Write("models/marts/m.yml", "name: marts.m\nkind: {type: full}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            Write("models/src/codes.yml", "name: src.codes\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: code, type: \"VARCHAR(10)\", nullable: false, trimmed: true}\n  - {name: label, type: \"VARCHAR(10)\", nullable: false}\n");
+            Write("models/marts/m.yml", "name: marts.m\nkind: full\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
             Write("models/marts/m.sql", "SELECT id FROM src.codes\n");
 
             Assert.Equal(0, Cli("project", "compile").Exit);

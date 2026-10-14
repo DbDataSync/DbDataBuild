@@ -65,12 +65,12 @@ public partial class ApplyConformanceTests
     [GeneratedRegex(@"plan:\s+(\S+\.plan\.yml)")]
     private static partial Regex PlanPath();
 
-    private const string Staging = "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string FctYaml = "name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [order_id]}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Staging = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string FctYaml = "name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     private const string FctSql = "SELECT o.order_id, o.amount FROM staging.orders o\n";
     private const string FctYaml2 = FctYaml + "  - {name: discount_code, type: VARCHAR(20)}\n";
     private const string FctSql2 = "SELECT o.order_id, o.amount, CAST(NULL AS VARCHAR(20)) AS discount_code FROM staging.orders o\n";
-    private const string ViewYaml = "name: marts.v_orders\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n";
+    private const string ViewYaml = "name: marts.v_orders\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n";
     private const string ViewSql = "SELECT order_id FROM marts.fct_orders\n";
 
     private static async Task<Run> SetUp(string name, Func<Engine>? make = null, string extraConfig = "")
@@ -306,7 +306,7 @@ public partial class ApplyConformanceTests
             // the first plan builds a table and then waits two seconds in a hook, which keeps its application lock; the second is an unrelated view
             run.Write("hooks/pause.sql", pg ? "SELECT pg_sleep(2.5);\n" : "WAITFOR DELAY '00:00:02.500';\n");
             run.Write("models/marts/fct_orders.yml", FctYaml + "hooks:\n  - {name: pause, event: post_create, script: hooks/pause.sql}\n");
-            run.Write("models/marts/other.yml", "name: marts.other\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+            run.Write("models/marts/other.yml", "name: marts.other\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
             run.Write("models/marts/other.sql", "SELECT order_id FROM staging.orders\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "render");
@@ -360,9 +360,9 @@ public partial class ApplyConformanceTests
             // a table whose columns are named like the SQL around them: keywords, a space, an accent and a double quote
             await engine.ExecAsync($"CREATE TABLE staging.items ({q("id")} BIGINT NOT NULL, {q("order")} INT, {q("group")} {engine.ColumnType("VARCHAR(10)")}, {q("my col")} INT, {q("Café")} INT, {quoted} INT)");
             await engine.ExecAsync($"INSERT INTO staging.items VALUES (1, 10, 'x', 100, 1000, 7), (2, 20, 'y', 200, 2000, 8)");
-            run.Write("models/staging/items.yml", "name: staging.items\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: order, type: INTEGER}\n  - {name: group, type: \"VARCHAR(10)\"}\n  - {name: my col, type: INTEGER}\n  - {name: Café, type: INTEGER}\n  - {name: 'a\"b', type: INTEGER}\n");
+            run.Write("models/staging/items.yml", "name: staging.items\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: order, type: INTEGER}\n  - {name: group, type: \"VARCHAR(10)\"}\n  - {name: my col, type: INTEGER}\n  - {name: Café, type: INTEGER}\n  - {name: 'a\"b', type: INTEGER}\n");
             // a model named with a keyword, built from them, with a keyword as its unique key and in an index
-            run.Write("models/rpt/order.yml", "name: rpt.order\nkind: {type: incremental_by_unique_key, unique_key: [id]}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: select, type: INTEGER}\n  - {name: group, type: \"VARCHAR(10)\"}\n  - {name: from, type: INTEGER}\n  - {name: Café, type: INTEGER}\n  - {name: 'a\"b', type: INTEGER}\nindexes:\n  - {name: ix_group, columns: [group, select]}\n");
+            run.Write("models/rpt/order.yml", "name: rpt.order\nkind: {incremental_by_unique_key: {unique_key: [id]}}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: select, type: INTEGER}\n  - {name: group, type: \"VARCHAR(10)\"}\n  - {name: from, type: INTEGER}\n  - {name: Café, type: INTEGER}\n  - {name: 'a\"b', type: INTEGER}\nindexes:\n  - {name: ix_group, columns: [group, select]}\n");
             run.Write("models/rpt/order.sql", "SELECT id, \"order\" AS \"select\", \"group\", \"my col\" AS \"from\", \"Café\", \"a\"\"b\" FROM staging.items\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "render");
@@ -389,7 +389,7 @@ public partial class ApplyConformanceTests
             // 70 characters: SQL Server keeps them (up to 128), PostgreSQL silently cuts at 63 and the table it built would never match the declaration
             var longName = new string('c', 70);
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/marts/long.yml", $"name: marts.long\nkind: {{type: full}}\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: {longName}, type: INTEGER}}\n");
+            run.Write("models/marts/long.yml", $"name: marts.long\nkind: full\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: {longName}, type: INTEGER}}\n");
             run.Write("models/marts/long.sql", $"SELECT order_id, 1 AS {longName} FROM staging.orders\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             if (name == "postgres")
@@ -471,10 +471,10 @@ public partial class ApplyConformanceTests
         try
         {
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/marts/lit.yml", "name: marts.lit\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: tag, type: \"VARCHAR(200)\"}\n");
+            run.Write("models/marts/lit.yml", "name: marts.lit\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: tag, type: \"VARCHAR(200)\"}\n");
             // the literal goes through DuckDB, the lowerer and the engine's own text: a quote is doubled, a backslash is not an escape, a newline stays one
             run.Write("models/marts/lit.sql", "SELECT order_id, 'café ☕ 😀 日本語 it''s a \\ b ' || chr(10) || 'second line' AS tag FROM staging.orders WHERE order_id = 1\n");
-            run.Write("models/marts/lit_v.yml", "name: marts.lit_v\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: tag, type: \"VARCHAR(200)\"}\n");
+            run.Write("models/marts/lit_v.yml", "name: marts.lit_v\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: tag, type: \"VARCHAR(200)\"}\n");
             run.Write("models/marts/lit_v.sql", "SELECT order_id, 'café ☕ 😀 日本語 it''s a \\ b ' || chr(10) || 'second line' AS tag FROM staging.orders WHERE order_id = 1\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "render");
@@ -497,7 +497,7 @@ public partial class ApplyConformanceTests
         {
             var pg = name == "postgres";
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/marts/consts.yml", "name: marts.consts\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n" +
+            run.Write("models/marts/consts.yml", "name: marts.consts\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n" +
                 "  - {name: ts, type: TIMESTAMP}\n  - {name: d1, type: DATE}\n  - {name: d2, type: DATE}\n  - {name: big, type: \"DECIMAL(36, 6)\"}\n  - {name: tiny, type: \"DECIMAL(10, 7)\"}\n" +
                 "  - {name: mx, type: BIGINT}\n  - {name: mn, type: BIGINT}\n  - {name: t, type: BOOLEAN}\n  - {name: f, type: BOOLEAN}\n  - {name: nul, type: INTEGER}\n  - {name: empty, type: \"VARCHAR(10)\"}\n  - {name: spaces, type: \"VARCHAR(10)\"}\n" +
                 "  - {name: id, type: UUID}\n  - {name: dbl, type: DOUBLE}\n");
@@ -577,7 +577,7 @@ public partial class ApplyConformanceTests
         {
             var pg = name == "postgres";
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/marts/clock.yml", "name: marts.clock\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: t1, type: TIMESTAMP WITH TIME ZONE}\n  - {name: t2, type: TIMESTAMP WITH TIME ZONE}\n  - {name: d, type: DATE}\n");
+            run.Write("models/marts/clock.yml", "name: marts.clock\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: t1, type: TIMESTAMP WITH TIME ZONE}\n  - {name: t2, type: TIMESTAMP WITH TIME ZONE}\n  - {name: d, type: DATE}\n");
             // current_timestamp is bound by DuckDB as get_current_timestamp(), which no engine has; now() was written as GETDATE(), the local clock without a zone
             run.Write("models/marts/clock.sql", "SELECT order_id, now() AS t1, current_timestamp AS t2, current_date AS d FROM staging.orders WHERE order_id = 1\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
@@ -835,8 +835,8 @@ public partial class ApplyConformanceTests
             // database: the plan is kept in the tracking tables only, applied by its id, and refused when the stored text was edited
             run.Write("dbdatabuild.yml", File.ReadAllText(Path.Combine(run.Dir, "dbdatabuild.yml")).Replace("keep: ephemeral", "keep: database"));
             await engine.ExecAsync(name == "postgres" ? "CREATE TABLE staging.extra (id BIGINT)" : "CREATE TABLE staging.extra (id BIGINT)");
-            run.Write("models/staging/extra.yml", "name: staging.extra\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: BIGINT}\n");
-            run.Write("models/marts/ex.yml", "name: marts.ex\nkind: {type: full}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            run.Write("models/staging/extra.yml", "name: staging.extra\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT}\n");
+            run.Write("models/marts/ex.yml", "name: marts.ex\nkind: full\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
             run.Write("models/marts/ex.sql", "SELECT CAST(id AS BIGINT) AS id FROM staging.extra\n");
             Ok(run.Cli("project", "compile"), "compile with another model");
             var kept = run.Cli("connection", "deploy", "--write-plan");
@@ -863,8 +863,8 @@ public partial class ApplyConformanceTests
         finally { if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
     }
 
-    private const string EventsSource = "name: staging.events\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string EventsYaml = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_ts}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n" +
+    private const string EventsSource = "name: staging.events\nkind: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string EventsYaml = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_ts}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n" +
         "loads:\n  daily:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max, on_null: initial, initial: \"2000-01-01 00:00:00\"}\n" +
         "  reload:\n    strategy: delete_insert_by_range\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n    max_span: 10 days\n";
     private const string EventsSql = "SELECT e.event_id, e.event_ts, e.amount FROM staging.events e\n";
@@ -1102,12 +1102,12 @@ public partial class ApplyConformanceTests
         try
         {
             // a `full` model, so adding a column needs no definition acknowledgement
-            run.Write("models/marts/fct_orders.yml", FctYaml.Replace("kind: {type: incremental_by_unique_key, unique_key: [order_id]}", "kind: {type: full}").Replace("grain: [order_id]\n", ""));
+            run.Write("models/marts/fct_orders.yml", FctYaml.Replace("kind: {incremental_by_unique_key: {unique_key: [order_id]}}", "kind: full").Replace("grain: [order_id]\n", ""));
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "render");
             Ok(run.Cli("connection", "deploy", "--apply-plan", run.PlanFile(run.Cli("connection", "deploy", "--write-plan").Out)), "apply");
 
-            run.Write("models/marts/fct_orders.yml", FctYaml2.Replace("kind: {type: incremental_by_unique_key, unique_key: [order_id]}", "kind: {type: full}").Replace("grain: [order_id]\n", ""));
+            run.Write("models/marts/fct_orders.yml", FctYaml2.Replace("kind: {incremental_by_unique_key: {unique_key: [order_id]}}", "kind: full").Replace("grain: [order_id]\n", ""));
             run.Write("models/marts/fct_orders.sql", FctSql2);
             Ok(run.Cli("project", "compile"), "render");
             run.Write("answers.yml", "answers:\n  - {id: Q-history-marts.fct_orders.discount_code, choice: backfill_later}\n");
@@ -1120,7 +1120,7 @@ public partial class ApplyConformanceTests
             Assert.Contains("--ack history:marts.fct_orders.discount_code", warn.Out);
 
             // a model built from the column is told about it (DDB-240), and when the project says so it is refused until the history is acknowledged
-            run.Write("models/marts/disc.yml", "name: marts.disc\nkind: {type: view}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: discount_code, type: \"VARCHAR(20)\"}\n");
+            run.Write("models/marts/disc.yml", "name: marts.disc\nkind: view\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: discount_code, type: \"VARCHAR(20)\"}\n");
             run.Write("models/marts/disc.sql", "SELECT order_id, discount_code FROM marts.fct_orders\n");
             Ok(run.Cli("project", "compile"), "render disc");
             var told = run.Cli("connection", "deploy", "--write-plan");
@@ -1366,7 +1366,7 @@ public partial class ApplyConformanceTests
             var written = Json(run.Cli("project", "import", "staging.imp", "--write", "--format", "json"));
             Assert.Equal(["models/staging/imp.yml"], written["data"]!["written"]!.AsArray().Select(x => (string)x!));
             Assert.Equal(
-                $"name: staging.imp\nkind:\n  type: mapped\nconnections=: [{name}]\ngrain: [id]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: qty\n    type: INTEGER\n    nullable: false\n  - name: price\n    type: DECIMAL(12, 3)\n" +
+                $"name: staging.imp\nkind: mapped\nconnections=: [{name}]\ngrain: [id]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: qty\n    type: INTEGER\n    nullable: false\n  - name: price\n    type: DECIMAL(12, 3)\n" +
                 "  - name: ratio\n    type: DOUBLE\n  - name: flag\n    type: BOOLEAN\n  - name: born\n    type: DATE\n  - name: seen\n    type: TIMESTAMP\n  - name: code\n    type: VARCHAR(20)\n  - name: notes\n    type: VARCHAR\n" +
                 "  - name: tiny\n    type: SMALLINT\n  - name: ref\n    type: UUID\n  - name: blobby\n    type: BLOB\n  - name: j\n    type: VARCHAR\n" +
                 "indexes:\n  - {name: ix_imp_code, columns: [code], include: [qty]}\n  - {name: ux_imp_ref, columns: [ref], unique: true}\n" +
@@ -1404,19 +1404,19 @@ public partial class ApplyConformanceTests
             // a view is a source too; a pattern takes both; the tool's own schema and a damaged file are never touched
             await engine.ExecAsync($"CREATE VIEW staging.imp_view AS SELECT id, qty FROM staging.imp");
             Ok(run.Cli("connection", "init", "--apply"), "init");
-            run.Write("models/staging/broken.yml", "name: staging.broken\nkind:\n  type: mapped\ncolumns: nope\n");
+            run.Write("models/staging/broken.yml", "name: staging.broken\nkind: mapped\ncolumns: nope\n");
             await engine.ExecAsync("CREATE TABLE staging.broken (id bigint)");
             var all = Json(run.Cli("project", "import", "staging.*", "dbdatabuild.*", "--write", "--format", "json"));
             var byName = all["data"]!["sources"]!.AsArray().ToDictionary(x => (string)x!["name"]!, x => x!);
             Assert.Equal(("view", "new"), ((string)byName["staging.imp_view"]["kind"]!, (string)byName["staging.imp_view"]["status"]!));
             Assert.Equal("invalid", (string?)byName["staging.broken"]["status"]);
-            Assert.Equal("name: staging.broken\nkind:\n  type: mapped\ncolumns: nope\n", File.ReadAllText(file("models/staging/broken.yml")));
+            Assert.Equal("name: staging.broken\nkind: mapped\ncolumns: nope\n", File.ReadAllText(file("models/staging/broken.yml")));
             Assert.Contains(all["data"]!["skipped"]!.AsArray(), x => (string?)x!["object"] == "dbdatabuild");
             Assert.True(File.Exists(file("models/staging/imp_view.yml")));
             File.Delete(file("models/staging/broken.yml"));
 
             // a descriptor whose table is gone is reported and kept
-            run.Write("models/staging/ghost.yml", "name: staging.ghost\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: BIGINT}\n");
+            run.Write("models/staging/ghost.yml", "name: staging.ghost\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT}\n");
             var ghost = Json(run.Cli("project", "import", "--format", "json"));
             Assert.Equal("stale", (string?)ghost["data"]!["sources"]!.AsArray().Single(x => (string?)x!["name"] == "staging.ghost")!["status"]);
             Assert.Contains("DDB-228", codes(ghost));
@@ -1537,10 +1537,10 @@ public partial class ApplyConformanceTests
 
             // exported as the source says it is: no length on the unlimited column
             Ok(run.Cli("project", "import", "staging.docs", "--write"), "import");
-            Assert.Equal($"name: staging.docs\nkind:\n  type: mapped\nconnections=: [{name}]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: body\n    type: VARCHAR\n  - name: tag\n    type: VARCHAR(10)\n", File.ReadAllText(Path.Combine(run.Dir, "models/staging/docs.yml")));
+            Assert.Equal($"name: staging.docs\nkind: mapped\nconnections=: [{name}]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: body\n    type: VARCHAR\n  - name: tag\n    type: VARCHAR(10)\n", File.ReadAllText(Path.Combine(run.Dir, "models/staging/docs.yml")));
 
             // a model that passes it through and computes from it declares no length either, and `define` agrees with that
-            run.Write("models/marts/docs_out.yml", "name: marts.docs_out\nkind: {type: full}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: body, type: VARCHAR}\n  - {name: body2, type: VARCHAR}\n  - {name: tag_up, type: VARCHAR(10)}\n");
+            run.Write("models/marts/docs_out.yml", "name: marts.docs_out\nkind: full\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: body, type: VARCHAR}\n  - {name: body2, type: VARCHAR}\n  - {name: tag_up, type: VARCHAR(10)}\n");
             run.Write("models/marts/docs_out.sql", "SELECT d.id, d.body, d.body || '!' AS body2, upper(d.tag) AS tag_up FROM staging.docs d\n");
             Ok(run.Cli("project", "model", "update", "--check"), "define agrees with the declared types");
             Ok(run.Cli("connection", "init", "--apply"), "init");
@@ -1614,7 +1614,7 @@ public partial class ApplyConformanceTests
             // two constructs that went wrong when the author's text was transpiled directly: GROUP BY ALL, and AVG over integers (T-SQL and PostgreSQL truncate or widen differently)
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/marts/fct_stats.yml", "name: marts.fct_stats\nkind: {type: full}\ncolumns:\n  - {name: size, type: \"VARCHAR(5)\"}\n  - {name: n, type: BIGINT}\n  - {name: mean_id, type: DOUBLE}\n");
+            run.Write("models/marts/fct_stats.yml", "name: marts.fct_stats\nkind: full\ncolumns:\n  - {name: size, type: \"VARCHAR(5)\"}\n  - {name: n, type: BIGINT}\n  - {name: mean_id, type: DOUBLE}\n");
             run.Write("models/marts/fct_stats.sql", "SELECT CASE WHEN o.order_id > 2 THEN 'big' ELSE 'small' END AS size, COUNT(*) AS n, AVG(o.order_id) AS mean_id FROM staging.orders o GROUP BY ALL\n");
             await engine.ExecAsync("INSERT INTO staging.orders VALUES (4, 40.00)");
 
@@ -1641,7 +1641,7 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/marts/fct_rank.yml", "name: marts.fct_rank\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT}\n  - {name: earlier, type: BIGINT}\n  - {name: rank_tag, type: \"VARCHAR(10)\"}\n");
+            run.Write("models/marts/fct_rank.yml", "name: marts.fct_rank\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT}\n  - {name: earlier, type: BIGINT}\n  - {name: rank_tag, type: \"VARCHAR(10)\"}\n");
             // a correlated scalar subquery with an aggregate, a correlated EXISTS inside a CASE, and NOT IN against a set that contains a NULL-amount row's key
             run.Write("models/marts/fct_rank.sql",
                 "SELECT o.order_id,\n  (SELECT count(*) FROM staging.orders p WHERE p.order_id < o.order_id) AS earlier,\n" +
@@ -1669,8 +1669,8 @@ public partial class ApplyConformanceTests
         try
         {
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/staging/s1.yml", "name: staging.s1\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: x, type: INTEGER}\n  - {name: y, type: INTEGER}\n");
-            run.Write("models/staging/s2.yml", "name: staging.s2\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: z, type: INTEGER}\n  - {name: w, type: INTEGER}\n");
+            run.Write("models/staging/s1.yml", "name: staging.s1\nkind: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: x, type: INTEGER}\n  - {name: y, type: INTEGER}\n");
+            run.Write("models/staging/s2.yml", "name: staging.s2\nkind: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: z, type: INTEGER}\n  - {name: w, type: INTEGER}\n");
             const string rows1 = "(1, 5, 1), (2, NULL, 1), (3, 1, NULL), (4, 10, 2), (5, 3, 3), (6, NULL, NULL), (7, 5, NULL), (8, 2, 2)";
             const string rows2 = "(1, 2, 1), (2, NULL, 2), (3, 7, 3), (4, 3, 3), (5, 5, NULL)";
             foreach (var (t, cols, rows) in new[] { ("s1", "id INT NOT NULL, x INT, y INT", rows1), ("s2", "id INT NOT NULL, z INT, w INT", rows2) })
@@ -1712,7 +1712,7 @@ public partial class ApplyConformanceTests
             }
             for (var i = 0; i < queries.Length; i++)
             {
-                run.Write($"models/marts/q{i}.yml", $"name: marts.q{i}\nkind: {{type: full}}\ncolumns:\n  - {{name: id, type: INTEGER, nullable: false}}\n");
+                run.Write($"models/marts/q{i}.yml", $"name: marts.q{i}\nkind: full\ncolumns:\n  - {{name: id, type: INTEGER, nullable: false}}\n");
                 run.Write($"models/marts/q{i}.sql", $"SELECT s.id FROM staging.s1 s WHERE {queries[i]}\n");
             }
             Ok(run.Cli("connection", "init", "--apply"), "init");
@@ -1733,7 +1733,7 @@ public partial class ApplyConformanceTests
             };
             for (var i = 0; i < valueQueries.Length; i++)
             {
-                run.Write($"models/marts/qv{i}.yml", $"name: marts.qv{i}\nkind: {{type: full}}\ncolumns:\n  - {{name: id, type: INTEGER, nullable: false}}\n  - {{name: g, type: BOOLEAN}}\n");
+                run.Write($"models/marts/qv{i}.yml", $"name: marts.qv{i}\nkind: full\ncolumns:\n  - {{name: id, type: INTEGER, nullable: false}}\n  - {{name: g, type: BOOLEAN}}\n");
                 run.Write($"models/marts/qv{i}.sql", $"SELECT s.id, {valueQueries[i]} AS g FROM staging.s1 s\n");
             }
             Ok(run.Cli("project", "compile"), "render values");
@@ -1761,15 +1761,15 @@ public partial class ApplyConformanceTests
         try
         {
             foreach (var f in new[] { "v_orders", "fct_orders" }) foreach (var ext in new[] { "yml", "sql" }) File.Delete(Path.Combine(run.Dir, $"models/marts/{f}.{ext}"));
-            run.Write("models/staging/s1.yml", "name: staging.s1\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n");
-            run.Write("models/staging/s2.yml", "name: staging.s2\nkind:\n  type: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: z, type: INTEGER}\n");
+            run.Write("models/staging/s1.yml", "name: staging.s1\nkind: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n");
+            run.Write("models/staging/s2.yml", "name: staging.s2\nkind: mapped\ncolumns:\n  - {name: id, type: INTEGER, nullable: false}\n  - {name: z, type: INTEGER}\n");
             await engine.ExecAsync("CREATE TABLE staging.s1 (id INT NOT NULL)");
             await engine.ExecAsync("INSERT INTO staging.s1 VALUES (1), (2), (3), (4), (5), (6), (7), (8)");
             await engine.ExecAsync("CREATE TABLE staging.s2 (id INT NOT NULL, z INT)");
             await engine.ExecAsync("INSERT INTO staging.s2 VALUES (1, 2), (2, NULL), (3, 7), (4, 3), (5, 5)");
-            run.Write("models/marts/agg_a.yml", "name: marts.agg_a\nkind: {type: full}\ncolumns:\n  - {name: total, type: BIGINT}\n");
+            run.Write("models/marts/agg_a.yml", "name: marts.agg_a\nkind: full\ncolumns:\n  - {name: total, type: BIGINT}\n");
             run.Write("models/marts/agg_a.sql", "SELECT CAST(sum((SELECT count(*) FROM staging.s2 b WHERE b.id = s.id)) AS BIGINT) AS total FROM staging.s1 s\n");
-            run.Write("models/marts/agg_b.yml", "name: marts.agg_b\nkind: {type: full}\ncolumns:\n  - {name: m, type: INTEGER}\n  - {name: n, type: BIGINT, nullable: false}\n");
+            run.Write("models/marts/agg_b.yml", "name: marts.agg_b\nkind: full\ncolumns:\n  - {name: m, type: INTEGER}\n  - {name: n, type: BIGINT, nullable: false}\n");
             run.Write("models/marts/agg_b.sql", "SELECT max(coalesce((SELECT max(b.z) FROM staging.s2 b WHERE b.id = s.id), 0)) AS m, count(*) AS n FROM staging.s1 s\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "render");
@@ -1790,7 +1790,7 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/marts/fct_first.yml", "name: marts.fct_first\nkind: {type: full}\ncolumns:\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: order_id, type: BIGINT}\n");
+            run.Write("models/marts/fct_first.yml", "name: marts.fct_first\nkind: full\ncolumns:\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: order_id, type: BIGINT}\n");
             // the first order per amount; order_id (the source's declared grain) is in the ORDER BY, so the row kept is decided, not arbitrary. NULL is a group of its own.
             run.Write("models/marts/fct_first.sql", "SELECT DISTINCT ON (o.amount) o.amount, o.order_id FROM staging.orders o ORDER BY o.amount, o.order_id\n");
             await engine.ExecAsync("INSERT INTO staging.orders VALUES (4, 40.00), (5, 40.00), (6, NULL)");
@@ -1817,7 +1817,7 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/marts/fct_slots.yml", "name: marts.fct_slots\nkind: {type: full}\ncolumns:\n  - {name: slot, type: BIGINT}\n  - {name: orders_in_slot, type: BIGINT}\n");
+            run.Write("models/marts/fct_slots.yml", "name: marts.fct_slots\nkind: full\ncolumns:\n  - {name: slot, type: BIGINT}\n  - {name: orders_in_slot, type: BIGINT}\n");
             // range excludes its end; the slots with no orders must still appear
             run.Write("models/marts/fct_slots.sql", "SELECT g.s AS slot, count(o.order_id) AS orders_in_slot FROM range(0, 4) AS g(s) LEFT JOIN staging.orders o ON o.order_id = g.s GROUP BY g.s\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
@@ -1847,8 +1847,8 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/staging/probe.yml", "name: staging.probe\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(40)}\n  - {name: t, type: VARCHAR(40)}\n  - {name: x, type: DOUBLE}\n");
-            run.Write("models/marts/fct_probe.yml", "name: marts.fct_probe\nkind: {type: full}\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: len, type: BIGINT}\n  - {name: i, type: INTEGER}\n  - {name: d, type: \"DECIMAL(10, 2)\"}\n  - {name: f, type: DOUBLE}\n  - {name: r2, type: DOUBLE}\n  - {name: r0, type: DOUBLE}\n  - {name: rm, type: DOUBLE}\n");
+            run.Write("models/staging/probe.yml", "name: staging.probe\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(40)}\n  - {name: t, type: VARCHAR(40)}\n  - {name: x, type: DOUBLE}\n");
+            run.Write("models/marts/fct_probe.yml", "name: marts.fct_probe\nkind: full\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: len, type: BIGINT}\n  - {name: i, type: INTEGER}\n  - {name: d, type: \"DECIMAL(10, 2)\"}\n  - {name: f, type: DOUBLE}\n  - {name: r2, type: DOUBLE}\n  - {name: r0, type: DOUBLE}\n  - {name: rm, type: DOUBLE}\n");
             run.Write("models/marts/fct_probe.sql", "SELECT id, length(s) AS len, TRY_CAST(t AS INTEGER) AS i, TRY_CAST(s AS DECIMAL(10, 2)) AS d, TRY_CAST(s AS DOUBLE) AS f, round(x, 2) AS r2, round(x) AS r0, round(x, -2) AS rm FROM staging.probe\n");
             var dbl = name == "postgres" ? "DOUBLE PRECISION" : "FLOAT";
             var vc = engine.ColumnType("VARCHAR(40)");
@@ -1875,8 +1875,8 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/staging/big.yml", "name: staging.big\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: n, type: INTEGER}\n  - {name: b, type: BIGINT}\n");
-            run.Write("models/marts/fct_big.yml", "name: marts.fct_big\nkind: {type: full}\ncolumns:\n  - {name: sn, type: BIGINT}\n  - {name: sb, type: \"DECIMAL(38, 0)\"}\n");
+            run.Write("models/staging/big.yml", "name: staging.big\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: n, type: INTEGER}\n  - {name: b, type: BIGINT}\n");
+            run.Write("models/marts/fct_big.yml", "name: marts.fct_big\nkind: full\ncolumns:\n  - {name: sn, type: BIGINT}\n  - {name: sb, type: \"DECIMAL(38, 0)\"}\n");
             // DuckDB sums into a HUGEINT: three INTs near 2^31 and two BIGINTs near 2^63 are over what SQL Server's own SUM holds
             run.Write("models/marts/fct_big.sql", "SELECT CAST(sum(n) AS BIGINT) AS sn, CAST(sum(b) AS DECIMAL(38, 0)) AS sb FROM staging.big\n");
             await engine.ExecAsync("CREATE TABLE staging.big (id BIGINT NOT NULL, n INTEGER NULL, b BIGINT NULL)");
@@ -1900,8 +1900,8 @@ public partial class ApplyConformanceTests
         {
             File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/v_orders.sql"));
             File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.yml")); File.Delete(Path.Combine(run.Dir, "models/marts/fct_orders.sql"));
-            run.Write("models/staging/raw.yml", "name: staging.raw\nkind:\n  type: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(40)}\n");
-            run.Write("models/marts/fct_num.yml", "name: marts.fct_num\nkind: {type: full}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: n, type: INTEGER}\n");
+            run.Write("models/staging/raw.yml", "name: staging.raw\nkind: mapped\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: s, type: VARCHAR(40)}\n");
+            run.Write("models/marts/fct_num.yml", "name: marts.fct_num\nkind: full\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: n, type: INTEGER}\n");
             run.Write("models/marts/fct_num.sql", "SELECT id, CAST(s AS INTEGER) AS n FROM staging.raw\n");
             await engine.ExecAsync($"CREATE TABLE staging.raw (id BIGINT NOT NULL, s {engine.ColumnType("VARCHAR(40)")} NULL)");
             await engine.ExecAsync($"INSERT INTO staging.raw VALUES (1, '12'), (2, '{secret}')");

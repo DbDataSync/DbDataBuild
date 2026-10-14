@@ -14,7 +14,7 @@ public partial class CopyConformanceTests
 {
     private const string EventColumns = "columns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: v, type: \"VARCHAR(20)\"}\n";
 
-    private static async Task<Pair> RefreshSetUp(string origin, string destination, string copyKind = "{type: copy, from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}")
+    private static async Task<Pair> RefreshSetUp(string origin, string destination, string copyKind = "{copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 1 days}}}")
     {
         var from = EngineEnv.Require(origin);
         var to = EngineEnv.Require(destination);
@@ -22,9 +22,9 @@ public partial class CopyConformanceTests
         await to.StartAsync();
         var pair = new Pair(from, to, Path.Combine(Path.GetTempPath(), "ddb-copy-" + Guid.NewGuid().ToString("N")));
         pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\nrefresh:\n  plans:\n    hourly: {{ on_failure: continue }}\n    daily: {{ on_failure: continue }}\n" + Sensitive(destination));
-        pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\n{EventColumns}");
+        pair.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\n{EventColumns}");
         pair.Write("models/dst/events.yml", $"name: dst.events\nkind: {copyKind}\nrefresh: {{ hourly: default }}\n");
-        pair.Write("models/dst/summary.yml", "name: dst.summary\nkind: {type: full}\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
+        pair.Write("models/dst/summary.yml", "name: dst.summary\nkind: full\ncolumns:\n  - {name: day, type: DATE, nullable: false}\n  - {name: n, type: BIGINT}\nrefresh: { hourly: default }\n");
         pair.Write("models/dst/summary.sql", "SELECT day, COUNT(*) AS n FROM dst.events GROUP BY day\n");
         await from.ExecAsync(origin == "postgres" ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
         await from.ExecAsync($"CREATE TABLE src.events ({from.QuoteIdent("id")} BIGINT NOT NULL, {from.QuoteIdent("day")} DATE NOT NULL, {from.QuoteIdent("v")} {from.ColumnType("VARCHAR(20)")})");
@@ -117,8 +117,8 @@ public partial class CopyConformanceTests
         try
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\nrefresh:\n  plans:\n    daily: {{}}\n" + Sensitive(destination));
-            pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\n{EventColumns}");
-            pair.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n" +
+            pair.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\n{EventColumns}");
+            pair.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n" +
                 "loads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
                 "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n" +
                 "      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n" +

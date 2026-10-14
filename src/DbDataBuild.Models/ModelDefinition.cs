@@ -44,7 +44,7 @@ public sealed record CopyWatermark(string Column, string? Lookback, int Line = 0
 
 public sealed record ModelDefinition(
     string Name,
-    string KindType,
+    string Kind,
     IReadOnlyList<string> UniqueKey,
     string? TimeColumn,
     string? Lookback,
@@ -81,7 +81,7 @@ public sealed record ModelDefinition(
     public IReadOnlyDictionary<string, ParameterValue> Parameters => DeclaredParameters ?? new Dictionary<string, ParameterValue>();
 
     /// <summary>True for a model that copies another one (<see cref="ModelKinds.Copy"/>): `From` is the model it copies.</summary>
-    public bool IsCopy => KindType == ModelKinds.Copy;
+    public bool IsCopy => Kind == ModelKinds.Copy;
 
     /// <summary>Diagnostic codes of advisory lints (DDB-223, DDB-224, DDB-225, DDB-236, DDB-239) the operator has silenced for this model (`lint_ignore:`).</summary>
     public IReadOnlyList<string> LintIgnore => DeclaredLintIgnore ?? [];

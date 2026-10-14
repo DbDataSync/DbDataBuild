@@ -18,7 +18,7 @@ public partial class ApplyConformanceTests
             // fct_orders is in `hourly`, and twice in `daily` (the second time under another name); it also has a range load that is in no plan
             run.Write("models/marts/fct_orders.yml", FctYaml + "tags: [orders]\nloads:\n  default:\n    default: true\n    strategy: delete_insert_by_key\n  window:\n    strategy: delete_insert_by_range\n    column: order_id\n    params: {start: BIGINT, end: BIGINT}\n" +
                 "refresh:\n  hourly: default\n  daily: [default, { load: default, as: again }]\n");
-            run.Write("models/marts/totals.yml", "name: marts.totals\nkind: {type: full}\ntags: [report]\nrefresh: { daily: default }\ncolumns:\n  - {name: n, type: BIGINT}\n");
+            run.Write("models/marts/totals.yml", "name: marts.totals\nkind: full\ntags: [report]\nrefresh: { daily: default }\ncolumns:\n  - {name: n, type: BIGINT}\n");
             run.Write("models/marts/totals.sql", "SELECT COUNT(*) AS n FROM marts.fct_orders\n");
             Ok(run.Cli("connection", "init", "--apply"), "init");
             Ok(run.Cli("project", "compile"), "compile");

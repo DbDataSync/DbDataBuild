@@ -29,8 +29,8 @@ public partial class CopyConformanceTests
             {
                 // a view that takes a second and a half to answer
                 await fromEngine.ExecAsync($"CREATE VIEW src.slow{n} AS SELECT CAST({n} AS BIGINT) AS id FROM pg_sleep(1.5)");
-                pair.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
-                pair.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{type: copy, from: src.slow{n}}}\nrefresh: {{ fan: default }}\n");
+                pair.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
+                pair.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{copy: {{from: src.slow{n}}}}}\nrefresh: {{ fan: default }}\n");
             }
             Ok(pair.Cli("connection", "init", destination, "--apply"), "init");
             Ok(pair.Cli("project", "compile"), "compile");

@@ -49,8 +49,8 @@ public partial class ParametersConformanceTests
                 "(7, 'eu', '2024-01-03', '2024-01-04 00:00:00', 6, 1, 'skip'), " +        // the model's own parameter
                 "(9, 'eu', '2024-02-01', '2024-02-01 00:00:00', 6, 1, 'x')");
             Write("dbdatabuild.yml", Config(name, "eu", "8"));
-            Write("models/staging/t.yml", "name: staging.t\nkind: {type: mapped}\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n  - {name: d, type: DATE}\n  - {name: ts, type: TIMESTAMP}\n  - {name: n, type: INTEGER}\n  - {name: k, type: SMALLINT}\n  - {name: note, type: \"VARCHAR(20)\"}\n");
-            Write("models/marts/m.yml", "name: marts.m\nkind: {type: full}\nparameters:\n  note: skip\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n");
+            Write("models/staging/t.yml", "name: staging.t\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n  - {name: d, type: DATE}\n  - {name: ts, type: TIMESTAMP}\n  - {name: n, type: INTEGER}\n  - {name: k, type: SMALLINT}\n  - {name: note, type: \"VARCHAR(20)\"}\n");
+            Write("models/marts/m.yml", "name: marts.m\nkind: full\nparameters:\n  note: skip\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: region, type: \"VARCHAR(20)\"}\n");
             Write("models/marts/m.sql", Query);
 
             Ok(Cli("connection", "init", name, "--apply"), "init");

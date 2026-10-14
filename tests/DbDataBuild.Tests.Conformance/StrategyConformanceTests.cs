@@ -25,17 +25,17 @@ public class StrategyConformanceTests
 
     public static readonly Case[] Cases =
     [
-        new("full_replace", "default", Model("{type: full}"), "default", new(OracleKind.FullReplace), false, [11, 12]),
-        new("delete_insert_by_key", "default", Model("{type: incremental_by_unique_key, unique_key: [event_id]}"), "default", new(OracleKind.DeleteInsertByKey), false, [11, 12]),
-        new("merge_by_key", "explicit", Model("{type: full}", "loads:\n  m:\n    default: true\n    strategy: merge_by_key\n    key: [event_id]\n"), "m", new(OracleKind.MergeByKey), false, [11, 12]),
+        new("full_replace", "default", Model("full"), "default", new(OracleKind.FullReplace), false, [11, 12]),
+        new("delete_insert_by_key", "default", Model("{incremental_by_unique_key: {unique_key: [event_id]}}"), "default", new(OracleKind.DeleteInsertByKey), false, [11, 12]),
+        new("merge_by_key", "explicit", Model("full", "loads:\n  m:\n    default: true\n    strategy: merge_by_key\n    key: [event_id]\n"), "m", new(OracleKind.MergeByKey), false, [11, 12]),
         new("delete_insert_by_range", "explicit",
-            Model("{type: incremental_by_time_range, time_column: event_ts}", "loads:\n  r:\n    default: true\n    strategy: delete_insert_by_range\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n"),
+            Model("{incremental_by_time_range: {time_column: event_ts}}", "loads:\n  r:\n    default: true\n    strategy: delete_insert_by_range\n    params: {start: TIMESTAMP, end: TIMESTAMP}\n"),
             "r", new(OracleKind.DeleteInsertByRange, Start: Dataset.RangeStart, End: Dataset.RangeEnd), false, [], In),
         new("watermark_append", "append",
-            Model("{type: full}", "loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max}\n"),
+            Model("full", "loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max}\n"),
             "w", new(OracleKind.WatermarkAppend), true, []),
         new("watermark_append", "lookback",
-            Model("{type: full}", "loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max, lookback: 2 days}\n"),
+            Model("full", "loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max, lookback: 2 days}\n"),
             "w", new(OracleKind.WatermarkAppend, Lookback: TimeSpan.FromDays(2)), true, [11]),
     ];
 
@@ -172,7 +172,7 @@ public class StrategyConformanceTests
     // ---- resolvers ----
 
     private static string WatermarkModel(string watermark, string extraColumns = "", string table = "fct_events") =>
-        $"name: marts.{table}\nkind: {{type: full}}\ncolumns:\n{Dataset.Columns}{extraColumns}loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {watermark}\n";
+        $"name: marts.{table}\nkind: full\ncolumns:\n{Dataset.Columns}{extraColumns}loads:\n  w:\n    default: true\n    strategy: watermark_append\n    watermark: {watermark}\n";
 
     [SkippableTheory]
     [InlineData("sqlserver")]
@@ -208,7 +208,7 @@ public class StrategyConformanceTests
         await engine.ExecAsync($"CREATE TABLE {engine.QuoteIdent("marts")}.{engine.QuoteIdent("daily")} (d DATE NOT NULL, seq BIGINT NOT NULL)");
         await engine.ExecAsync($"INSERT INTO {engine.QuoteIdent("marts")}.{engine.QuoteIdent("daily")} VALUES ('2024-03-31', 7), ('2024-01-15', 41)");
 
-        string Yaml(string wm) => $"name: marts.daily\nkind: {{type: full}}\ncolumns:\n  - {{name: d, type: DATE, nullable: false}}\n  - {{name: seq, type: BIGINT, nullable: false}}\nloads:\n  w:\n    strategy: watermark_append\n    watermark: {wm}\n";
+        string Yaml(string wm) => $"name: marts.daily\nkind: full\ncolumns:\n  - {{name: d, type: DATE, nullable: false}}\n  - {{name: seq, type: BIGINT, nullable: false}}\nloads:\n  w:\n    strategy: watermark_append\n    watermark: {wm}\n";
         string Body(string sql) => sql;
         (string Script, string? Resolver) RenderDaily(string wm)
         {

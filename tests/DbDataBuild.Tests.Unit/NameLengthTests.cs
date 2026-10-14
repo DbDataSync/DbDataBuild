@@ -12,8 +12,8 @@ public class NameLengthTests
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{connections}]}}\n");
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         Directory.CreateDirectory(Path.Combine(dir, "models/marts"));
-        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind:\n  type: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
-        File.WriteAllText(Path.Combine(dir, "models/marts/m.yml"), $"name: marts.m\nkind: {{type: view}}\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: \"{column}\", type: INTEGER}}\n");
+        File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/m.yml"), $"name: marts.m\nkind: view\ncolumns:\n  - {{name: order_id, type: BIGINT, nullable: false}}\n  - {{name: \"{column}\", type: INTEGER}}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/m.sql"), $"SELECT order_id, 1 AS \"{column}\" FROM staging.orders\n");
         return dir;
     }

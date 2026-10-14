@@ -2,24 +2,33 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "model.schema.json",
   "title": "DbDataBuild model definition",
-  "description": "A model definition file (models/**/<name>.yml), the companion of the plain DuckDB-dialect <name>.sql body. This schema is for editors; `dbdatabuild project compile` applies the same rules plus semantic checks (name against path, grain against unique_key, column references) with diagnostic codes. The tool reads every scalar as a string, so values here that YAML would type (nullable) accept the quoted and unquoted forms. A file that says `kind: {type: mapped}` is a mapped model (or `native`: a table the engine computes from its own query) and is checked against source.schema.json instead.",
+  "description": "A model definition file (models/**/<name>.yml), the companion of the plain DuckDB-dialect <name>.sql body. This schema is for editors; `dbdatabuild project compile` applies the same rules plus semantic checks (name against path, grain against unique_key, column references) with diagnostic codes. The tool reads every scalar as a string, so values here that YAML would type (nullable) accept the quoted and unquoted forms. A file that says `kind: mapped` is a mapped model (or `native`: a table the engine computes from its own query) and is checked against source.schema.json instead.",
   "if": {
     "required": [
       "kind"
     ],
     "properties": {
       "kind": {
-        "required": [
-          "type"
-        ],
-        "properties": {
-          "type": {
+        "anyOf": [
+          {
             "enum": [
               "mapped",
               "native"
             ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "mapped"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "native"
+            ]
           }
-        }
+        ]
       }
     }
   },
@@ -42,21 +51,33 @@
       }
     },
     "kind": {
-      "description": "Table semantics, and the default load operation.",
+      "description": "The model kind, keyed by its name with that kind's settings beneath it (`kind: {copy: {from: pos.orders}}`), or a plain value for a kind that has no settings (`kind: view`). Exactly one key; a setting that does not belong to the kind is refused by the shape.",
       "oneOf": [
+        {
+          "title": "view (plain value)",
+          "description": "View over upstream. DDL only; apply issues no data statements. With no settings it may be written as a plain value: `kind: view`.",
+          "const": "view"
+        },
         {
           "title": "view",
           "description": "View over upstream. DDL only; apply issues no data statements.",
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type"
+            "view"
           ],
           "properties": {
-            "type": {
-              "const": "view"
+            "view": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
             }
           }
+        },
+        {
+          "title": "full (plain value)",
+          "description": "Table fully reloaded: transactional delete and insert. With no settings it may be written as a plain value: `kind: full`.",
+          "const": "full"
         },
         {
           "title": "full",
@@ -64,11 +85,13 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type"
+            "full"
           ],
           "properties": {
-            "type": {
-              "const": "full"
+            "full": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
             }
           }
         },
@@ -78,15 +101,20 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type",
-            "unique_key"
+            "incremental_by_unique_key"
           ],
           "properties": {
-            "type": {
-              "const": "incremental_by_unique_key"
-            },
-            "unique_key": {
-              "$ref": "#/$defs/columnList"
+            "incremental_by_unique_key": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "unique_key": {
+                  "$ref": "#/$defs/columnList"
+                }
+              },
+              "required": [
+                "unique_key"
+              ]
             }
           }
         },
@@ -96,19 +124,24 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type",
-            "time_column"
+            "incremental_by_time_range"
           ],
           "properties": {
-            "type": {
-              "const": "incremental_by_time_range"
-            },
-            "time_column": {
-              "$ref": "#/$defs/nonEmptyString"
-            },
-            "lookback": {
-              "description": "For example `3 days` (minutes, hours, days, weeks or months; a DATE column takes days, weeks or months).",
-              "$ref": "#/$defs/duration"
+            "incremental_by_time_range": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "time_column": {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                "lookback": {
+                  "description": "For example `3 days` (minutes, hours, days, weeks or months; a DATE column takes days, weeks or months).",
+                  "$ref": "#/$defs/duration"
+                }
+              },
+              "required": [
+                "time_column"
+              ]
             }
           }
         },
@@ -118,64 +151,69 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type",
-            "from"
+            "copy"
           ],
           "properties": {
-            "type": {
-              "const": "copy"
-            },
-            "from": {
-              "description": "The model to copy: a model, a mapped model or another copy, `schema_name.table_name`, on exactly one connection other than this model's.",
-              "type": "string",
-              "pattern": "^[^.\\s/\\\\]+\\.[^.\\s/\\\\]+$"
-            },
-            "slice": {
-              "description": "For a copy from several connections (or one that adds a column): which rows are an origin's. `value` may use `${origin.name}` (the origin connection's parameter) or `${connection.name}` (the destination's). When the origin has no `column`, the copy adds it (give it a `type`) and writes the value into every row; a run replaces only the rows of the origin it loads.",
+            "copy": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "column",
-                "value"
-              ],
               "properties": {
-                "column": {
-                  "$ref": "#/$defs/nonEmptyString"
+                "from": {
+                  "description": "The model to copy: a model, a mapped model or another copy, `schema_name.table_name`, on exactly one connection other than this model's.",
+                  "type": "string",
+                  "pattern": "^[^.\\s/\\\\]+\\.[^.\\s/\\\\]+$"
                 },
-                "value": {
-                  "$ref": "#/$defs/nonEmptyString"
+                "slice": {
+                  "description": "For a copy from several connections (or one that adds a column): which rows are an origin's. `value` may use `${origin.name}` (the origin connection's parameter) or `${connection.name}` (the destination's). When the origin has no `column`, the copy adds it (give it a `type`) and writes the value into every row; a run replaces only the rows of the origin it loads.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "column",
+                    "value"
+                  ],
+                  "properties": {
+                    "column": {
+                      "$ref": "#/$defs/nonEmptyString"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/nonEmptyString"
+                    },
+                    "type": {
+                      "$ref": "#/$defs/nonEmptyString"
+                    }
+                  }
                 },
-                "type": {
-                  "$ref": "#/$defs/nonEmptyString"
+                "on_mismatch": {
+                  "description": "What `plan` does about an origin whose table differs from its declaration: stop (`fail`, the default) or leave that origin out (`skip`), never silently.",
+                  "enum": [
+                    "fail",
+                    "skip"
+                  ]
+                },
+                "unique_key": {
+                  "description": "The rows an incremental copy reads again replace the rows with these key columns.",
+                  "$ref": "#/$defs/columnList"
+                },
+                "watermark": {
+                  "description": "Makes the copy incremental: only rows whose `column` is at or after the newest value the destination holds (less `lookback`, for rows that arrive late or change) are read. Needs `unique_key`. The first run, with nothing in the destination, reads everything.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "column"
+                  ],
+                  "properties": {
+                    "column": {
+                      "$ref": "#/$defs/nonEmptyString"
+                    },
+                    "lookback": {
+                      "$ref": "#/$defs/duration"
+                    }
+                  }
                 }
-              }
-            },
-            "on_mismatch": {
-              "description": "What `plan` does about an origin whose table differs from its declaration: stop (`fail`, the default) or leave that origin out (`skip`), never silently.",
-              "enum": [
-                "fail",
-                "skip"
+              },
+              "required": [
+                "from"
               ]
-            },
-            "unique_key": {
-              "description": "The rows an incremental copy reads again replace the rows with these key columns.",
-              "$ref": "#/$defs/columnList"
-            },
-            "watermark": {
-              "description": "Makes the copy incremental: only rows whose `column` is at or after the newest value the destination holds (less `lookback`, for rows that arrive late or change) are read. Needs `unique_key`. The first run, with nothing in the destination, reads everything.",
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "column"
-              ],
-              "properties": {
-                "column": {
-                  "$ref": "#/$defs/nonEmptyString"
-                },
-                "lookback": {
-                  "$ref": "#/$defs/duration"
-                }
-              }
             }
           }
         }
@@ -1174,14 +1212,17 @@
             ],
             "properties": {
               "kind": {
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
+                "anyOf": [
+                  {
                     "const": "copy"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "copy"
+                    ]
                   }
-                }
+                ]
               }
             }
           },
@@ -1206,17 +1247,26 @@
             ],
             "properties": {
               "kind": {
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "enum": [
-                      "incremental_by_unique_key",
+                "anyOf": [
+                  {
+                    "const": "incremental_by_unique_key"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "incremental_by_unique_key"
+                    ]
+                  },
+                  {
+                    "const": "incremental_by_time_range"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
                       "incremental_by_time_range"
                     ]
                   }
-                }
+                ]
               }
             }
           },
@@ -1234,14 +1284,17 @@
             ],
             "properties": {
               "kind": {
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
+                "anyOf": [
+                  {
                     "const": "view"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "view"
+                    ]
                   }
-                }
+                ]
               }
             }
           },

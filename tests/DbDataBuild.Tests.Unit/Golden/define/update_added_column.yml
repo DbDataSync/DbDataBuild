@@ -1,8 +1,8 @@
 # Orders fact (hand-written)
 name: marts.fct_orders
 kind:
-  type: incremental_by_unique_key   # keyed upsert
-  unique_key: [order_id]
+  incremental_by_unique_key:   # keyed upsert
+    unique_key: [order_id]
 
 grain: [order_id]
 connections: [sqlserver, fabric]

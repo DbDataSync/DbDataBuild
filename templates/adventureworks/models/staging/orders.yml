@@ -1,6 +1,5 @@
 name: staging.orders
-kind:
-  type: view
+kind: view
 grain:
   - sales_order_id
 columns:

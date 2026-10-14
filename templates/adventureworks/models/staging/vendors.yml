@@ -1,6 +1,5 @@
 name: staging.vendors
-kind:
-  type: view
+kind: view
 grain:
   - vendor_id
 columns:

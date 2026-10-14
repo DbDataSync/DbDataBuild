@@ -1,5 +1,5 @@
 name: marts.orders
-kind: {type: full}
+kind: full
 grain: [order_id]
 columns:
   - {name: order_id, type: INTEGER, nullable: false}

@@ -1,5 +1,5 @@
 name: staging.country_regions
-kind: {type: view}
+kind: view
 grain: [country_code]
 columns:
   - {name: country_code, type: "VARCHAR(2)", nullable: false}

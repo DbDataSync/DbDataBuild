@@ -1,6 +1,5 @@
 name: raw.customers
-kind:
-  type: mapped
+kind: mapped
 grain: [id]
 columns:
   - {name: id, type: INTEGER, nullable: false}

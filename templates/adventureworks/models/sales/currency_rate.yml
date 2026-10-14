@@ -1,6 +1,5 @@
 name: sales.currency_rate
-kind:
-  type: mapped
+kind: mapped
 grain: [currency_rate_date, to_currency_code]
 columns:
   - {name: currency_rate_date, type: DATE, nullable: false}

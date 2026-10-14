@@ -1,6 +1,5 @@
 name: ref.country_regions
-kind:
-  type: mapped
+kind: mapped
 grain: [country_code]
 columns:
   - {name: country_code, type: "VARCHAR(2)", nullable: false}

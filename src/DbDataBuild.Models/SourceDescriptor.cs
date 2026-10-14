@@ -4,7 +4,7 @@ using DbDataBuild.Models.Yaml;
 namespace DbDataBuild.Models;
 
 /// <summary>
-/// A **mapped** model: the declaration of a table that exists and that the tool does not build (<c>kind: {type: mapped}</c>, a <c>models/&lt;schema&gt;/&lt;table&gt;.yml</c> with no query). Models refer to
+/// A **mapped** model: the declaration of a table that exists and that the tool does not build (<c>kind: mapped</c>, a <c>models/&lt;schema&gt;/&lt;table&gt;.yml</c> with no query). Models refer to
 /// it by plain table name; <c>define</c> builds an empty DuckDB schema from it (DESIGN.md 6.5). Optional <c>grain</c> feeds
 /// grain candidates. <c>indexes</c> and <c>foreign_keys</c> are what the table has, as exported by `import`; the tool reads them (metadata, advice) and never creates them.
 /// </summary>
@@ -30,7 +30,7 @@ public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinitio
 }
 
 /// <summary>
-/// The engine-native text of a native model (`kind: {type: native}`): written in the dialect of its one connection, never lowered or transpiled. <see cref="Access"/> is `select` (a query can contain it: it is
+/// The engine-native text of a native model (`kind: {native: {...}}`): written in the dialect of its one connection, never lowered or transpiled. <see cref="Access"/> is `select` (a query can contain it: it is
 /// inlined as a derived table) or `command` (it can only be run; not built yet).
 /// </summary>
 /// <param name="Reads">The tables the text reads (optional): how a native model takes part in the dependency graph.</param>
@@ -95,13 +95,16 @@ public static class SourceDescriptorLoader
         {
             if (root is not YamlMapping top) { Add(DiagnosticCatalog.InvalidValue, root, "A mapped model must be a mapping with `name`, `kind` and `columns`."); return null; }
             CheckKeys(top, Keys, "a mapped or native model");
-            var isNative = (top.Get("kind") as YamlMapping)?.Get("type") is YamlScalar { Value: NativeQuery.Kind };
+            var reading = ModelKindShape.Read(top.Get("kind"), top, (d, n, f, fix) => Add(d, n, f, fix: fix));
+            var isNative = reading?.Name == NativeQuery.Kind;
             NativeQuery? native = null;
-            if (isNative) native = ReadNative(top);
-            else
+            if (isNative) native = ReadNative(top, reading!);
+            else if (reading != null)
             {
-                if (top.Get("kind") is not YamlMapping kind || kind.Get("type") is not YamlScalar { Value: MappedKind } || kind.Entries.Count != 1)
-                    Add(DiagnosticCatalog.InvalidValue, top.Get("kind") ?? top, "A mapped model's kind is `{type: mapped}` and nothing else.");
+                if (reading.Name != MappedKind)
+                    Add(DiagnosticCatalog.InvalidValue, reading.NameNode, $"A model with no query is `kind: mapped` or `kind: native`, not `{reading.Name}`.");
+                else if (reading.Settings.Entries.Any(e => e.Key.Value != ModelKindShape.OldKey))
+                    Add(DiagnosticCatalog.InvalidValue, reading.Settings.Entries.First(e => e.Key.Value != ModelKindShape.OldKey).Key, "A mapped model's kind is `kind: mapped` and nothing else.");
                 foreach (var k in new[] { "reads", "parameters", "track_definition" }.Where(k => top.Get(k) != null))
                     Add(DiagnosticCatalog.UnknownKey, top.Entries.First(e => e.Key.Value == k).Key, $"`{k}` belongs to a native model; a mapped model declares a table that exists.");
             }
@@ -123,11 +126,11 @@ public static class SourceDescriptorLoader
             return name == null ? null : new SourceDescriptor(name.Value, columns, grain?.Select(g => g.Value).ToList() ?? [], indexes, foreignKeys, connections?.Select(c => c.Value).ToList(), Native: native, DeclaredInfo: info);
         }
 
-        /// <summary>`kind: {type: native, access, query}` and the model's `reads` and `parameters`. The text is `query:` or the `.native.sql` file beside the definition, never both.</summary>
-        private NativeQuery? ReadNative(YamlMapping top)
+        /// <summary>`kind: {native: {access, query}}` and the model's `reads` and `parameters`. The text is `query:` or the `.native.sql` file beside the definition, never both.</summary>
+        private NativeQuery? ReadNative(YamlMapping top, KindReading reading)
         {
-            var kind = (YamlMapping)top.Get("kind")!;
-            CheckKeys(kind, ["type", "access", "query"], "kind `native`");
+            var kind = reading.Settings;
+            CheckKeys(kind, reading.OldForm ? [ModelKindShape.OldKey, "access", "query"] : ["access", "query"], "kind `native`");
             var access = (kind.Get("access") as YamlScalar)?.Value ?? NativeQuery.Select;
             if (access is not (NativeQuery.Select or NativeQuery.Command)) Add(DiagnosticCatalog.InvalidValue, kind.Get("access") ?? kind, $"`access` is `select` (a query can contain it) or `command` (it can only be run), not `{access}`.");
             var inline = (kind.Get("query") as YamlScalar)?.Value;
@@ -135,7 +138,7 @@ public static class SourceDescriptorLoader
             if (kind.Get("query") != null && inline == null) Add(DiagnosticCatalog.InvalidValue, kind.Get("query")!, "`query` is the text of the native query.");
             if (inline != null && nativeFile != null) Add(DiagnosticCatalog.InvalidValue, kind.Get("query")!, "A native model has its text in `query:` or in its `.native.sql` file, not both.");
             else if (inline == null) text = nativeFile;
-            if (string.IsNullOrWhiteSpace(text)) { Add(DiagnosticCatalog.MissingKey, kind, "A native model needs its text: `query:` under `kind`, or a `.native.sql` file beside the definition."); return null; }
+            if (string.IsNullOrWhiteSpace(text)) { Add(DiagnosticCatalog.MissingKey, reading.NameNode, "A native model needs its text: `query:` under `native:`, or a `.native.sql` file beside the definition."); return null; }
             if (access == NativeQuery.Select && ReadGuard.Check(text) is { } refused) Add(DiagnosticCatalog.InvalidValue, (YamlNode?)kind.Get("query") ?? kind, $"The native text is not a single SELECT: {refused.Found}");
             if (access == NativeQuery.Command && CommandProblem(text) is { } bad) Add(DiagnosticCatalog.InvalidValue, (YamlNode?)kind.Get("query") ?? kind, bad);
             var reads = StringList(top, "reads", required: false, allowEmpty: false, unique: true)?.Select(r => r.Value).ToList() ?? [];
@@ -229,7 +232,7 @@ public static class SourceDescriptorWriter
         var sb = new System.Text.StringBuilder();
         sb.Append("name: ").Append(YamlText.Scalar(d.Name)).Append('\n');
         if (withInfo) sb.Append(YamlText.InfoLines(d.DeclaredInfo, ""));
-        sb.Append("kind:\n  type: mapped\n");
+        sb.Append("kind: mapped\n");
         if (d.Connections is { Count: > 0 }) sb.Append("connections=: ").Append(YamlText.FlowList(d.Connections)).Append('\n');
         if (d.Grain.Count > 0) sb.Append("grain: ").Append(YamlText.FlowList(d.Grain)).Append('\n');
         sb.Append("columns:\n");

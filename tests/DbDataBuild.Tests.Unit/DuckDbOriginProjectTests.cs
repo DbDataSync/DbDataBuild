@@ -41,7 +41,7 @@ public class DuckDbOriginProjectTests : IDisposable
         File.WriteAllText(p, text);
     }
 
-    private const string EventsModel = "name: src.events\nkind: {type: mapped}\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: label, type: VARCHAR(20)}\n  - {name: amount, type: \"DECIMAL(18, 2)\"}\n";
+    private const string EventsModel = "name: src.events\nkind: mapped\nconnections=: [analytics]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: day, type: DATE, nullable: false}\n  - {name: label, type: VARCHAR(20)}\n  - {name: amount, type: \"DECIMAL(18, 2)\"}\n";
 
     private Func<string, string?> Env => v => v == "DBDATABUILD_ANALYTICS_READ" ? Db : v == "DBDATABUILD_LAKE_READ" ? ":memory:" : null;
 
@@ -52,7 +52,7 @@ public class DuckDbOriginProjectTests : IDisposable
         return (exit, o.ToString(), e.ToString());
     }
 
-    private void Project(string copyBody = "kind: {type: copy, from: src.events}\n")
+    private void Project(string copyBody = "kind: {copy: {from: src.events}}\n")
     {
         Write("dbdatabuild.yml", "defaults: {connections: [sqlserver]}\ntracking: { connection: sqlserver }\nconnections:\n  analytics: { engine: readonly duckdb }\n  lake: { engine: readonly duckdb }\n");
         Write("models/src/events.yml", EventsModel);
@@ -120,7 +120,7 @@ public class DuckDbOriginProjectTests : IDisposable
     public void A_model_cannot_be_built_on_a_duckdb_file_and_a_deploy_to_it_is_refused()
     {
         MakeDb(); Project();
-        Write("models/marts/m.yml", "name: marts.m\nkind: {type: view}\nconnections: [analytics]\ncolumns:\n  - {name: n, type: INTEGER}\n");
+        Write("models/marts/m.yml", "name: marts.m\nkind: view\nconnections: [analytics]\ncolumns:\n  - {name: n, type: INTEGER}\n");
         Write("models/marts/m.sql", "SELECT 1 AS n\n");
         Assert.Contains(ProjectValidator.Validate(dir).Diagnostics, d => d.Code == "DDB-455");
         Assert.Contains("DDB-455", Cli("connection", "deploy", "analytics", "--write-plan").Err);
@@ -131,7 +131,7 @@ public class DuckDbOriginProjectTests : IDisposable
     [Fact]
     public void A_copy_from_a_duckdb_file_reads_in_duckdbs_quoting_with_the_watermark_as_a_positional_value()
     {
-        MakeDb(); Project("kind: {type: copy, from: src.events, unique_key: [id], watermark: {column: day, lookback: 3 days}}\n");
+        MakeDb(); Project("kind: {copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 3 days}}}\n");
         Assert.False(ProjectValidator.Validate(dir).HasErrors, string.Join("\n", ProjectValidator.Validate(dir).Diagnostics.Select(DiagnosticFormatter.Format)));
         var ctx = ProjectContext.Load(dir);
         var copy = ctx.Project.Sources.Single(s => s.Definition.Name == "dst.events").Definition;
@@ -172,8 +172,8 @@ public class DuckDbOriginProjectTests : IDisposable
         var parquet = Path.Combine(files, "orders.parquet").Replace('\\', '/');
         await using (var w = new DuckDBConnection("Data Source=:memory:")) { w.Open(); Exec(w, $"COPY (SELECT i AS id, 'o' || i AS label FROM range(1, 7) t(i)) TO '{parquet}' (FORMAT PARQUET)"); }
         Write("dbdatabuild.yml", $"defaults: {{connections: [sqlserver]}}\nconnections:\n  lake: {{ engine: readonly duckdb }}\nparameters:\n  file: \"{parquet}\"\n  min_id: {{ type: BIGINT, value: \"3\" }}\n");
-        Write("models/src/orders.yml", "name: src.orders\nkind:\n  type: native\n  query: SELECT id, label FROM read_parquet(${project.file}) WHERE id >= ${project.min_id}\nconnections=: [lake]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
-        Write("models/dst/orders.yml", "name: dst.orders\nkind: {type: copy, from: src.orders}\n");
+        Write("models/src/orders.yml", "name: src.orders\nkind:\n  native:\n    query: SELECT id, label FROM read_parquet(${project.file}) WHERE id >= ${project.min_id}\nconnections=: [lake]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
+        Write("models/dst/orders.yml", "name: dst.orders\nkind: {copy: {from: src.orders}}\n");
         Assert.False(ProjectValidator.Validate(dir).HasErrors, string.Join("\n", ProjectValidator.Validate(dir).Diagnostics.Select(DiagnosticFormatter.Format)));
 
         var ctx = ProjectContext.Load(dir);
@@ -206,7 +206,7 @@ public class DuckDbOriginProjectTests : IDisposable
     public void A_source_resolver_of_a_copy_from_a_duckdb_file_is_rendered_in_duckdbs_own_text()
     {
         MakeDb();
-        Project("kind: {type: copy, from: src.events}\nloads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
+        Project("kind: {copy: {from: src.events}}\nloads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
                 "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n");
         var compiled = RenderFiles("--write", "--project", dir);
         Assert.True(compiled.Exit == 0, compiled.Out + compiled.Err);

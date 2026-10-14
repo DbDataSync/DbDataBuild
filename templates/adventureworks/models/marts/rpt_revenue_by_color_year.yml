@@ -1,6 +1,5 @@
 name: marts.rpt_revenue_by_color_year
-kind:
-  type: full
+kind: full
 grain:
   - color_group
 columns:

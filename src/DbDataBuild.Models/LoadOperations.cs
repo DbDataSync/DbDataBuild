@@ -86,7 +86,7 @@ public static class LoadPlan
     /// </summary>
     public static IReadOnlyList<LoadOperation> For(ModelDefinition model, string target)
     {
-        if (model.KindType == ModelKinds.View) return [];
+        if (model.Kind == ModelKinds.View) return [];
         if (model.Loads.Count > 0) return model.Loads.Where(o => o.AppliesTo(target)).Select(o => ForCopy(model, o)).ToList();
         return [Implicit(model)];
     }
@@ -103,9 +103,9 @@ public static class LoadPlan
 
     /// <summary>Every operation of a model across all its declared loads, or the implicit one.</summary>
     public static IReadOnlyList<LoadOperation> All(ModelDefinition model) =>
-        model.KindType == ModelKinds.View ? [] : model.Loads.Count > 0 ? model.Loads.Select(o => ForCopy(model, o)).ToList() : [Implicit(model)];
+        model.Kind == ModelKinds.View ? [] : model.Loads.Count > 0 ? model.Loads.Select(o => ForCopy(model, o)).ToList() : [Implicit(model)];
 
-    private static LoadOperation Implicit(ModelDefinition m) => m.KindType switch
+    private static LoadOperation Implicit(ModelDefinition m) => m.Kind switch
     {
         // a copy from several connections replaces only the rows of the origin it is loading: delete by the slice column, then insert
         ModelKinds.Copy when m.Slice != null || m.UniqueKey.Count > 0 => new(ImplicitName, true, LoadStrategies.DeleteInsertByKey,
@@ -116,6 +116,6 @@ public static class LoadPlan
         ModelKinds.IncrementalByTimeRange => new(ImplicitName, true, LoadStrategies.WatermarkAppend, [], null,
             new WatermarkSpec(m.TimeColumn!, m.Lookback == null ? null : LoadDuration.TryParse(m.Lookback), WatermarkSpec.RequireParam, null, Overridable: false),
             [], null, null, Declared: false),
-        _ => throw new InvalidOperationException($"No implicit load operation for kind {m.KindType}."),
+        _ => throw new InvalidOperationException($"No implicit load operation for kind {m.Kind}."),
     };
 }

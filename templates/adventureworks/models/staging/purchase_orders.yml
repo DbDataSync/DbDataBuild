@@ -1,6 +1,5 @@
 name: staging.purchase_orders
-kind:
-  type: view
+kind: view
 grain:
   - purchase_order_id
 columns:

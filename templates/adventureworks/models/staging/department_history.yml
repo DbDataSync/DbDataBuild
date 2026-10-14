@@ -1,6 +1,5 @@
 name: staging.department_history
-kind:
-  type: view
+kind: view
 grain:
   - employee_id
   - start_date

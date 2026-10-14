@@ -1,6 +1,5 @@
 name: staging.products
-kind:
-  type: view
+kind: view
 grain:
   - product_id
 columns:

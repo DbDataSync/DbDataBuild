@@ -33,15 +33,15 @@ Everything below follows from this table: the first three can be *inlined*; a pr
 
 ### One new kind, two ways to use it
 
-A model of **`kind: {type: native}`** (not a flavour of `mapped`, because a mapped model says "this object exists" and a native one says "this is computed by the engine each time it is read"). It lives on one
+A model of **`kind: native`** (not a flavour of `mapped`, because a mapped model says "this object exists" and a native one says "this is computed by the engine each time it is read"). It lives on one
 connection, declares its columns like a mapped model (so DuckDB binds against them, offline, as today) and carries its text per engine in a committed file beside the definition:
 
 ```yaml
 # models/erp/open_orders.yml
 name: erp.open_orders
 kind:
-  type: native
-  access: select              # select (inline-able) | command (must be run, never inlined)
+  native:
+    access: select              # select (inline-able) | command (must be run, never inlined)
 connections=: [erp]           # exactly one connection: a native query is written in one engine's dialect
 grain: [order_id]
 columns:
@@ -94,7 +94,7 @@ The `.native.sql` file is the connection's dialect, not DuckDB's: it is **never 
 reads the destination's newest value, the plan records it, apply binds it. For a native origin the bound value goes into the native text by name:
 
 ```yaml
-kind: {type: copy, from: erp.order_changes, unique_key: [order_id], watermark: {column: sys_change_version}}
+kind: {copy: {from: erp.order_changes, unique_key: [order_id], watermark: {column: sys_change_version}}}
 ```
 ```sql
 -- erp.order_changes.native.sql
@@ -147,7 +147,7 @@ transfer step gets `risk: risky` with the reason `native command`, so a person a
 
 ## Local copies (added by the owner): materializing on one connection, without crossing
 
-A copy has so far meant "between connections". It must also work **within** one: `kind: {type: copy, from: erp.open_orders}` on the connection that holds `erp.open_orders`. This is how a native select, a
+A copy has so far meant "between connections". It must also work **within** one: `kind: {copy: {from: erp.open_orders}}` on the connection that holds `erp.open_orders`. This is how a native select, a
 table function or (later) a command becomes a real table on its own connection, with indexes, drift and the ordinary strategies, and how any model's rows can be snapshotted locally.
 
 - **A local copy is an ordinary load over a generated query.** No staging table and no transfer step: its query is `SELECT <the origin's columns> FROM <origin>`, bound by DuckDB against the declared columns

@@ -1,6 +1,5 @@
 name: production.work_order
-kind:
-  type: mapped
+kind: mapped
 grain: [work_order_id]
 columns:
   - {name: work_order_id, type: INTEGER, nullable: false}

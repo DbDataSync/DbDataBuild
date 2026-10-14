@@ -36,7 +36,7 @@ public class ProjectUpdateConformanceTests
                 { using var cmd = c.CreateCommand(); cmd.CommandText = sql; cmd.ExecuteNonQuery(); }
             }
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\nconnections:\n  analytics: { engine: readonly duckdb }\n");
-            File.WriteAllText(Path.Combine(dir, "models", "src", "child.yml"), "name: src.child\nkind: {type: mapped}\nconnections=: [analytics]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
+            File.WriteAllText(Path.Combine(dir, "models", "src", "child.yml"), "name: src.child\nkind: mapped\nconnections=: [analytics]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: VARCHAR}\n");
             (int, string, string) Cli(params string[] args)
             {
                 var o = new StringWriter(); var e = new StringWriter();
@@ -77,7 +77,7 @@ public class ProjectUpdateConformanceTests
         {
             await from.ExecAsync("CREATE SCHEMA upd; CREATE TABLE upd.parent (id BIGINT NOT NULL PRIMARY KEY); CREATE TABLE upd.child (id BIGINT NOT NULL PRIMARY KEY, parent_id BIGINT REFERENCES upd.parent (id), label VARCHAR(40), amount NUMERIC(18,2)); CREATE INDEX ix_child_label ON upd.child (label)");
             File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "defaults: {connections: [sqlserver]}\nconnections:\n  legacy: { engine: readonly odbc }\n");
-            File.WriteAllText(Path.Combine(dir, "models", "upd", "child.yml"), "name: upd.child\nkind: {type: mapped}\nconnections=: [legacy]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(40)\"}\n");
+            File.WriteAllText(Path.Combine(dir, "models", "upd", "child.yml"), "name: upd.child\nkind: mapped\nconnections=: [legacy]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(40)\"}\n");
             (int Exit, string Out, string Err) Cli(params string[] args)
             {
                 var o = new StringWriter(); var e = new StringWriter();
@@ -107,8 +107,8 @@ public class ProjectUpdateConformanceTests
         server.SayAboutItself(Says("DuckDB"));
         using var run = await FlightRun.SetUpAsync("postgres", server.Login("token"), dialect: "");
         await using var to = run.Destination;
-        run.Write("models/src/items.yml", $"name: src.items\nkind: {{type: mapped}}\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
-        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\n");
+        run.Write("models/src/items.yml", $"name: src.items\nkind: mapped\nconnections=: [proxy]\ngrain: [id]\n{FlightRun.Columns}");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {copy: {from: src.items}}\n");
         server.Exec("CREATE SCHEMA src", FlightRun.ItemsDdl.Replace("{s}", "src"), FlightRun.ItemsRows.Replace("{s}", "src"));
 
         var before = run.Cli("project", "compile");

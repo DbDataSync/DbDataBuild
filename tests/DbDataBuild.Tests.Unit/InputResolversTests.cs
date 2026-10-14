@@ -11,8 +11,8 @@ namespace DbDataBuild.Tests.Unit;
 public class InputResolversTests
 {
     private const string Config = "defaults: {connections: [sqlserver]}\nparameters:\n  window_days: {type: INTEGER, value: \"30\"}\nstring_semantics:\n  case: sensitive\n  trailing_space: ignored\n  collations:\n    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS }\n";
-    private const string Events = "name: staging.events\nkind:\n  type: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string FctHead = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_day}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Events = "name: staging.events\nkind: mapped\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string FctHead = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_day}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
     private const string FctSql = "SELECT e.event_id, e.event_ts, e.event_day, e.amount FROM staging.events e\n";
 
     private static string Loads(string inputs, string extra = "") =>
@@ -45,7 +45,7 @@ public class InputResolversTests
 
     private static string Codes(string inputs, string strategy = "range", string kind = "")
     {
-        var model = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_day}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(inputs);
+        var model = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_day}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(inputs);
         var d = new List<Diagnostic>();
         ModelDefinitionLoader.Load(model, "models/marts/fct_events.yml", "marts.fct_events", d);
         return string.Join(",", d.Select(x => x.Code).Distinct());
@@ -54,7 +54,7 @@ public class InputResolversTests
     [Fact]
     public void Inputs_are_a_type_a_default_or_a_resolver_and_a_range_loads_start_and_end_take_the_range_columns_type()
     {
-        var model = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_day}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(Window);
+        var model = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_day}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(Window);
         var d = new List<Diagnostic>();
         var def = ModelDefinitionLoader.Load(model, "models/marts/fct_events.yml", "marts.fct_events", d);
         Assert.Empty(d);
@@ -95,7 +95,7 @@ public class InputResolversTests
         Assert.Contains("DDB-106", Codes("    inputs:\n      w: {resolver: {expression: \"SELECT 1\"}, provides: [start, end]}\n      start: {resolver: {expression: \"1\"}}\n"));
         Assert.Equal("", Codes("    inputs:\n      w: {resolver: {expression: \"SELECT current_date - 7 AS start, current_date + 1 AS \\\"end\\\"\"}, provides: [start, end]}\n"));
         // the watermark input belongs to the watermark block
-        var wm = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_ts}\nloads:\n  incremental:\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max}\n    inputs:\n      watermark: {type: TIMESTAMP}\n";
+        var wm = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_ts}}\nloads:\n  incremental:\n    strategy: watermark_append\n    watermark: {column: event_ts, resolver: target_max}\n    inputs:\n      watermark: {type: TIMESTAMP}\n";
         var d = new List<Diagnostic>();
         ModelDefinitionLoader.Load(wm, "models/marts/fct_events.yml", "marts.fct_events", d);
         Assert.Contains(d, x => x.Code == "DDB-106");
@@ -105,7 +105,7 @@ public class InputResolversTests
     public void A_copy_declares_a_range_load_with_the_types_of_its_range_and_may_have_a_source_resolver()
     {
         string Codes(string yaml) { var d = new List<Diagnostic>(); ModelDefinitionLoader.Load(yaml, "models/dst/events.yml", "dst.events", d); return string.Join(",", d.Select(x => x.Code).Distinct()); }
-        var head = "name: dst.events\nkind: {type: copy, from: src.events}\nloads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n";
+        var head = "name: dst.events\nkind: {copy: {from: src.events}}\nloads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n";
         var inputs = "    inputs:\n      start: {resolver: {source: \"SELECT min(day) FROM src.events\"}}\n      end: {resolver: {expression: \"current_date\"}}\n";
         Assert.Equal("", Codes(head + "    params: {start: DATE, end: DATE}\n" + inputs));
         Assert.Contains("DDB-105", Codes(head + inputs));                                                                         // the types are not known without params
@@ -118,7 +118,7 @@ public class InputResolversTests
     [Fact]
     public void Damaged_input_text_never_throws()
     {
-        var model = "name: marts.fct_events\nkind: {type: incremental_by_time_range, time_column: event_day}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(Window);
+        var model = "name: marts.fct_events\nkind: {incremental_by_time_range: {time_column: event_day}}\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT, nullable: false}\n  - {name: event_ts, type: TIMESTAMP, nullable: false}\n  - {name: event_day, type: DATE, nullable: false}\n" + Loads(Window);
         var random = new Random(7);
         var from = model.IndexOf("    inputs:", StringComparison.Ordinal);
         for (var i = 0; i < 500; i++)

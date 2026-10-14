@@ -1,6 +1,5 @@
 name: shop.products
-kind:
-  type: mapped
+kind: mapped
 grain: [product_id]
 columns:
   - {name: product_id, type: INTEGER, nullable: false}

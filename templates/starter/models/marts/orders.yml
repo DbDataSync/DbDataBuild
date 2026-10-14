@@ -3,7 +3,7 @@ title: Orders
 description: "One row per order, with the amount paid by each payment method."
 tags: [order, finance]
 properties: {owner: finance, refresh: daily, pii: false}
-kind: {type: full}
+kind: full
 grain: [order_id]
 columns:
   - {name: order_id, type: INTEGER, nullable: false}

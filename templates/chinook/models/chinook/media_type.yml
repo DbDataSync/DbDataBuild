@@ -1,6 +1,5 @@
 name: chinook.media_type
-kind:
-  type: mapped
+kind: mapped
 grain: [media_type_id]
 columns:
   - {name: media_type_id, type: INTEGER, nullable: false}

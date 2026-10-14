@@ -1,6 +1,5 @@
 name: sales.sales_territory
-kind:
-  type: mapped
+kind: mapped
 grain: [territory_id]
 columns:
   - {name: territory_id, type: INTEGER, nullable: false}

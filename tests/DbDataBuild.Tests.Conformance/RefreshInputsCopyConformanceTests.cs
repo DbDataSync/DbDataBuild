@@ -20,8 +20,8 @@ public partial class CopyConformanceTests
         try
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
-            pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: day, type: DATE, nullable: false}}\n");
-            pair.Write("models/dst/events.yml", "name: dst.events\nkind: {type: copy, from: src.events}\n" +
+            pair.Write("models/src/events.yml", $"name: src.events\nkind: mapped\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: day, type: DATE, nullable: false}}\n");
+            pair.Write("models/dst/events.yml", "name: dst.events\nkind: {copy: {from: src.events}}\n" +
                 "loads:\n  window:\n    strategy: delete_insert_by_range\n    column: day\n    params: {start: DATE, end: DATE}\n    inputs:\n" +
                 "      start: {resolver: {source: \"SELECT min(day) FROM src.events WHERE day >= DATE '2026-03-01'\"}}\n" +
                 "      end: {resolver: {expression: \"DATE '2026-03-04'\"}}\n");

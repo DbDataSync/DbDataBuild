@@ -13,7 +13,7 @@ public sealed class MergedYaml(YamlMapping root, IReadOnlyDictionary<YamlNode, s
     public YamlMapping Root { get; } = root;
     public IReadOnlyDictionary<YamlNode, string> FileOf { get; } = fileOf;
 
-    /// <summary>Every scalar of the result with the file and line it was written on, keyed by its dotted path (`kind.type`, `connections[1]`), in document order.</summary>
+    /// <summary>Every scalar of the result with the file and line it was written on, keyed by its dotted path (`kind.copy.from`, `connections[1]`), in document order.</summary>
     public IReadOnlyList<(string Path, string File, int Line, string Value)> Origins()
     {
         var result = new List<(string, string, int, string)>();
@@ -73,6 +73,8 @@ public static class YamlMerge
         {
             var (name, op) = Split(e.Key.Value);
             if (!layeredKeys.Contains(name)) { Put(cx, entries, e.Key, e.Value); continue; }   // not a layered key: the name is kept as written, and a suffix on it is an unknown key to the loader
+            // a model has one kind, and its settings belong to it: a nearer layer's `kind` replaces the one above whole (merging `copy: {...}` into `view` would leave two kinds)
+            if (name == "kind" && op == Op.Merge) op = Op.Replace;
             Apply(cx, entries, e, name, op);
         }
         return cx.Own(new YamlMapping(entries, below.Line, below.Column));

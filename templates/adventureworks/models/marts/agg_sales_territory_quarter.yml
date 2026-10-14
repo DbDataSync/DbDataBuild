@@ -1,6 +1,5 @@
 name: marts.agg_sales_territory_quarter
-kind:
-  type: full
+kind: full
 grain:
   - territory_id
   - year

@@ -16,7 +16,7 @@ dbdatabuild project tests run                       # the project's tests: metad
 
 | Folder | What |
 |---|---|
-| `models/raw/` | one **mapped** model (`kind: {type: mapped}`, no query) per table the project reads but does not build: its columns and types |
+| `models/raw/` | one **mapped** model (`kind: mapped`, no query) per table the project reads but does not build: its columns and types |
 | `seeds/` | one DuckDB query per source that generates its rows from a `seed` and a `scale` (`dbdatabuild project seed --seed 7 --scale 500`) |
 | `models/staging/` | views: names made consistent, a status mapped to a group, cents turned into dollars |
 | `models/marts/` | tables: `orders` pivots payments into one column per method; `customers` aggregates orders |

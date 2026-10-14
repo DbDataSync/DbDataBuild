@@ -7,8 +7,8 @@ namespace DbDataBuild.Tests.Unit;
 
 public class DefineCommandTests
 {
-    private const string Sources = "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: code, type: VARCHAR(20), nullable: false}\n  - {name: order_date, type: DATE, nullable: false}\n";
-    private const string Customers = "name: staging.customers\nkind:\n  type: mapped\ngrain: [customer_id]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: VARCHAR(50)}\n";
+    private const string Sources = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n  - {name: code, type: VARCHAR(20), nullable: false}\n  - {name: order_date, type: DATE, nullable: false}\n";
+    private const string Customers = "name: staging.customers\nkind: mapped\ngrain: [customer_id]\ncolumns:\n  - {name: customer_id, type: BIGINT, nullable: false}\n  - {name: name, type: VARCHAR(50)}\n";
     private const string OrdersSql = "SELECT o.order_id, o.customer_id, o.amount FROM staging.orders o\n";
 
     private static string Project(string? config = null)
@@ -104,7 +104,7 @@ public class DefineCommandTests
     {
         var dir = Project("defaults: {connections: [sqlserver]}\n");
         Model(dir, "marts.fct_orders", OrdersSql);                                   // no definition yet
-        Model(dir, "marts.stale", "SELECT o.order_id, o.amount FROM staging.orders o", "name: marts.stale\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT}\n");
+        Model(dir, "marts.stale", "SELECT o.order_id, o.amount FROM staging.orders o", "name: marts.stale\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT}\n");
         var before = Snapshot(dir);
         var (exit, output, err) = Define(dir, "--check");
         Assert.Equal(CliApp.ExitFindings, exit);
@@ -118,7 +118,7 @@ public class DefineCommandTests
     public void Check_passes_for_in_sync_definitions()
     {
         var dir = Project("defaults: {connections: [sqlserver]}\n");
-        Model(dir, "marts.fct_orders", OrdersSql, "name: marts.fct_orders\nkind: {type: full}\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
+        Model(dir, "marts.fct_orders", OrdersSql, "name: marts.fct_orders\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
         var (exit, output, err) = Define(dir, "--check");
         Assert.Equal((CliApp.ExitOk, ""), (exit, err));
         Assert.Contains("OK: 1 definition(s) in sync", output);
@@ -139,7 +139,7 @@ public class DefineCommandTests
         Assert.Contains("models/marts/fct_orders.sql -> models/marts/fct_orders.yml: new definition", output);
         Assert.Contains("--- /dev/null\n+++ b/models/marts/fct_orders.yml", output);          // the diff was shown
         Assert.Contains("wrote models/marts/fct_orders.yml", output);
-        Assert.Equal("name: marts.fct_orders\nkind:\n  type: full\ncolumns:\n  - name: order_id\n    type: BIGINT\n    nullable: false\n  - name: customer_id\n    type: BIGINT\n  - name: amount\n    type: DECIMAL(14, 2)\n",
+        Assert.Equal("name: marts.fct_orders\nkind: full\ncolumns:\n  - name: order_id\n    type: BIGINT\n    nullable: false\n  - name: customer_id\n    type: BIGINT\n  - name: amount\n    type: DECIMAL(14, 2)\n",
                      File.ReadAllText(Path.Combine(dir, "models/marts/fct_orders.yml")));
         Assert.Equal(queries, QueryBytes(dir));                                                // the .sql is byte-identical
 
@@ -211,7 +211,7 @@ public class DefineCommandTests
 
     // ---------------- updating an existing definition ----------------
 
-    private const string Existing = "# keep me\nname: marts.fct_orders\nkind:\n  type: full   # reloaded\ncolumns:\n  - name: order_id\n    type: BIGINT\n    nullable: false\n  - name: customer_id   # fk\n    type: BIGINT\n";
+    private const string Existing = "# keep me\nname: marts.fct_orders\nkind: full   # reloaded\ncolumns:\n  - name: order_id\n    type: BIGINT\n    nullable: false\n  - name: customer_id   # fk\n    type: BIGINT\n";
 
     [Fact]
     public void An_update_adds_the_new_column_with_a_splice_and_keeps_comments()
@@ -244,7 +244,7 @@ public class DefineCommandTests
     {
         var dir = Project();
         Directory.CreateDirectory(Path.Combine(dir, "models/marts"));
-        File.WriteAllText(Path.Combine(dir, "models/marts/lonely.yml"), "name: marts.lonely\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/lonely.yml"), "name: marts.lonely\nkind: full\ncolumns:\n  - {name: a, type: INT}\n");
         var (exit, _, err) = Define(dir, "--check");
         Assert.Equal(CliApp.ExitFindings, exit);
         Assert.Contains("DDB-108", err);
@@ -294,7 +294,7 @@ public class DefineCommandTests
         Assert.Equal((CliApp.ExitOk, ""), (exit, err));
         Assert.Contains("Q-define-marts.dim_customer-kind", output);
         Assert.Contains("Write 1 definition file(s)? [y/N]", output);
-        Assert.Equal("name: marts.dim_customer\nkind:\n  type: full\ncolumns:\n  - name: customer_id\n    type: BIGINT\n    nullable: false\n  - name: name\n    type: VARCHAR(50)\n",
+        Assert.Equal("name: marts.dim_customer\nkind: full\ncolumns:\n  - name: customer_id\n    type: BIGINT\n    nullable: false\n  - name: name\n    type: VARCHAR(50)\n",
                      File.ReadAllText(Path.Combine(dir, "models/marts/dim_customer.yml")));
     }
 
@@ -404,7 +404,7 @@ public class DefineCommandTests
         Assert.Contains("CREATE TABLE marts.fct_orders AS", File.ReadAllText(stem + ".sql"));                       // the query file is never written
         // the project reads the two together, and define sees them in sync
         var model = DbDataBuild.Models.ProjectValidator.Validate(dir).Sources.Single(s => s.Definition.Name == "marts.fct_orders");
-        Assert.Equal("full", model.Definition.KindType);
+        Assert.Equal("full", model.Definition.Kind);
         Assert.Equal((CliApp.ExitOk, ""), (Define(dir, "--check").Exit, Define(dir, "--check").Err));
     }
 

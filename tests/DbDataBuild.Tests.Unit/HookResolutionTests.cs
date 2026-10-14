@@ -11,7 +11,7 @@ public class HookResolutionTests
     private static ModelDefinition Model(string hooks)
     {
         var diags = new List<Diagnostic>();
-        var m = ModelDefinitionLoader.Load("name: marts.fct\nkind: {type: full}\ncolumns:\n  - {name: a, type: INT}\nhooks:\n" + hooks, "models/marts/fct.yml", "marts.fct", diags);
+        var m = ModelDefinitionLoader.Load("name: marts.fct\nkind: full\ncolumns:\n  - {name: a, type: INT}\nhooks:\n" + hooks, "models/marts/fct.yml", "marts.fct", diags);
         Assert.Empty(diags.Select(DiagnosticFormatter.Format));
         return m!;
     }

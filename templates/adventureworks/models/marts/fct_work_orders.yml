@@ -1,6 +1,5 @@
 name: marts.fct_work_orders
-kind:
-  type: full
+kind: full
 grain:
   - work_order_id
 columns:

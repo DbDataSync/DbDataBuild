@@ -1,6 +1,5 @@
 name: staging.tracks
-kind:
-  type: view
+kind: view
 grain:
   - track_id
 columns:

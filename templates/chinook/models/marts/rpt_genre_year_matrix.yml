@@ -1,6 +1,5 @@
 name: marts.rpt_genre_year_matrix
-kind:
-  type: full
+kind: full
 grain:
   - genre_name
 columns:

@@ -1,6 +1,5 @@
 name: marts.rpt_vendor_scorecard
-kind:
-  type: full
+kind: full
 grain:
   - vendor_id
 columns:

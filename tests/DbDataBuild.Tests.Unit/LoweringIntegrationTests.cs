@@ -6,8 +6,8 @@ namespace DbDataBuild.Tests.Unit;
 /// <summary>The lowering stage inside the commands: the committed artifact, what it changes about findings, and its refusals.</summary>
 public class LoweringIntegrationTests
 {
-    private const string Orders = "name: staging.orders\nkind:\n  type: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
-    private const string Fct = "name: marts.fct\nkind: {type: full}\nconnections: [sqlserver]\ncolumns:\n  - {name: customer_id, type: BIGINT}\n  - {name: n, type: BIGINT}\n";
+    private const string Orders = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: customer_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n";
+    private const string Fct = "name: marts.fct\nkind: full\nconnections: [sqlserver]\ncolumns:\n  - {name: customer_id, type: BIGINT}\n  - {name: n, type: BIGINT}\n";
 
     private static string Project(string sql, string config = "defaults: {connections: [sqlserver]}\n")
     {

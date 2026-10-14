@@ -1,6 +1,5 @@
 name: staging.territories
-kind:
-  type: view
+kind: view
 grain:
   - territory_id
 columns:

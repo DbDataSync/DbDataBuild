@@ -1,6 +1,5 @@
 name: staging.sales_quotas
-kind:
-  type: view
+kind: view
 grain:
   - sales_person_id
   - quota_date

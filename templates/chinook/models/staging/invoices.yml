@@ -1,6 +1,5 @@
 name: staging.invoices
-kind:
-  type: view
+kind: view
 grain:
   - invoice_id
 columns:

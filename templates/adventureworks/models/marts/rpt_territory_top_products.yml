@@ -1,6 +1,5 @@
 name: marts.rpt_territory_top_products
-kind:
-  type: full
+kind: full
 grain:
   - territory_id
   - product_id

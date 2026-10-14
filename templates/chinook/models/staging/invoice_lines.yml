@@ -1,6 +1,5 @@
 name: staging.invoice_lines
-kind:
-  type: view
+kind: view
 grain:
   - invoice_line_id
 columns:

@@ -21,15 +21,15 @@ public class QueryHeadTests
     public void A_head_names_the_object_whether_it_is_a_table_or_a_view_and_its_options()
     {
         var head = Head("-- the orders\nCREATE TABLE marts.fct_orders\nWITH (kind = 'incremental_by_unique_key', unique_key = (order_id, \"line no\"))\nAS\nSELECT 1\n");
-        Assert.Equal(("marts.fct_orders", false, "incremental_by_unique_key", true), (head.Name, head.IsView, head.KindType, head.KindIsExplicit));
+        Assert.Equal(("marts.fct_orders", false, "incremental_by_unique_key", true), (head.Name, head.IsView, head.Kind, head.KindIsExplicit));
         Assert.Equal(["order_id", "line no"], head.Property("unique_key")!.Value.Items);
         Assert.Equal(2, head.Line);
         var timed = Head("create table marts.daily with (KIND = incremental_by_time_range, time_column = day, lookback = '3 days') as select 1");
-        Assert.Equal(("incremental_by_time_range", "day", "3 days"), (timed.KindType, timed.Property("time_column")!.Value.Text, timed.Property("lookback")!.Value.Text));
+        Assert.Equal(("incremental_by_time_range", "day", "3 days"), (timed.Kind, timed.Property("time_column")!.Value.Text, timed.Property("lookback")!.Value.Text));
         var view = Head("CREATE VIEW marts.v AS SELECT 1");
-        Assert.Equal((true, "view", true), (view.IsView, view.KindType, view.KindIsExplicit));
+        Assert.Equal((true, "view", true), (view.IsView, view.Kind, view.KindIsExplicit));
         var plain = Head("CREATE TABLE \"my schema\".t AS SELECT 1");
-        Assert.Equal(("my schema.t", "full", false), (plain.Name, plain.KindType, plain.KindIsExplicit));          // a plain table says "a table", not a kind
+        Assert.Equal(("my schema.t", "full", false), (plain.Name, plain.Kind, plain.KindIsExplicit));          // a plain table says "a table", not a kind
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class QueryHeadTests
         File.WriteAllText(full, text);
     }
 
-    private const string Orders = "name: staging.orders\nkind: {type: mapped}\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n";
+    private const string Orders = "name: staging.orders\nkind: mapped\ngrain: [order_id]\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(18,2)\", nullable: false}\n";
 
     private static string Project(string sql, string yml, string config = "defaults: {connections: [sqlserver]}\ntracking: none\n")
     {
@@ -95,7 +95,7 @@ public class QueryHeadTests
         var dir = Project("CREATE TABLE marts.fct\nWITH (kind = 'incremental_by_unique_key', unique_key = (order_id))\nAS\nSELECT order_id, amount FROM staging.orders\n", Columns);
         Assert.Equal("", Validate(dir));
         var source = ProjectValidator.Validate(dir).Sources.Single();
-        Assert.Equal(("marts.fct", ModelKinds.IncrementalByUniqueKey, "order_id"), (source.Definition.Name, source.Definition.KindType, string.Join(",", source.Definition.UniqueKey)));
+        Assert.Equal(("marts.fct", ModelKinds.IncrementalByUniqueKey, "order_id"), (source.Definition.Name, source.Definition.Kind, string.Join(",", source.Definition.UniqueKey)));
         Assert.Equal("SELECT order_id, amount FROM staging.orders\n", source.ReadQuery(dir, ProjectConfigLoader.LoadFromProject(dir, new List<Diagnostic>())));    // the query, without the head
         var render = new StringWriter(); var err = new StringWriter();
         Assert.Equal(0, CliApp.Run(["project", "compile", "--project", dir], render, err, environment: _ => null));
@@ -110,29 +110,29 @@ public class QueryHeadTests
     {
         var view = Project("CREATE VIEW marts.fct AS SELECT order_id, amount FROM staging.orders", Columns);
         Assert.Equal("", Validate(view));
-        Assert.Equal(ModelKinds.View, ProjectValidator.Validate(view).Sources.Single().Definition.KindType);
+        Assert.Equal(ModelKinds.View, ProjectValidator.Validate(view).Sources.Single().Definition.Kind);
 
         var dir = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", Columns);
-        Write(dir, "models/marts/_dbdatabuild.yml", "defaults:\n  kind: {type: incremental_by_unique_key, unique_key: [order_id]}\n");
+        Write(dir, "models/marts/_dbdatabuild.yml", "defaults:\n  kind: {incremental_by_unique_key: {unique_key: [order_id]}}\n");
         Assert.Equal("", Validate(dir));
         var source = ProjectValidator.Validate(dir).Sources.Single();
-        Assert.Equal((ModelKinds.Full, 0), (source.Definition.KindType, source.Definition.UniqueKey.Count));              // the head wins over the folder's kind, and nothing of it is left
+        Assert.Equal((ModelKinds.Full, 0), (source.Definition.Kind, source.Definition.UniqueKey.Count));              // the head wins over the folder's kind, and nothing of it is left
     }
 
     [Fact]
     public void The_kind_is_said_in_one_place_and_the_name_is_the_same_in_both()
     {
-        var both = Project("CREATE VIEW marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.fct\nkind: {type: view}\n" + Columns);
+        var both = Project("CREATE VIEW marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.fct\nkind: view\n" + Columns);
         Assert.Contains("DDB-238 models/marts/fct.sql:1 the kind is said in the head (CREATE VIEW) and again in `models/marts/fct.yml`", Validate(both));
 
         var named = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.other\n" + Columns);
         Assert.Contains("DDB-107 models/marts/fct.yml:1 name is `marts.other`, but the head of `models/marts/fct.sql` says `marts.fct`", Validate(named));
 
-        var same = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.fct\nkind: {type: incremental_by_unique_key, unique_key: [order_id]}\n" + Columns);
+        var same = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.fct\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\n" + Columns);
         Assert.Equal("", Validate(same));                                                                                   // a plain CREATE TABLE leaves the kind to the definition
-        Assert.Equal(ModelKinds.IncrementalByUniqueKey, ProjectValidator.Validate(same).Sources.Single().Definition.KindType);
+        Assert.Equal(ModelKinds.IncrementalByUniqueKey, ProjectValidator.Validate(same).Sources.Single().Definition.Kind);
 
-        var contradiction = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "kind: {type: view}\n" + Columns);
+        var contradiction = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "kind: view\n" + Columns);
         Assert.Contains("the head says `CREATE TABLE`, and `models/marts/fct.yml` says the kind is `view`", Validate(contradiction));
     }
 

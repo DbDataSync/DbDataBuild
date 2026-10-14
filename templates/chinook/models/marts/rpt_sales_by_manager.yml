@@ -1,6 +1,5 @@
 name: marts.rpt_sales_by_manager
-kind:
-  type: full
+kind: full
 grain:
   - employee_id
 columns:

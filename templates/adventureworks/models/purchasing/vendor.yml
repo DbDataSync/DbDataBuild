@@ -1,6 +1,5 @@
 name: purchasing.vendor
-kind:
-  type: mapped
+kind: mapped
 grain: [vendor_id]
 columns:
   - {name: vendor_id, type: INTEGER, nullable: false}
