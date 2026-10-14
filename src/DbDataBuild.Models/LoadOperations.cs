@@ -66,9 +66,10 @@ public sealed record LoadParameter(string Name, string Type);
 /// <param name="Declared">False for the operation a kind supplies implicitly.</param>
 /// <param name="MaxRuntime">Opt-in: how long a refresh lets this load run before it cancels the statement and counts the load as failed (wins over the plan's).</param>
 /// <param name="Inputs">The load's `inputs:` (section 8 of docs/research/refresh-plans.md): defaults and resolvers for the values it needs.</param>
+/// <param name="ReadsAll">A load of a copy that replaces everything of an origin (declared `full_replace`): the copy reads the origin in full for it, with no watermark bound.</param>
 public sealed record LoadOperation(
     string Name, bool IsDefault, string Strategy, IReadOnlyList<string> Key, string? Column, WatermarkSpec? Watermark,
-    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0, EveryDuration? MaxRuntime = null, IReadOnlyList<LoadInput>? Inputs = null)
+    IReadOnlyList<LoadParameter> Params, LoadDuration? MaxSpan, IReadOnlyList<string>? Targets, bool Declared = true, int Line = 0, EveryDuration? MaxRuntime = null, IReadOnlyList<LoadInput>? Inputs = null, bool ReadsAll = false)
 {
     public IReadOnlyList<LoadInput> InputList => Inputs ?? [];
 
@@ -86,13 +87,23 @@ public static class LoadPlan
     public static IReadOnlyList<LoadOperation> For(ModelDefinition model, string target)
     {
         if (model.KindType == ModelKinds.View) return [];
-        if (model.Loads.Count > 0) return model.Loads.Where(o => o.AppliesTo(target)).ToList();
+        if (model.Loads.Count > 0) return model.Loads.Where(o => o.AppliesTo(target)).Select(o => ForCopy(model, o)).ToList();
         return [Implicit(model)];
+    }
+
+    /// <summary>
+    /// `full_replace` on a copy means everything of the origin being loaded: the whole table for a copy without a slice, and for a copy with one the rows of that origin only (delete by the slice column, then insert,
+    /// as the implicit load of a sliced copy does), so a fan-in's other origins keep their rows. The copy reads the origin in full for it, whatever its watermark says (<see cref="LoadOperation.ReadsAll"/>).
+    /// </summary>
+    private static LoadOperation ForCopy(ModelDefinition model, LoadOperation op)
+    {
+        if (!model.IsCopy || op.Strategy != LoadStrategies.FullReplace) return op;
+        return model.Slice == null ? op with { ReadsAll = true } : op with { Strategy = LoadStrategies.DeleteInsertByKey, Key = [model.Slice.Column], ReadsAll = true };
     }
 
     /// <summary>Every operation of a model across all its declared loads, or the implicit one.</summary>
     public static IReadOnlyList<LoadOperation> All(ModelDefinition model) =>
-        model.KindType == ModelKinds.View ? [] : model.Loads.Count > 0 ? model.Loads : [Implicit(model)];
+        model.KindType == ModelKinds.View ? [] : model.Loads.Count > 0 ? model.Loads.Select(o => ForCopy(model, o)).ToList() : [Implicit(model)];
 
     private static LoadOperation Implicit(ModelDefinition m) => m.KindType switch
     {

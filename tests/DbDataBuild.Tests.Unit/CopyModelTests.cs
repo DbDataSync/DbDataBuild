@@ -292,6 +292,34 @@ public class CopyModelTests
         Assert.Equal(["order_id", "store_id"], load.Key);                                                 // two stores may use one order number
     }
 
+    [Fact]
+    public void A_sliced_copy_can_declare_a_full_load_that_replaces_everything_of_an_origin_and_reads_it_in_full()
+    {
+        var dir = StoreProject();
+        Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  unique_key: [order_id]\n  watermark: {column: order_id}\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n"
+            + "loads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
+        var (result, text) = Validate(dir);
+        Assert.False(result.HasErrors, text);
+        var def = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
+        var loads = LoadPlan.For(def, "wh");
+        var routine = loads.Single(l => l.Name == "default");
+        Assert.Equal(["order_id", "store_id"], routine.Key);                                              // the key a copy defaults to leads to the slice, as the implicit load does
+        Assert.False(routine.ReadsAll);
+        var full = loads.Single(l => l.Name == "full");
+        Assert.Equal(($"{LoadStrategies.DeleteInsertByKey} store_id", true), ($"{full.Strategy} {string.Join(",", full.Key)}", full.ReadsAll));   // the origin's rows only: another origin's stay
+    }
+
+    [Fact]
+    public void A_copy_without_a_slice_replaces_the_whole_table_with_its_full_load()
+    {
+        var dir = Project();
+        Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  type: copy\n  from: crm.customers\n  unique_key: [customer_id]\n  watermark: {column: born}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
+        var (result, text) = Validate(dir);
+        Assert.False(result.HasErrors, text);
+        var full = LoadPlan.For(result.Sources.Single().Definition, "wh").Single(l => l.Name == "full");
+        Assert.Equal((LoadStrategies.FullReplace, true), (full.Strategy, full.ReadsAll));
+    }
+
     // ---- local copies: a copy on the origin's own connection ----
 
     [Fact]

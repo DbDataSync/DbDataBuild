@@ -23,7 +23,7 @@ dbdatabuild project tests run                # the model test gives warehouse.or
 
 ## What a refresh does
 
-The project declares two refresh plans, `hourly` and `daily` (`refresh.plans` in `dbdatabuild.yml`), and each model says which it is in (`refresh:` in its file): the copy and the report are in both. A copy is a load like any other, so `loads.yml` carries the copy's staging table and a read for each shop in the shop's own dialect (`copy:`, `origins:`), and in `rendered/sqlserver/refresh/hourly.yml` (and the same on `postgres`) the copy is a member **before** the report that reads it:
+The project declares three refresh plans, `hourly`, `daily` and `weekly` (`refresh.plans` in `dbdatabuild.yml`), and each model says which it is in (`refresh:` in its file): the copy and the report are in all three (in `weekly` the copy's load is `full`, below). A copy is a load like any other, so `loads.yml` carries the copy's staging table and a read for each shop in the shop's own dialect (`copy:`, `origins:`), and in `rendered/sqlserver/refresh/hourly.yml` (and the same on `postgres`) the copy is a member **before** the report that reads it:
 
 ```yaml
 members:
@@ -34,6 +34,8 @@ members:
 ```
 
 `warehouse.orders` is incremental (`unique_key` and `watermark` in the copy's `kind`): a run reads each shop from the newest `ordered_on` the warehouse holds for that shop, less a week, and replaces the rows with the same `(store_id, order_id)`. A refresh stages the rows of each shop on the warehouse, loads them, drops the staging table and then builds the report; it needs the read login of both shops (`DBDATABUILD_STORE_EAST_READ`, `DBDATABUILD_STORE_WEST_READ`) as well as the warehouse's. If a shop cannot be reached the copy ends `failed: origin`, the report is skipped (`upstream failed`, under the plan's `on_failure: continue`), and nothing is half-written. Rows deleted at a shop are not deleted in the warehouse by an incremental copy (a copy with no `watermark` replaces a shop's rows in full and reconciles them).
+
+**A full re-read.** The copy declares two loads (`loads:` in `models/warehouse/orders.yml`): `default`, which replaces the rows it read again, by `(store_id, order_id)`, and `full`, a `full_replace`. For a copy `full_replace` means everything of the origin being loaded: the copy reads that shop in full (no watermark bound) and replaces all the warehouse holds for it (the other shop's rows stay), so a row deleted at a shop goes too. The plan `weekly` runs it (`refresh: { weekly: { load: full } }`); once, by hand, `dbdatabuild connection refresh sqlserver warehouse.orders.full`. There is no flag that re-reads "everything": a person picks the plan or the load.
 
 ## Why the copy declares no resolver
 

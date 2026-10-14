@@ -2,6 +2,8 @@
 # store_id is not in the origin, so the copy adds it (hence `type`) and writes each connection's `store_id` parameter into its rows.
 # A run replaces only the rows of the origin it loads. The copy has no query and no `columns`: both are the origin's.
 # It is incremental: a run reads each shop from the newest `ordered_on` the warehouse holds for that shop, less a week, and replaces the rows with the same (store_id, order_id).
+# A copy has loads like any model. `default` replaces the rows read again, by (store_id, order_id), so a row deleted at a shop stays in the warehouse; `full` is a `full_replace`: for a copy it reads a shop in full
+# (no watermark bound) and replaces everything of that shop, so deleted rows go too. `weekly` runs it; `connection refresh sqlserver warehouse.orders.full` runs it once.
 # `connections=:` puts it on the SQL Server warehouse and on the PostgreSQL reporting database, each filled from both shops.
 name: warehouse.orders
 kind:
@@ -11,8 +13,11 @@ kind:
   unique_key: [order_id]
   watermark: {column: ordered_on, lookback: 7 days}
   on_mismatch: fail            # or skip: leave out a shop system whose table has drifted from its declaration, and load the others
+loads:
+  default: {default: true, strategy: delete_insert_by_key}      # the key is unique_key plus the slice column
+  full: {strategy: full_replace}                                # everything of an origin; the other origin's rows stay
 connections=: [sqlserver, postgres]
-refresh: { hourly: default, daily: default }   # a copy is a load like any other: the refresh reads each shop (it needs their read logins) and loads the report after it
+refresh: { hourly: default, daily: default, weekly: { load: full } }   # a copy is a load like any other: the refresh reads each shop (it needs their read logins) and loads the report after it
 indexes:
   - {name: ux_orders_store_order, columns: [store_id, order_id], unique: true}   # the load replaces an origin's rows by store_id, so an index leads with it
   - {name: ix_orders_ordered_on, columns: [ordered_on]}

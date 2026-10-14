@@ -72,10 +72,6 @@ public class MacroConformanceTests
             var plan = Cli("connection", "deploy", name, "--write-plan");
             Ok(plan, "plan");
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(plan.Out)), "apply");
-            var refresh = Cli("connection", "deploy", name, "--write-plan", "--full-refresh", "marts.snap_totals");           // a model every load of which rebuilds it in full: nothing to refresh, and no reason to refuse
-            Ok(refresh, "plan --full-refresh of a full model");
-            Assert.Contains("rebuilt in full by every load", refresh.Out);
-
             // the snapshot: the rows DuckDB gives for the same query (the sums per snapshot date and status)
             Assert.Equal(["2026-01-01|open|15.00", "2026-02-01|open|6.00", "2026-02-01|shipped|12.00"],
                 await engine.RowsAsync("SELECT CONCAT(CONVERT(VARCHAR(10), as_of_date, 23), '|', status, '|', CAST(total AS VARCHAR(20))) FROM marts.snap_totals ORDER BY 1".Replace("CONVERT(VARCHAR(10), as_of_date, 23)", name == "postgres" ? "to_char(as_of_date, 'YYYY-MM-DD')" : "CONVERT(VARCHAR(10), as_of_date, 23)")));

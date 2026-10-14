@@ -288,7 +288,7 @@ public partial class CopyConformanceTests
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
             pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: note, type: \"VARCHAR(40)\"}}\n  - {{name: updated_at, type: TIMESTAMP, nullable: false}}\n");
-            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  type: copy\n  from: src.events\n  unique_key: [id]\n  watermark: {column: updated_at, lookback: 1 hour}\n");
+            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  type: copy\n  from: src.events\n  unique_key: [id]\n  watermark: {column: updated_at, lookback: 1 hour}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
             await from.ExecAsync(origin == "postgres" ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
             var q = from.QuoteIdent;
             await from.ExecAsync($"CREATE TABLE src.events ({q("id")} BIGINT NOT NULL, {q("note")} {from.ColumnType("VARCHAR(40)")}, {q("updated_at")} {from.ColumnType("TIMESTAMP")} NOT NULL)");
@@ -320,14 +320,16 @@ public partial class CopyConformanceTests
             Assert.Contains("value: \"2024-01-01 11:00:00", second);                                          // the newest row held (12:00) less the lookback (1 hour)
             Assert.Equal(["1|one", "2|two", "3|three, edited", "4|four"], await Dest());                     // read: 2 (11:00 is at the bound), 3, 4. Not read: 1
 
-            // a full refresh reads the origin from the start: row 1, whose updated_at never moved, comes through now
-            var refreshed = pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "dst.events");
-            Ok(refreshed, "full-refresh plan");
+            // the copy's `full` load reads the origin from the start and replaces everything: row 1, whose updated_at never moved, comes through now, and row 2, deleted at the origin, goes
+            await from.ExecAsync("DELETE FROM src.events WHERE id = 2");
+            var refreshed = pair.Cli("connection", "deploy", destination, "--write-plan", "--op", "dst.events=full");
+            Ok(refreshed, "full load plan");
             var refreshFile = Path.Combine(pair.Dir, Regex.Match(refreshed.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);
             Assert.DoesNotContain("@watermark", File.ReadAllText(refreshFile));
-            Ok(pair.Cli("connection", "deploy", "--apply-plan", refreshFile), "full-refresh apply");
-            Assert.Equal(["1|one, edited", "2|two", "3|three, edited", "4|four"], await Dest());
-            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "no.such_model").Exit);    // not a model of the project
+            Ok(pair.Cli("connection", "deploy", "--apply-plan", refreshFile), "full load apply");
+            Assert.Equal(["1|one, edited", "3|three, edited", "4|four"], await Dest());
+            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--op", "no.such_model=full").Exit);    // not a model of the project
+            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "dst.events").Exit);  // the flag is gone: a person picks the load
 
             // `report` says which origin copied well last
             var report = pair.Cli("connection", "monitor", destination);

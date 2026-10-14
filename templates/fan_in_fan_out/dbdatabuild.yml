@@ -28,6 +28,7 @@ refresh:
   plans:
     hourly: { title: Orders and report, description: "The new orders of both shops, then the report over them.", expected_every: 1h, on_failure: continue }
     daily:  { title: Orders and report, description: "The copy of the shops' orders (a week back from the newest), then the report.", expected_every: 1d, on_failure: continue }
+    weekly: { title: Full re-read, description: "Both shops read in full, replacing what the warehouse holds for each (rows deleted at a shop go), then the report.", expected_every: 7d, on_failure: continue }
 
 # How this project is meant to operate (docs/concepts.md). What is written here is the default; leave it out to keep it.
 #   plans:

@@ -96,7 +96,17 @@ public class TemplateTests
                 Assert.Contains("connection: \"store_east\"", loads);
                 Assert.Contains("connection: \"store_west\"", loads);
                 Assert.Contains("read_incremental:", loads);                                                  // the copy is incremental: its read has the watermark bound
-                foreach (var plan in new[] { "hourly", "daily" })
+                // the load `full` of the copy reads each shop in full: its copy block has the plain read and no bounded one
+                var fullAt = loads.IndexOf("load: \"full\"", StringComparison.Ordinal);
+                Assert.True(fullAt > 0, loads);
+                var afterFull = loads[fullAt..];
+                var nextLoad = afterFull.IndexOf("\n  - hash:", StringComparison.Ordinal);
+                var fullBlock = nextLoad < 0 ? afterFull : afterFull[..nextLoad];
+                Assert.Contains("read: ", fullBlock);
+                Assert.DoesNotContain("read_incremental:", fullBlock);
+                Assert.DoesNotContain("watermark:", fullBlock);
+                Assert.Contains("load: \"full\"", File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", "weekly.yml")));
+                foreach (var plan in new[] { "hourly", "daily", "weekly" })
                 {
                     var text = File.ReadAllText(Path.Combine(dir, "rendered", connection, "refresh", plan + ".yml"));
                     Assert.True(text.IndexOf("warehouse.orders", StringComparison.Ordinal) is var copyAt and >= 0 && text.IndexOf("marts.daily_sales", StringComparison.Ordinal) > copyAt, plan + ": the copy comes before the report that reads it\n" + text);

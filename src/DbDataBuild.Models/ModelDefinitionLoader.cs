@@ -88,7 +88,7 @@ public static class ModelDefinitionLoader
                     Add(DiagnosticCatalog.InvalidValue, t, $"Unknown connection `{t.Value}`.", $"One of: {string.Join(", ", connections.Order(StringComparer.Ordinal))}.");
 
             var columns = isCopy ? [] : ReadColumns(top);
-            var loads = ReadLoads(top, kindType?.Value, uniqueKey, timeColumn, columns);
+            var loads = ReadLoads(top, kindType?.Value, uniqueKey, timeColumn, columns, slice);
             var renames = ReadRenames(top);
             var indexes = ReadIndexes(top, columns, targets?.Select(t => t.Value).ToList());
             if (kindType?.Value == ModelKinds.View && indexes.Count > 0) Add(DiagnosticCatalog.InvalidValue, top.Get("indexes")!, "A view cannot have indexes (indexed views are out of scope).");
@@ -216,7 +216,7 @@ public static class ModelDefinitionLoader
         private static readonly string[] WatermarkKeys = ["column", "resolver", "lookback", "on_null", "initial", "overridable"];
         private static readonly System.Text.RegularExpressions.Regex OpName = new("^[a-z][a-z0-9_]*$");
 
-        private List<LoadOperation>? ReadLoads(YamlMapping top, string? kind, List<YamlScalar>? uniqueKey, YamlScalar? timeColumn, IReadOnlyList<ColumnDefinition> columns)
+        private List<LoadOperation>? ReadLoads(YamlMapping top, string? kind, List<YamlScalar>? uniqueKey, YamlScalar? timeColumn, IReadOnlyList<ColumnDefinition> columns, CopySlice? copySlice = null)
         {
             if (top.Get("loads") is not { } node) return null;
             if (node is not YamlMapping loads) { Add(DiagnosticCatalog.InvalidValue, node, "`loads` must be a mapping of operation names to definitions."); return null; }
@@ -272,6 +272,8 @@ public static class ModelDefinitionLoader
                         foreach (var (node2, name) in names.Where(n => own != null))
                             if (columns.Count > 0 && Column(name) == null) Add(DiagnosticCatalog.UnknownColumnReference, node2, $"key refers to `{name}`, which is not declared in `columns`.");
                         key = names.Select(n => n.Value).ToList();
+                        // a copy that is sliced replaces the rows of the origin it loads: the key it defaults to leads to the slice column, as the implicit load of a sliced copy does
+                        if (own == null && kind == ModelKinds.Copy && copySlice != null && !key.Contains(copySlice.Column, StringComparer.OrdinalIgnoreCase)) key = [.. key, copySlice.Column];
                         break;
                     }
 

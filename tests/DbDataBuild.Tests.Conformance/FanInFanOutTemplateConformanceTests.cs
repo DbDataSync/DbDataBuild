@@ -124,6 +124,14 @@ public partial class FanInFanOutTemplateConformanceTests
             Assert.Contains("origin", o.ToString() + e.ToString());
             Assert.Contains("skipped", o.ToString());
             Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // nothing was half-written
+
+            // the plan `weekly` runs the copy's `full` load: each shop is read in full and everything of that shop replaced, so an order deleted at a shop goes (the incremental load never sees a delete)
+            await east.ExecAsync("DELETE FROM pos.orders WHERE order_id = 1000");
+            Ok(Cli("connection", "refresh", "sqlserver", "hourly"), "refresh sqlserver hourly after a delete");
+            Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // still there
+            var weekly = Cli("connection", "refresh", "sqlserver", "weekly");
+            Ok(weekly, "refresh sqlserver weekly");
+            Assert.Equal(["E01|60", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // gone, and the other shop's rows kept
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }

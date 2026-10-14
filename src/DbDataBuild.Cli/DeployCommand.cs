@@ -10,7 +10,7 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class DeployCommand
 {
-    public static int Run(CommandSpec spec, string root, string? target, string[] models, FileInfo? answers, bool acceptInferred, DirectoryInfo? outDir, string[] ops, string[] backfill, string[] fullRefresh, string[] parameters,
+    public static int Run(CommandSpec spec, string root, string? target, string[] models, FileInfo? answers, bool acceptInferred, DirectoryInfo? outDir, string[] ops, string[] backfill, string[] parameters,
         bool writePlan, FileInfo? applyPlan, string? ack, string? reason, bool allowRisky, string[] allowDestructive, bool allowDirty, bool dryRun, bool yes, string[] inputArgs,
         TextWriter output, TextWriter error, TextReader input, bool interactive, Func<string, string?> env)
     {
@@ -42,7 +42,7 @@ internal static class DeployCommand
         }
 
         string? written = null;
-        var exit = PlanCommand.Plan(writePlan ? spec with { Effect = EffectClass.TargetReadOnly, Disposition = "C→P" } : spec, root, target, models, answers, acceptInferred, outDir, ops, backfill, fullRefresh, parameters,
+        var exit = PlanCommand.Plan(writePlan ? spec with { Effect = EffectClass.TargetReadOnly, Disposition = "C→P" } : spec, root, target, models, answers, acceptInferred, outDir, ops, backfill, parameters,
             output, error, input, interactive, env, path => written = path, hintApply: writePlan, pins: pins);
         if (writePlan || written == null || exit != CliApp.ExitOk) return exit;
 
