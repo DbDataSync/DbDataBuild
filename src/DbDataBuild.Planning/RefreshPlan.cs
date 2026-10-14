@@ -83,10 +83,18 @@ public sealed record RefreshCopy(string Staging, string CreateStaging, string Dr
 public sealed record RefreshExclusion(string Model, string Reason);
 
 /// <summary>
-/// Every load plan of every model on one connection (`rendered/&lt;connection&gt;/loads.yml`), so any load can be run on its own, in a plan or not. <see cref="ProjectHash"/> is a hash over the structure the compiled project
-/// expects of the whole connection, which a deploy records, so a refresh can ask whether this project was deployed.
+/// One edge of the dependency graph a loads file carries: <see cref="Model"/> depends on <see cref="DependsOn"/>, <see cref="Depth"/> steps away (1 is a direct read, more is the shortest path through other things, a view or a
+/// model that is not loaded on the connection included). Both sides are models the file loads; the kinds are their model kinds (`full`, `incremental_by_unique_key`, ...). These are the rows of `metadata_dependency` between
+/// two loaded models, from the one computation (<c>MetadataBuilder.Dependencies</c>) that `publish` also uses.
 /// </summary>
-public sealed record LoadsFile(string Connection, string ProjectHash, IReadOnlyList<LoadPlanEntry> Loads, IReadOnlyList<RefreshExclusion> Excluded)
+public sealed record LoadDependency(string Model, string ModelKind, string DependsOn, string DependsOnKind, int Depth);
+
+/// <summary>
+/// Every load plan of every model on one connection (`rendered/&lt;connection&gt;/loads.yml`), so any load can be run on its own, in a plan or not. <see cref="ProjectHash"/> is a hash over the structure the compiled project
+/// expects of the whole connection, which a deploy records, so a refresh can ask whether this project was deployed. <see cref="Dependencies"/> is the dependency graph among the models the file loads, compiled with the
+/// loads and hashed with them, so the order a refresh runs in cannot differ from the loads; null for a file compiled before the graph was carried (an empty list is a graph with no edges).
+/// </summary>
+public sealed record LoadsFile(string Connection, string ProjectHash, IReadOnlyList<LoadPlanEntry> Loads, IReadOnlyList<RefreshExclusion> Excluded, IReadOnlyList<LoadDependency>? Dependencies = null)
 {
     public LoadPlanEntry? Find(string model, string load) => Loads.FirstOrDefault(l => l.Model == model && l.Load == load);
 }
@@ -310,11 +318,24 @@ public static class LoadsDocument
         sb.Append("  connection: ").AppendLineLf(Q(f.Connection));
         sb.Append("  project_hash: ").AppendLineLf(Q(f.ProjectHash));
         sb.Append("  loads: ").AppendLineLf(f.Loads.Count.ToString(CultureInfo.InvariantCulture));
+        if (f.Dependencies != null) sb.Append("  dependencies: ").AppendLineLf(f.Dependencies.Count.ToString(CultureInfo.InvariantCulture));
         if (f.Loads.Count > 0) sb.AppendLineLf("loads:");
         foreach (var l in f.Loads)
         {
             sb.Append("  - hash: ").AppendLineLf(Q(l.Hash));
             sb.Append(EntryBody(l));
+        }
+        if (f.Dependencies is { Count: > 0 })
+        {
+            sb.AppendLineLf("dependencies:");
+            foreach (var d in f.Dependencies)
+            {
+                sb.Append("  - model: ").AppendLineLf(Q(d.Model));
+                sb.Append("    model_kind: ").AppendLineLf(Q(d.ModelKind));
+                sb.Append("    depends_on: ").AppendLineLf(Q(d.DependsOn));
+                sb.Append("    depends_on_kind: ").AppendLineLf(Q(d.DependsOnKind));
+                sb.Append("    depth: ").AppendLineLf(d.Depth.ToString(CultureInfo.InvariantCulture));
+            }
         }
         if (f.Excluded.Count > 0) sb.AppendLineLf("excluded:");
         foreach (var x in f.Excluded)
@@ -325,8 +346,8 @@ public static class LoadsDocument
         return sb.ToString();
     }
 
-    private static readonly string[] TopKeys = ["loads_file", "loads", "excluded"];
-    private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads"];
+    private static readonly string[] TopKeys = ["loads_file", "loads", "dependencies", "excluded"];
+    private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads", "dependencies"];
     private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "max_runtime", "inputs", "before", "after", "copy"];
     private static readonly string[] HookKeys = ["name", "event", "file", "file_hash", "effect", "risk"];
 
@@ -388,7 +409,27 @@ public static class LoadsDocument
         var excluded = new List<RefreshExclusion>();
         foreach (var m in r.Maps(top, "excluded", "exclusion")) { r.Keys(m, ["model", "reason"], "an exclusion"); excluded.Add(new(r.Req(m, "model"), r.Req(m, "reason"))); }
 
-        var result = new LoadsFile(r.Req(header, "connection"), r.Req(header, "project_hash"), loads, excluded);
+        // the graph: the header says whether the file carries one (and how many edges), so a file compiled before there was one reads as having none
+        List<LoadDependency>? dependencies = null;
+        if (header.Get("dependencies") != null)
+        {
+            dependencies = [];
+            foreach (var m in r.Maps(top, "dependencies", "dependency"))
+            {
+                r.Keys(m, ["model", "model_kind", "depends_on", "depends_on_kind", "depth"], "a dependency");
+                var depth = r.Int(m, "depth");
+                if (depth is null or < 1) r.Bad(m, "`depth` must be a whole number from 1.");
+                dependencies.Add(new(r.Req(m, "model"), r.Req(m, "model_kind"), r.Req(m, "depends_on"), r.Req(m, "depends_on_kind"), depth ?? 1));
+            }
+            if (int.TryParse(r.S(header, "dependencies"), NumberStyles.None, CultureInfo.InvariantCulture, out var count) ? count != dependencies.Count : true)
+                r.Bad(header, "The count of `dependencies` in the header is not the number of dependencies listed.");
+            var loaded = loads.Select(l => l.Model).ToHashSet(StringComparer.Ordinal);
+            foreach (var d in dependencies.Where(d => !loaded.Contains(d.Model) || !loaded.Contains(d.DependsOn)))
+                r.Bad(top, $"The dependency of `{d.Model}` on `{d.DependsOn}` names a model the file does not load.");
+        }
+        else if (top.Get("dependencies") is { } stray) r.Bad(stray, "`dependencies:` is listed but the header does not carry them.");
+
+        var result = new LoadsFile(r.Req(header, "connection"), r.Req(header, "project_hash"), loads, excluded, dependencies);
         if (diags.Count > before) return null;
         var storedHash = r.S(header, "hash");
         if (storedHash == null) { r.Bad(header, "The loads file has no content hash."); return null; }

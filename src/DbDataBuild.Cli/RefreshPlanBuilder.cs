@@ -167,8 +167,9 @@ internal static class RefreshPlanBuilder
         return new RefreshCopy($"{stagingSchema}.{stagingTable}", create, ddl.DropTableIfExists(stagingSchema, stagingTable), def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), watermark, list);
     }
 
+    /// <param name="dependencies">The dependency rows of the whole project (<see cref="MetadataBuilder.Dependencies"/>, computed once for all connections): the file keeps the ones between the models it loads.</param>
     /// <param name="models">Every model of the project that declares <paramref name="connection"/>, with its query as that connection reads it, and its rendering for the connection.</param>
-    public static CompiledRefresh Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, List<Diagnostic> diags)
+    public static CompiledRefresh Build(ProjectContext ctx, string connection, IReadOnlyList<(LoadedModel Model, RenderResult Render)> models, IReadOnlyList<DependencyRow> dependencies, List<Diagnostic> diags)
     {
         var root = ctx.Root;
         var ddl = TargetRegistry.Get(ctx.Config.EngineOf(connection) ?? connection).CreateDdl(ctx.Config.ForConnection(connection));
@@ -238,7 +239,10 @@ internal static class RefreshPlanBuilder
                     shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text, opCopy));
             }
         }
-        var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList());
+        // the dependency graph among the models these loads are of, from the rows `publish` writes as metadata_dependency; a refresh orders and skips by it and reads no project file
+        var loadedKinds = loads.Select(l => l.Model).Distinct(StringComparer.Ordinal).ToDictionary(n => n, n => sources[n].Definition.Kind, StringComparer.OrdinalIgnoreCase);
+        var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList(),
+            MetadataBuilder.LoadDependencies(dependencies, loadedKinds));
 
         // ---- the refresh plans: who is in which, in what order ----
         var members = new Dictionary<string, List<RefreshMember>>(StringComparer.Ordinal);

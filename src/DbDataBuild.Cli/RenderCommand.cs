@@ -53,11 +53,15 @@ internal static class RenderCommand
         // the load plans and refresh plans of each connection are compiled from the whole project: a selection of models would leave loads out of it
         var planned = models.Length == 0 && !diags.Any(d => d.Severity == Severity.Error);
         if (planned)
+        {
+            // computed once for every connection: the same rows `publish` writes as metadata_dependency
+            var dependencies = MetadataBuilder.Dependencies(ctx);
             foreach (var connection in rendered.SelectMany(r => r.Targets).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
             {
                 var mine = rendered.Where(r => r.Targets.Contains(connection)).Select(r => (r.Model, r.Render)).ToList();
-                files.AddRange(RefreshPlanBuilder.Build(ctx, connection, mine, diags).Files());
+                files.AddRange(RefreshPlanBuilder.Build(ctx, connection, mine, dependencies, diags).Files());
             }
+        }
         foreach (var d in diags.DistinctBy(d => (d.Code, d.Location, d.Found))) error.Diag(d);
         var errors = diags.Count(d => d.Severity == Severity.Error);
 

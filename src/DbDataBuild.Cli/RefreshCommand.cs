@@ -11,8 +11,8 @@ namespace DbDataBuild.Cli;
 
 /// <summary>
 /// `dbdatabuild connection refresh [connection] [plan] [selector ...]`: run the loads of a refresh plan that `project compile` wrote (`rendered/&lt;connection&gt;/refresh/&lt;plan&gt;.yml`, the loads it names in
-/// `loads.yml`), or one load named directly (`model.load`, no plan). It reads the compiled files and the committed scripts, not the models (selectors that name models by their settings, `tag:` or `+model`, are the one
-/// thing that loads the project); it asks the connection nothing about its structure unless the chosen check says to (`refresh.check`: none, project, objects, live); it never changes structure, and each run is an event of
+/// `loads.yml`), or one load named directly (`model.load`, no plan). It reads the compiled files and the committed scripts, not the models (selectors that name models by their settings, `tag:`, `property:`, `path:`, `connection:` or `changed:`, are the one
+/// thing that loads the project; the order, the skipping and the selectors `+model` and `kind:` use the dependency graph in `loads.yml`); it asks the connection nothing about its structure unless the chosen check says to (`refresh.check`: none, project, objects, live); it never changes structure, and each run is an event of
 /// its own that records the plan, its hash, the selection and the inputs each load ran with.
 /// </summary>
 internal static class RefreshCommand
@@ -145,7 +145,7 @@ internal static class RefreshCommand
                 error.Diag(new Diagnostic(DiagnosticCatalog.PlanFileInvalid, new(planRelative, 0, 0), $"The refresh plan is for `{plan.Name}` on `{plan.Connection}`, not `{planName}` on `{connection.Name}`."));
                 return CliApp.ExitFindings;
             }
-            var selected = Select(plan, rest, root, error);
+            var selected = Select(plan, rest, root, error, LoadGraph.Of(loadsFile));
             if (selected == null) return CliApp.ExitUsage;
             planHash = plan.Hash;
             selection = string.Join(' ', rest);
@@ -299,8 +299,9 @@ internal static class RefreshCommand
         var requestedParallel = parallelArg ?? plan?.Settings.Parallel ?? 1;
         var parallel = dryRun ? 1 : Math.Min(requestedParallel, connection.MaxParallel ?? requestedParallel);
         output.Payload("parallel", parallel);
-        // the scheduler orders loads by the project graph; a refresh does not otherwise load the models, so it is read now, and a project that cannot be read makes the run sequential, said aloud
-        var (graph, effective, parallelWarning) = ReadGraphFor(parallel, () => ProjectContext.Load(root).Graph);
+        // the scheduler orders loads by the graph `loads.yml` carries (compiled with the loads, hashed with them): no project file is read for it. A file compiled before the graph was carried has none, so its loads run one at a time, said aloud
+        var loadGraph = LoadGraph.Of(loadsFile);
+        var (effective, parallelWarning) = ParallelFor(parallel, loadGraph != null);
         parallel = effective;
         var parallelWarnings = parallelWarning == null ? new List<string>() : [parallelWarning];
         output.Payload("parallel_effective", parallel);
@@ -340,10 +341,12 @@ internal static class RefreshCommand
             byUnit[item.Position] = item;
         }
         IReadOnlySet<string>? everyModel = null;
+        DependencyGraph? projectGraph = null;
         IReadOnlySet<string> Downstream(string model)
         {
-            // the compiled files do not carry the project graph: it is read when a load fails or is skipped, and only then. A project that cannot be read leaves nothing to go by, so everything after is taken as reading it
-            try { return (graph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
+            if (loadGraph != null) return loadGraph.Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // a loads file compiled before the graph was carried: it is read from the project when a load fails or is skipped, and only then. A project that cannot be read leaves nothing to go by, so everything after is taken as reading it
+            try { return (projectGraph ??= ProjectContext.Load(root).Graph).Descendants(model).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return everyModel ??= units.Select(u => u.Model).ToHashSet(StringComparer.OrdinalIgnoreCase); }
         }
         var limits = new SessionLimits(config.Connections.Where(c => c.Value.MaxParallel != null).ToDictionary(c => c.Key, c => c.Value.MaxParallel!.Value, StringComparer.Ordinal));
@@ -365,21 +368,17 @@ internal static class RefreshCommand
     }
 
     /// <summary>
-    /// The scheduler orders loads by the project graph, which a refresh does not otherwise read. With more than one load at a time asked for it is read up front; a project that cannot be read makes the run sequential
-    /// (every earlier load then counts as read), and the warning says so, so a person who asked for 8 and got 1 is told.
+    /// The scheduler orders loads by the graph `loads.yml` carries. With more than one load at a time asked for and no graph in the file (it was compiled by an older version) the run goes one load at a time, in plan order
+    /// (every earlier load then counts as read), and the warning says so, so a person who asked for 8 and got 1 is told to compile again.
     /// </summary>
-    internal static (DependencyGraph? Graph, int Parallel, string? Warning) ReadGraphFor(int parallel, Func<DependencyGraph> read)
+    internal static (int Parallel, string? Warning) ParallelFor(int parallel, bool hasGraph)
     {
-        if (parallel <= 1) return (null, parallel, null);
-        try { return (read(), parallel, null); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return (null, 1, $"parallel: 1 (the project graph could not be read; loads run in plan order); {parallel} was asked for ({ex.GetType().Name})");
-        }
+        if (parallel <= 1 || hasGraph) return (parallel, null);
+        return (1, $"parallel: 1 (the loads file has no dependency graph, as one compiled by an older version has none; loads run in plan order; `project compile` writes it); {parallel} was asked for");
     }
 
     /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
-    internal static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error)
+    internal static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error, LoadGraph? graph = null)
     {
         var all = plan.Members.Select(m => m.FullName).ToHashSet(StringComparer.Ordinal);
         if (selectors.Count == 0) return all;
@@ -396,19 +395,35 @@ internal static class RefreshCommand
         var excludes = modelTerms.Where(t => t.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
         if (positives.Count > 0 || excludes.Count > 0)
         {
-            var ctx = ProjectContext.Load(root);
+            // terms the graph in the loads file can answer (a loaded model's name with the graph operators, `kind:`, `all`) are answered from it, so the project is not read; any other term (`tag:`, `property:`,
+            // `path:`, `connection:`, `changed:`, a file or a directory, a model that is not loaded) needs the project's settings or git, and the project is loaded for the whole selection
+            var fromGraph = graph == null ? null : SelectFromGraph(graph, positives, excludes);
+            ProjectContext? ctx = null;
             if (positives.Count > 0)
             {
-                var picked = ctx.Select(positives, error);
+                HashSet<string>? picked;
+                if (fromGraph != null) picked = fromGraph.Picked;
+                else
+                {
+                    ctx = ProjectContext.Load(root);
+                    var chosen = ctx.Select(positives, error);
+                    picked = chosen?.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                }
                 if (picked == null) return null;
-                models = picked.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                models = picked;
             }
             if (globs.Count > 0) models = [.. models ?? [], .. GlobModels(plan, globs)];
             if (excludes.Count > 0)
             {
-                var kept = ctx.Select(excludes, error);
-                if (kept == null) return null;
-                var keptNames = kept.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                HashSet<string>? keptNames;
+                if (fromGraph != null) keptNames = fromGraph.Kept;
+                else
+                {
+                    ctx ??= ProjectContext.Load(root);
+                    var kept = ctx.Select(excludes, error);
+                    keptNames = kept?.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                }
+                if (keptNames == null) return null;
                 models = models == null ? keptNames : models.Where(keptNames.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
         }
@@ -417,6 +432,47 @@ internal static class RefreshCommand
         foreach (var m in plan.Members)
             if ((models == null || models.Contains(m.Model)) && (loadTerms.Count == 0 || loadTerms.Contains(m.Load)) && !notLoad.Contains(m.Load)) result.Add(m.FullName);
         return result;
+    }
+
+    /// <summary>The models the positive terms pick and the models the `exclude:` terms leave, from the graph alone.</summary>
+    private sealed record GraphSelection(HashSet<string>? Picked, HashSet<string>? Kept);
+
+    /// <summary>
+    /// The selection answered from the loads file's graph, or null when a term needs more than it holds (see the caller). A term is a loaded model's name or `all`/`*` or `kind:`, with the graph operators, joined by commas
+    /// into an intersection as the model selector grammar has it; the same grammar and the same result as <see cref="ProjectContext.Select"/> gives for the loaded models.
+    /// </summary>
+    private static GraphSelection? SelectFromGraph(LoadGraph graph, List<string> positives, List<string> excludes)
+    {
+        HashSet<string>? Evaluate(string argument)
+        {
+            HashSet<string>? result = null;
+            foreach (var part in argument.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var term = ModelSelector.Parse(part);
+                List<string> core;
+                if (term.Core is "all" or "*") core = graph.Models.ToList();
+                else if (term.Core.StartsWith("kind:", StringComparison.Ordinal)) core = graph.Models.Where(m => string.Equals(graph.KindOf(m), term.Core[5..], StringComparison.OrdinalIgnoreCase)).ToList();
+                else if (graph.Has(term.Core)) core = [term.Core];
+                else return null;
+                if (core.Count == 0) return null;                                                      // "selects no model" is said by the project's selector
+                var set = term is { Upstream: false, Downstream: false, At: false } ? new HashSet<string>(core, StringComparer.OrdinalIgnoreCase) : graph.Expand(term, core);
+                if (result == null) result = set; else result.IntersectWith(set);
+            }
+            return result ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        HashSet<string>? picked = null, kept = null;
+        if (positives.Count > 0)
+        {
+            picked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var arg in positives) { var one = Evaluate(arg); if (one == null) return null; picked.UnionWith(one); }
+        }
+        if (excludes.Count > 0)
+        {
+            var left = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var arg in excludes) { var one = Evaluate(arg["exclude:".Length..]); if (one == null) return null; left.UnionWith(one); }
+            kept = graph.Models.Where(m => !left.Contains(m)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        return new GraphSelection(picked, kept);
     }
 
     private static HashSet<string> GlobModels(RefreshPlanFile plan, List<string> globs) =>
