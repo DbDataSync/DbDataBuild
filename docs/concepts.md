@@ -84,6 +84,8 @@ Every command says, in its header and in `--help`, what it touches:
 | `help matrix` | the support matrix |
 | `help dialects` | the dialect profiles of read-only origins: fields, built-ins, how to add one |
 
+Model types (view, full, incremental, copy, mapped, native) and how each operates are in `docs/models.md`.
+
 ## Plans and events
 
 A **plan** is a list of steps (statements, their risk and why). An **event** is one run of a plan. Ten refreshes a day are ten events that point at one plan.
