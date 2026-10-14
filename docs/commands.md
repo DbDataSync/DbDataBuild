@@ -13,6 +13,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`project sample`](#project-sample) | `P→` | Offline only | Run models on generated or supplied sample data, offline |
 | [`project seed`](#project-seed) | `P⇒P` | Repo files only (no target connection) | Run the seeds (DuckDB queries that generate the source data) into a DuckDB file |
 | [`project import`](#project-import) | `C→P` | Target read-only | Export tables and views from a connection as mapped models (models/), so models over them bind offline (writes files only with --write) |
+| [`project update`](#project-update) | `C→P` | Target read-only | Bring in everything that comes from connections: the definitions of the models, the metadata of the mapped models and of the tables copies read (columns, types, keys, indexes), and the dialect each Flight SQL server reports, committed in dialects.lock.yml; --offline reads no connection, --check writes nothing |
 | [`project show loads`](#project-show-loads) | `P→` | Offline only | Print the model x connection x operation pairing table |
 | [`project show graph`](#project-show-graph) | `P→` | Offline only | Show the dependency graph (which table each model reads), column lineage, or a diagram of it; selectors pick the part to show |
 | [`project show metadata`](#project-show-metadata) | `P→` | Offline only | Print everything the tool knows about the project and its models (use --format json) |
@@ -194,6 +195,26 @@ Usage: `dbdatabuild project import [connection] [tables]... [options]`
 | `--check` | CI: fail if a descriptor differs from the table it describes; writes nothing |
 | `--project` `<path>` | Project root |
 | `--write` | Write the new and changed mapped models under models/ (without it the command only shows the diff) |
+
+## project update
+
+Bring in everything that comes from connections: the definitions of the models, the metadata of the mapped models and of the tables copies read (columns, types, keys, indexes), and the dialect each Flight SQL server reports, committed in dialects.lock.yml; --offline reads no connection, --check writes nothing.
+
+Effect: Target read-only. Reads and writes: `C→P`.
+
+Usage: `dbdatabuild project update [selectors]... [options]`
+
+| Argument | Meaning |
+|---|---|
+| `selectors` (several) | What to update (default: every model, mapped model and connection): names, `schema.*` patterns, paths, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:<selector>` |
+
+| Option | Meaning |
+|---|---|
+| `--accept-inferred` | Accept inferred proposals marked high certainty when updating the definitions of models |
+| `--answers` `<file>` | Answers file for the questions of the model definitions (see schemas/answers.schema.json) |
+| `--check` | CI: write nothing, show what would change (per model, mapped model and connection) and fail if anything would |
+| `--offline` | Read no connection: update only the definitions of the models from their queries (no dialect is asked and no mapped model is compared with its table) |
+| `--project` `<path>` | Project root |
 
 ## project show loads
 

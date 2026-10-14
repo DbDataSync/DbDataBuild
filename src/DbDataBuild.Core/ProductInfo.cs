@@ -9,6 +9,9 @@ public static class ProductInfo
 
     /// <summary>The project file a folder may hold: the same sections as the root file, layered onto it for everything beneath the folder. It is not a model.</summary>
     public const string FolderConfigFile = "_dbdatabuild.yml";
+
+    /// <summary>The committed file `project update` writes: the dialect each `readonly flightsql` connection without a dialect keyword was found to have (docs/research/read-origins.md section 10). Offline commands read it; only `project update` writes it.</summary>
+    public const string DialectLockFile = "dialects.lock.yml";
     public const string TrackingSchemaName = "dbdatabuild";
     public const string DiagnosticPrefix = "DDB-";
     public const string NamespacePrefix = "DbDataBuild";

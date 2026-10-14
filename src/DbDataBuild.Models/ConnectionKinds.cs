@@ -7,8 +7,12 @@ public enum ConnectionAccess { ReadWrite, ReadOnly }
 /// What a connection's `engine` setting says, parsed once (docs/research/read-origins.md section 3): <see cref="Access"/>, the <see cref="Driver"/> (how the tool connects: `sqlserver`, `postgres`, `fabric`, `duckdb`, `odbc`,
 /// `flightsql`) and the <see cref="Dialect"/> (the name of the SQL profile the origin takes: a built-in or one of the project's `dialects:`). No code reads the text of `engine` after this.
 /// </summary>
-public sealed record ConnectionKind(ConnectionAccess Access, string Driver, string Dialect)
+/// <param name="DialectDeclared">True when `engine` names the dialect itself (a keyword), or the driver brings its own. False for `odbc` and `flightsql` with no dialect keyword: the dialect is then `ansi`, or, for Flight SQL, the one `project update` found on the server and committed.</param>
+public sealed record ConnectionKind(ConnectionAccess Access, string Driver, string Dialect, bool DialectDeclared = true)
 {
+    /// <summary>A Flight SQL connection whose dialect is left to the server: no dialect keyword. `project update` asks it and commits the answer (`dialects.lock.yml`).</summary>
+    public bool DialectIsDiscoverable => Driver == "flightsql" && !DialectDeclared;
+
     public bool ReadOnly => Access == ConnectionAccess.ReadOnly;
 
     /// <summary>The kind of a connection that is only named after an engine the tool builds on (read and write, the engine's own dialect).</summary>
@@ -76,6 +80,6 @@ public static class ConnectionKeywords
         if (dialects.Count > 1) return (null, $"`engine` names two dialects: {string.Join(" and ", dialects.Select(w => $"`{w}`"))}.", $"A connection has one dialect. {choices}");
         if (dialects.Count == 1 && BringsOwnDialect(driver)) return (null, $"`{driver}` already has a dialect, so `{dialects[0]}` is not allowed with it.", $"Take `{dialects[0]}` out of `engine`: `{(readOnly ? "readonly " : "")}{driver}`. A dialect is for `odbc` and `flightsql`.");
         if (NeedsReadOnly(driver) && !readOnly) return (null, $"`{driver}` can only be read from, so `engine` needs `readonly`.", $"Write `engine: readonly {driver}`.");
-        return (new ConnectionKind(readOnly ? ConnectionAccess.ReadOnly : ConnectionAccess.ReadWrite, driver, BringsOwnDialect(driver) ? driver : dialects.FirstOrDefault() ?? "ansi"), null, null);
+        return (new ConnectionKind(readOnly ? ConnectionAccess.ReadOnly : ConnectionAccess.ReadWrite, driver, BringsOwnDialect(driver) ? driver : dialects.FirstOrDefault() ?? "ansi", BringsOwnDialect(driver) || dialects.Count > 0), null, null);
     }
 }

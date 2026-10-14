@@ -39,12 +39,18 @@ internal interface IMetadataCatalog
     Task<IReadOnlyDictionary<string, IReadOnlyList<MetadataForeignKey>>?> ForeignKeysAsync(string schema, CancellationToken ct);
 }
 
+/// <summary>What a source can say about the system it reaches without a query of ours; today only a Flight SQL server's `GetSqlInfo`. Null when the source does not offer the call.</summary>
+internal interface IServerFacts
+{
+    Task<ServerFacts?> ServerFactsAsync(CancellationToken ct);
+}
+
 /// <summary>
 /// An Arrow Flight SQL server as a row source (Apache.Arrow.Flight.Sql over Grpc.Net.Client). The login is a URI with options (<see cref="FlightSqlLogin"/>). A statement without parameters is sent as a plain query; one with
 /// parameters is **prepared** and its parameters are bound as a one-row Arrow batch in the order the plan gives (`?`, positional). The server answers with endpoints; the rows are read from each in turn on this same
 /// connection as record batches and handed over value by value, by <see cref="ArrowConversions.Value"/>. A call's time limit is the gRPC deadline. Like ADO.NET's drivers it is only ever reached through <see cref="ReadSession"/>.
 /// </summary>
-internal sealed class FlightSqlRowSource : IRowSource, IMetadataCatalog
+internal sealed class FlightSqlRowSource : IRowSource, IMetadataCatalog, IServerFacts
 {
     private readonly FlightSqlLogin login;
     private readonly GrpcChannel channel;
@@ -378,6 +384,49 @@ internal sealed class FlightSqlRowSource : IRowSource, IMetadataCatalog
                 }).ToList();
             }
             return result;
+        }
+        catch (Exception ex) when (NotOffered(ex)) { return null; }
+    }
+
+    // The ids of the standard SqlInfo the tool reads (the Flight SQL protocol): the server's name, version and read-only flag, and how identifiers are cased and quoted.
+    private const uint NameId = 0, VersionId = 1, ReadOnlyId = 3, IdentifierCaseId = 503, IdentifierQuoteId = 504, QuotedIdentifierCaseId = 505;
+
+    /// <summary>
+    /// `GetSqlInfo` for the ids above: what the server says it is. A proxy answers per data source (the login's `x-datasource` header). Null when the server does not implement the call; a value of a type other than the
+    /// protocol's for an id is left out rather than guessed at.
+    /// </summary>
+    public async Task<ServerFacts?> ServerFactsAsync(CancellationToken ct)
+    {
+        var options = Options(null);
+        try
+        {
+            var command = new Arrow.Flight.Protocol.Sql.CommandGetSqlInfo();
+            foreach (var id in new[] { NameId, VersionId, ReadOnlyId, IdentifierCaseId, IdentifierQuoteId, QuotedIdentifierCaseId }) command.Info.Add(id);
+            string? name = null, version = null, quote = null, idCase = null, quotedCase = null; bool? readOnly = null;
+            foreach (var batch in await ReadAsync(await MetadataInfoAsync(command, options, ct), options, ct))
+            {
+                if (batch.ColumnCount < 2 || batch.Column(0) is not UInt32Array ids || batch.Column(1) is not DenseUnionArray values) continue;
+                var typeIds = ((Apache.Arrow.Types.UnionType)values.Data.DataType).TypeIds.ToArray();
+                for (var row = 0; row < batch.Length; row++)
+                {
+                    if (ids.GetValue(row) is not { } id) continue;
+                    var child = System.Array.IndexOf(typeIds, (int)values.TypeIds[row]);
+                    if (child < 0) continue;
+                    var offset = values.ValueOffsets[row];
+                    var text = values.Fields[child] is StringArray strings ? strings.GetString(offset) : null;
+                    var number = values.Fields[child] switch { Int64Array longs => longs.GetValue(offset), Int32Array ints => ints.GetValue(offset), _ => null };
+                    switch (id)
+                    {
+                        case NameId: name = text; break;
+                        case VersionId: version = text; break;
+                        case ReadOnlyId: readOnly = values.Fields[child] is BooleanArray flags ? flags.GetValue(offset) : null; break;
+                        case IdentifierQuoteId: quote = text; break;
+                        case IdentifierCaseId: idCase = number is { } c1 ? ServerFacts.CaseName(c1) : null; break;
+                        case QuotedIdentifierCaseId: quotedCase = number is { } c2 ? ServerFacts.CaseName(c2) : null; break;
+                    }
+                }
+            }
+            return new ServerFacts(name, version, quote, idCase, quotedCase, readOnly);
         }
         catch (Exception ex) when (NotOffered(ex)) { return null; }
     }

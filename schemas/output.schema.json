@@ -243,6 +243,25 @@
       "if": {
         "properties": {
           "command": {
+            "const": "project update"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/data_project_update"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
             "const": "project model update"
           }
         },
@@ -3255,6 +3274,275 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/docRow"
+          }
+        }
+      }
+    },
+    "data_project_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "check",
+            "write"
+          ]
+        },
+        "online": {
+          "description": "False with --offline: no connection was read.",
+          "type": "boolean"
+        },
+        "differences": {
+          "description": "With --check: how many things would change (definitions out of step with their queries, mapped models that differ from their tables, dialects that are new or changed).",
+          "type": "integer"
+        },
+        "written": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "definitions": {
+          "description": "The definitions of the models, from their queries (what project model update does).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "checked_models": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/data_project_model_update/properties/models/items"
+              }
+            }
+          }
+        },
+        "dialects": {
+          "description": "One row per connection in scope: the dialect a Flight SQL server reports, or why none was asked.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "connection": {
+                "type": "string"
+              },
+              "driver": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "new",
+                  "changed",
+                  "unchanged",
+                  "version_changed",
+                  "explicit",
+                  "nothing_to_discover",
+                  "skipped",
+                  "removed"
+                ]
+              },
+              "dialect": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "profile_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "server": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "server_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identifier_quote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identifier_case": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "read_only": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "connection",
+              "driver",
+              "status",
+              "changes"
+            ]
+          }
+        },
+        "dialects_file": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "unchanged",
+                "new",
+                "changed",
+                "removed"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "status"
+          ]
+        },
+        "connections": {
+          "description": "The connections the metadata of mapped models and copy origins was read from, or why one was skipped.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "connection": {
+                "type": "string"
+              },
+              "driver": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "read",
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "connection",
+              "driver",
+              "status"
+            ]
+          }
+        },
+        "sources": {
+          "description": "The mapped models (and the tables copies read) compared with their tables: what differs, per model.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "table",
+                  "view",
+                  "unknown"
+                ]
+              },
+              "file": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "connection": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "new",
+                  "changed",
+                  "unchanged",
+                  "stale",
+                  "invalid",
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "column": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "detail"
+            ]
+          }
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "changes"
+            ]
+          }
+        },
+        "catalog_notes": {
+          "description": "What an origin's catalog could not say (indexes where it has no way to, keys a driver does not offer), once each.",
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         }
       }

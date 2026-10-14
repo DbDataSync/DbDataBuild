@@ -72,6 +72,7 @@ public static class CommandSpecs
         new("project sample", EffectClass.OfflineOnly, "Run models on generated or supplied sample data, offline", true, "", "P→"),
         new("project seed", EffectClass.RepoFilesOnly, "Run the seeds (DuckDB queries that generate the source data) into a DuckDB file", true, "", "P⇒P"),
         new("project import", EffectClass.TargetReadOnly, "Export tables and views from a connection as mapped models (models/), so models over them bind offline (writes files only with --write)", true, "", "C→P"),
+        new("project update", EffectClass.TargetReadOnly, "Bring in everything that comes from connections: the definitions of the models, the metadata of the mapped models and of the tables copies read (columns, types, keys, indexes), and the dialect each Flight SQL server reports, committed in dialects.lock.yml; --offline reads no connection, --check writes nothing", true, "", "C→P"),
         new("project show loads", EffectClass.OfflineOnly, "Print the model x connection x operation pairing table", true, "", "P→"),
         new("project show graph", EffectClass.OfflineOnly, "Show the dependency graph (which table each model reads), column lineage, or a diagram of it; selectors pick the part to show", true, "", "P→"),
         new("project show metadata", EffectClass.OfflineOnly, "Print everything the tool knows about the project and its models (use --format json)", true, "", "P→"),

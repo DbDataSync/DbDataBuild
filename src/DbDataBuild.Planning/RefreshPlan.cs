@@ -68,7 +68,7 @@ public sealed record LoadPlanEntry(string Model, string Load, string Strategy, b
 /// One origin of a copy as a refresh runs it: the read in the origin's own dialect (<see cref="ReadWithWatermark"/> is the same read with `WHERE column >= @watermark`, for an incremental copy), how the origin's rows are told
 /// apart (a slice), and, when a `source` resolver gives the copy's inputs, the inputs as that origin's engine runs them (each origin has its own lowered text).
 /// </summary>
-public sealed record RefreshCopyOrigin(string Connection, string Engine, string Table, string ReadText, string? ReadWithWatermark, string? SliceColumn, string? SliceValue, bool SliceAdded, IReadOnlyList<RefreshParameter> Inputs, IReadOnlyList<string>? ParameterOrder = null);
+public sealed record RefreshCopyOrigin(string Connection, string Engine, string Table, string ReadText, string? ReadWithWatermark, string? SliceColumn, string? SliceValue, bool SliceAdded, IReadOnlyList<RefreshParameter> Inputs, IReadOnlyList<string>? ParameterOrder = null, string? Dialect = null, string? DialectHash = null);
 
 /// <summary>An incremental copy's watermark: the origin is read from the newest value of <see cref="Column"/> that the destination holds (for the origin's own rows, with a slice), less <see cref="Lookback"/>.</summary>
 public sealed record RefreshCopyWatermark(string Column, string Type, string? Lookback);
@@ -257,6 +257,8 @@ public static class LoadsDocument
                 sb.AppendLineLf("          parameter_order:");
                 foreach (var name in o.ParameterOrder) sb.Append("            - ").AppendLineLf(Q(name));
             }
+            if (o.Dialect != null) sb.Append("          dialect: ").AppendLineLf(Q(o.Dialect));
+            if (o.DialectHash != null) sb.Append("          dialect_hash: ").AppendLineLf(Q(o.DialectHash));
             if (o.SliceColumn != null)
             {
                 sb.AppendLineLf("          slice:");
@@ -338,13 +340,13 @@ public static class LoadsDocument
         var origins = new List<RefreshCopyOrigin>();
         foreach (var om in r.Maps(cm, "origins", "origin"))
         {
-            r.Keys(om, ["connection", "engine", "table", "read", "read_incremental", "parameter_order", "slice", "inputs"], "an origin");
+            r.Keys(om, ["connection", "engine", "table", "read", "read_incremental", "parameter_order", "dialect", "dialect_hash", "slice", "inputs"], "an origin");
             string? sliceColumn = null, sliceValue = null; var added = false;
             if (om.Get("slice") is YamlMapping sm) { r.Keys(sm, ["column", "value", "added"], "`slice:`"); sliceColumn = r.Req(sm, "column"); sliceValue = r.Req(sm, "value"); added = r.S(sm, "added") == "true"; }
             var inputs = new List<RefreshParameter>();
             foreach (var pm in r.Maps(om, "inputs", "input")) inputs.Add(RefreshInputYaml.Read(r, pm));
             origins.Add(new(r.Req(om, "connection"), r.Req(om, "engine"), r.Req(om, "table"), r.Req(om, "read"), r.S(om, "read_incremental"), sliceColumn, sliceValue, added, inputs,
-                (om.Get("parameter_order") as YamlSequence)?.Items.OfType<YamlScalar>().Select(x => x.Value).ToList() is { Count: > 0 } order ? order : null));
+                (om.Get("parameter_order") as YamlSequence)?.Items.OfType<YamlScalar>().Select(x => x.Value).ToList() is { Count: > 0 } order ? order : null, r.S(om, "dialect"), r.S(om, "dialect_hash")));
         }
         return new(r.Req(cm, "staging"), r.Req(cm, "create_staging"), r.Req(cm, "drop_staging"), columns, watermark, origins);
     }

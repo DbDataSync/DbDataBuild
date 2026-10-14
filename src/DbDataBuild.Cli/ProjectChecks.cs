@@ -123,6 +123,11 @@ internal static class ProjectChecks
                             Fix: $"Copy `{read}` to `{target}` (a model of `kind: {{type: copy, from: {read}}}` on `{target}`) and read the copy, or build {source.Definition.Name} on {where[0]}."));
             }
         }
+        // a copy that reads from a Flight SQL server whose dialect nobody has said: its read is written for ansi until `project update` has asked the server and committed the answer
+        var copyOrigins = ctx.Project.Sources.Where(s => s.Definition.IsCopy).SelectMany(s => ctx.TargetsOf(s.Definition).Where(t => onlyTargets == null || onlyTargets.Contains(t)).SelectMany(t => ctx.OriginsOf(s.Definition, t))).Select(o => o.Connection);
+        foreach (var name in DialectLockFile.Missing(config, copyOrigins))
+            found.Add(new Diagnostic(DiagnosticCatalog.DialectLockMissing, new(ProductInfo.DialectLockFile, 0, 0),
+                $"The connection `{name}` is `{config.Connections[name].Kind.Describe()}` with no dialect keyword and no entry in {ProductInfo.DialectLockFile}, so the copies that read from it are written for `ansi`. Run `{ProductInfo.Cli} project update` to ask the server and commit its dialect, or name the dialect in `engine`."));
         return found;
     }
 

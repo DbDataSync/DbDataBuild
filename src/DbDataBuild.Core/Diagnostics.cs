@@ -455,6 +455,28 @@ public static class DiagnosticCatalog
         "Correct the entry the message names. A name that collides with a keyword (readonly, odbc, postgres, ansi...) is renamed; a value outside the choices is one of them.",
         "A dialect profile is data: what an origin needs to know about the SQL a system takes (how to quote a name, how a parameter is written, what to send to see it answers). Every field left out is the base's, `ansi` unless `extends` says otherwise. A profile that cannot be built is refused when the project is loaded, so a typo is not found when a copy runs.");
 
+    // 457 to 461: the dialect a server reports and `project update` (docs/research/read-origins.md section 10)
+    public static readonly DiagnosticDescriptor DialectLockInvalid = E("457", "The committed dialects file cannot be used",
+        $"`{ProductInfo.DialectLockFile}` as `{ProductInfo.Cli} project update` writes it: a `format: 1` mapping with one entry per connection, each with a built-in or declared `dialect`, a `profile` of valid fields and the `profile_hash` of those fields",
+        $"Run `{ProductInfo.Cli} project update` to write the file again from the servers, or restore the committed copy. Do not edit the profile by hand: to choose a dialect yourself, name it in the connection's `engine`.",
+        $"The file records which dialect each `readonly flightsql` connection without a dialect keyword was found to have, so that `project compile` and the plans do not depend on a call to the server. A file that is damaged, has an unknown key or a value outside the choices, or whose `profile_hash` is not the hash of its `profile` (it was edited by hand) is refused, and the connection is read as `ansi` until it is repaired: the tool never guesses what a damaged file meant.");
+    public static readonly DiagnosticDescriptor DialectLockMissing = W("458", "A flightsql connection has no committed dialect",
+        $"a `readonly flightsql` connection whose `engine` names a dialect (`readonly flightsql postgres`), or has an entry in `{ProductInfo.DialectLockFile}`",
+        $"Run `{ProductInfo.Cli} project update` to ask the server and commit the answer, or name the dialect in the connection's `engine`. Until then the dialect is `ansi`.",
+        $"A copy that reads from a Flight SQL server writes its read in the server's dialect (how a name is quoted). With no keyword in `engine` the tool can ask the server, but a compile must not depend on a connection, so the answer is recorded by `{ProductInfo.Cli} project update` in `{ProductInfo.DialectLockFile}`. Without it the read is written for `ansi`: double-quoted names, which most systems take.");
+    public static readonly DiagnosticDescriptor DialectLockStale = W("459", "The committed dialects file has an entry that is not used",
+        $"an entry in `{ProductInfo.DialectLockFile}` only for a `readonly flightsql` connection of the project whose `engine` names no dialect",
+        $"Run `{ProductInfo.Cli} project update`, which removes the entry, or delete it.",
+        "An explicit dialect keyword in `engine` always wins over the one found on the server, and a connection that is not a Flight SQL one, or is no longer in the project, has nothing to discover. The entry is ignored and the keyword (or `ansi`) is used.");
+    public static readonly DiagnosticDescriptor OriginDialectChanged = E("460", "The server now reports a different dialect than the committed one",
+        $"the dialect and profile recorded in `{ProductInfo.DialectLockFile}`, which the committed plans were written for",
+        $"If the change is expected, run `{ProductInfo.Cli} project update`, review the change to `{ProductInfo.DialectLockFile}` and compile again; otherwise find out why the server behind the connection changed.",
+        "A copy's read is committed text in the origin's dialect. Asking the server again before the origin's turn and finding another dialect (a different system behind the proxy, or a changed identifier quote) means that text may no longer be right, so the origin fails (`failed: origin`) and the text is never changed silently.");
+    public static readonly DiagnosticDescriptor ProjectUpdateDiffers = E("461", "The project is not up to date with its connections",
+        $"a project whose committed dialects file and mapped models say what the servers and tables say now",
+        $"Run `{ProductInfo.Cli} project update` (add `--offline` to leave the connections alone), review the diff, and commit what it writes.",
+        $"`{ProductInfo.Cli} project update --check` writes nothing and fails when running it would change a file: a dialect found on a server, a mapped model whose table has changed, or a definition that is out of step with its query. Each difference is shown with the file and what would change.");
+
     // 6xx: project tests (`project tests run`)
     public static readonly DiagnosticDescriptor TestFailed = E("601", "A project test failed",
         "a test that returns no violations: a metadata rule (`tests/metadata/<name>.sql`) whose SELECT returns no rows",
@@ -505,7 +527,7 @@ public static class DiagnosticCatalog
         SqlParseFailure, NotASingleSelect, ConstructNeedsVersion, PairUnsupported, RenderedScriptInvalid, PlaceholderUndeclared, KeyColumnNullable, TypeNotMappable, IndexNotSupported, HookScriptInvalid, QueryNotLowerable,
         CollationCannotSatisfyProfile, CollationNotVerifiable, CollationNotConfigured,
         AnswerForUnknownQuestion, AnswerChoiceInvalid, AnswerValueMismatch, NoProposalToAccept, QuestionUnanswered,
-        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, ReadOnlyConnectionNotWritable, DialectProfileInvalid, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
+        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, ReadOnlyConnectionNotWritable, DialectProfileInvalid, DialectLockInvalid, DialectLockMissing, DialectLockStale, OriginDialectChanged, ProjectUpdateDiffers, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
         TestFailed, TestCouldNotRun, TestNotASelect,
         LoginNotConfigured, GateRefused, StatementLogUnavailable, ReadStatementRefused, TrackingNotInitialized,
         InternalError,

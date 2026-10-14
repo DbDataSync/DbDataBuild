@@ -1,6 +1,7 @@
 using DbDataBuild.Cli;
 using DbDataBuild.Core;
 using DbDataBuild.Core.Questions;
+using DbDataBuild.Models;
 using DbDataBuild.Planning;
 using DbDataBuild.State;
 using static DbDataBuild.Tests.Unit.TestSupport;
@@ -185,6 +186,40 @@ public class FuzzTests
                 Assert.True(exit != CliApp.ExitInternal, $"answers mutation {n++} failed internally: {mutated.Replace("\n", "\\n")}\n{e}");
             }
             finally { Directory.Delete(dir, true); }
+        }
+    }
+
+    [Fact]
+    public void A_damaged_dialects_lock_file_is_answered_with_a_diagnostic_never_an_exception()
+    {
+        var facts = new ServerFacts("PostgreSQL", "16.4", "\"", "case_insensitive", "case_insensitive", true);
+        var chosen = DialectDiscovery.Choose(facts, new Dictionary<string, DialectProfile>());
+        var text = DialectLockFile.Render([DialectLockEntry.From("proxy_erp", facts, chosen), DialectLockEntry.From("proxy_two", ServerFacts.Nothing, DialectDiscovery.Choose(ServerFacts.Nothing, new Dictionary<string, DialectProfile>()))]);
+        var clean = new List<Diagnostic>();
+        Assert.Equal(2, DialectLockFile.Parse(text, ProductInfo.DialectLockFile, clean, new Dictionary<string, DialectProfile>())!.Count);
+        Assert.Empty(clean);
+        var n = 0;
+        foreach (var mutated in Mutations(text, Seed + 31, Rounds * 3))
+        {
+            var diags = new List<Diagnostic>();
+            var parsed = DialectLockFile.Parse(mutated, ProductInfo.DialectLockFile, diags, new Dictionary<string, DialectProfile>());
+            Assert.True(parsed != null || diags.Count > 0, $"dialect lock mutation {n} was refused with no diagnostic: {mutated.Replace("\n", "\\n")}");
+            Assert.True(parsed == null || diags.Count == 0, $"dialect lock mutation {n} was accepted with diagnostics");
+            // the project reads it too: compile and update answer with a normal exit code
+            var dir = Project(config: Config.Replace("properties: { region: eu } }\n", "properties: { region: eu } }\n  proxy_erp: { engine: readonly flightsql }\n"));
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, ProductInfo.DialectLockFile), mutated);
+                foreach (var args in new[] { new[] { "project", "compile" }, new[] { "project", "update", "--check" }, new[] { "project", "update", "--offline", "--check" } })
+                {
+                    var o = new StringWriter(); var e = new StringWriter();
+                    var exit = CliApp.Run([.. args, "--project", dir, "--format", "json"], o, e);
+                    Assert.True(exit != CliApp.ExitInternal && !o.ToString().Contains("DDB-900"), $"`{string.Join(' ', args)}` failed internally on dialect lock mutation {n}: {mutated.Replace("\n", "\\n")}");
+                    System.Text.Json.JsonDocument.Parse(o.ToString());
+                }
+            }
+            finally { Directory.Delete(dir, true); }
+            n++;
         }
     }
 
