@@ -145,7 +145,7 @@ public partial class CopyConformanceTests
     }
 
     [SkippableFact]
-    public async Task A_missing_origin_login_is_refused_before_anything_runs_and_a_value_that_cannot_be_held_stops_the_copy()
+    public async Task A_missing_origin_login_stops_the_apply_at_that_origins_transfer_and_a_value_that_cannot_be_held_stops_the_copy()
     {
         var pair = await SetUp("postgres", "sqlserver");
         await using var fromEngine = pair.Origin;
@@ -158,12 +158,12 @@ public partial class CopyConformanceTests
             Ok(plan, "plan");
             var planFile = Path.Combine(pair.Dir, Regex.Match(plan.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);
 
-            // no login for the origin: nothing is executed
+            // no login for the origin: the apply stops at the transfer from it (the steps before it, the DDL of the destination, have run)
             var o = new StringWriter(); var e = new StringWriter();
             var exit = CliApp.Run(["connection", "deploy", "--apply-plan", planFile, "--project", pair.Dir], o, e, environment: v => v == LoginSettings.VariableName("sqlserver", Login.Read) || v == LoginSettings.VariableName("sqlserver", Login.Write) ? toEngine.ConnectionString : null);
             Assert.NotEqual(0, exit);
             Assert.Contains("DBDATABUILD_POSTGRES_READ", e.ToString() + o.ToString());
-            Assert.Empty(await toEngine.RowsAsync("SELECT 1 FROM information_schema.tables WHERE table_schema = 'dst'"));
+            Assert.Empty(await toEngine.RowsAsync("SELECT 1 FROM dst.items"));                                  // and nothing was copied
 
             // a decimal wider than the declared type cannot be held: the transfer stops, the destination table is not loaded
             await fromEngine.ExecAsync("DELETE FROM src.items; INSERT INTO src.items (id, big) VALUES (1, 1)");
@@ -258,17 +258,21 @@ public partial class CopyConformanceTests
             // about the other, whose rows were loaded before it (each origin is its own unit)
             await store18.ExecAsync("ALTER TABLE pos.orders DROP COLUMN total");
             await store17.ExecAsync("INSERT INTO pos.orders VALUES (6, 60.00)");
+            // a plan's id comes from its content, and an applied plan is applied once: each variant below gets an index of its own, so that its plan is not the plan of an earlier apply
+            string Variant(string onMismatch, params string[] indexes) => "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  on_mismatch: " + onMismatch + "\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\nindexes:\n" + string.Concat(indexes.Select(i => $"  - {{name: ix_orders_{i}, columns: [{i}]}}\n"));
+            Write("models/warehouse/orders.yml", Variant("fail", "order_id"));
+            Ok(Cli("project", "compile"), "render --write");
             var skew = Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(skew, "plan with a drifted origin");
             var skewApply = Cli("connection", "deploy", "--apply-plan", PlanOf(skew.Out));
             Assert.NotEqual(0, skewApply.Exit);
-            Assert.Contains("DDB-230", skewApply.Err);
+            Assert.True(skewApply.Err.Contains("DDB-230"), skewApply.Err + skewApply.Out);
             Assert.Contains("`pos.orders` on `store_18` differs from its declaration: column `total` is gone", skewApply.Err);
             Assert.DoesNotContain("store_17` differs", skewApply.Err);
             Assert.Equal(["1|018|11.00", "2|017|20.00", "3|018|33.00", "4|017|40.00", "6|017|60.00", "9|999|90.00"], await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));   // store 17 loaded before store 18 was reached
 
             // with on_mismatch: skip the other origin still loads, and the skipped one's rows stay as they were
-            Write("models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  on_mismatch: skip\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
+            Write("models/warehouse/orders.yml", Variant("skip", "order_id", "store_id"));
             Ok(Cli("project", "compile"), "render --write");
             await store17.ExecAsync("INSERT INTO pos.orders VALUES (5, 50.00)");
             var skipped = Cli("connection", "deploy", "sqlserver", "--write-plan");
@@ -282,6 +286,8 @@ public partial class CopyConformanceTests
 
             // an origin that cannot be reached does not hold back the one before it: store 17 loads, the apply stops at store 18 (no read login)
             await store17.ExecAsync("INSERT INTO pos.orders VALUES (7, 70.00)");
+            Write("models/warehouse/orders.yml", Variant("skip", "order_id", "store_id", "total"));
+            Ok(Cli("project", "compile"), "render --write");
             var down = Cli("connection", "deploy", "sqlserver", "--write-plan");
             Ok(down, "plan before an origin goes away");
             var o = new StringWriter(); var e = new StringWriter();
