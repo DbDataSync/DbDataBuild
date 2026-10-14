@@ -3190,6 +3190,13 @@
         "connection": {
           "type": "string"
         },
+        "catalog_notes": {
+          "description": "What the origin's catalog could not say (indexes where it has no way to, keys a driver does not offer), once each.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "mode": {
           "enum": [
             "preview",

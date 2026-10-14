@@ -121,13 +121,15 @@ public sealed class LoginSettings
         if (Engine == "flightsql")
         {
             if (Login == Login.Write) throw new InvalidOperationException("A Flight SQL connection is only read.");
-            return await FlightSqlRowSource.ConnectAsync(ConnectionString, ct);
+            var flight = await FlightSqlRowSource.ConnectAsync(ConnectionString, ct);
+            flight.Dialect = Dialect;
+            return flight;
         }
         var connection = await OpenAsync(ct);
         return Engine switch
         {
             "duckdb" => new DuckDbRowSource(connection, Dialect.Parameters),
-            "odbc" => new OdbcRowSource((System.Data.Odbc.OdbcConnection)connection, Dialect.Parameters),
+            "odbc" => new OdbcRowSource((System.Data.Odbc.OdbcConnection)connection, Dialect.Parameters, ConnectionString, Dialect),
             _ => new AdoRowSource(connection, Dialect.Parameters),
         };
     }

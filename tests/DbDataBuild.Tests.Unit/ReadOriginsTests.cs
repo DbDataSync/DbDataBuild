@@ -33,13 +33,13 @@ public class ReadOriginsTests
         { "ansi odbc readonly", "ReadOnly", "odbc", "ansi" },
         { "readonly odbc postgres", "ReadOnly", "odbc", "postgres" },          // postgres is the dialect when the connection has a driver of its own
         { "readonly,odbc,duckdb", "ReadOnly", "odbc", "duckdb" },
-        { "readonly flightsql proxy_sql", "ReadOnly", "flightsql", "proxy_sql" },
+        { "readonly flightsql backtick_sql", "ReadOnly", "flightsql", "backtick_sql" },
     };
 
     [Theory, MemberData(nameof(Accepted))]
     public void Keywords_are_sorted_into_access_driver_and_dialect_in_any_order(string engine, string access, string driver, string dialect)
     {
-        var (kind, error, _) = ConnectionKeywords.Parse(ConnectionKeywords.Words(engine), new HashSet<string> { "proxy_sql" });
+        var (kind, error, _) = ConnectionKeywords.Parse(ConnectionKeywords.Words(engine), new HashSet<string> { "backtick_sql" });
         Assert.Null(error);
         Assert.Equal(new ConnectionKind(Enum.Parse<ConnectionAccess>(access), driver, dialect), kind);
     }
@@ -123,13 +123,13 @@ public class ReadOriginsTests
     {
         var cfg = Load("""
             dialects:
-              proxy_sql:
+              backtick_sql:
                 extends: ansi
                 quote: '`'
                 ping: SELECT 1 AS ok
                 types: { int8: BIGINT }
               proxy_two:
-                extends: proxy_sql
+                extends: backtick_sql
                 parameters: numbered
                 limit: top
                 identifier_case: upper
@@ -139,12 +139,12 @@ public class ReadOriginsTests
               legacy: { engine: sqlserver }
             """, out var diags)!;
         Assert.Empty(diags);
-        var proxy = cfg.Dialects["proxy_sql"];
+        var proxy = cfg.Dialects["backtick_sql"];
         Assert.Equal(("`", "`", ParameterStyle.Positional, "SELECT 1 AS ok"), (proxy.QuoteOpen, proxy.QuoteClose, proxy.Parameters, proxy.Ping));
         Assert.Equal("BIGINT", proxy.Types["int8"]);
         Assert.Equal("INTEGER", proxy.Types["integer"]);                                   // what it extends is kept
         var two = cfg.Dialects["proxy_two"];
-        Assert.Equal(("`", ParameterStyle.Numbered, LimitStyle.Top, IdentifierCase.Upper, CatalogStyle.None, "proxy_sql"), (two.QuoteOpen, two.Parameters, two.Limit, two.Case, two.Catalog, two.Extends));
+        Assert.Equal(("`", ParameterStyle.Numbered, LimitStyle.Top, IdentifierCase.Upper, CatalogStyle.None, "backtick_sql"), (two.QuoteOpen, two.Parameters, two.Limit, two.Case, two.Catalog, two.Extends));
         Assert.Equal("SELECT 1 AS ok", two.Ping);
         var bare = cfg.Dialects["bare"];
         Assert.Equal(("bare", "ansi", DialectProfiles.Ansi.Ping, DialectProfiles.Ansi.Parameters), (bare.Name, bare.Extends, bare.Ping, bare.Parameters));
@@ -180,10 +180,10 @@ public class ReadOriginsTests
     [Fact]
     public void A_connection_may_name_a_dialect_of_the_project_but_the_engines_that_bring_their_own_may_not()
     {
-        var cfg = Load("dialects:\n  proxy_sql: { quote: '`' }\nconnections:\n  a: { engine: readonly postgres }\n", out var diags)!;
+        var cfg = Load("dialects:\n  backtick_sql: { quote: '`' }\nconnections:\n  a: { engine: readonly postgres }\n", out var diags)!;
         Assert.Empty(diags);
         Assert.Equal("postgres", cfg.DialectOf("a").Name);
-        Load("dialects:\n  proxy_sql: { quote: '`' }\nconnections:\n  a: { engine: readonly postgres proxy_sql }\n", out diags);
+        Load("dialects:\n  backtick_sql: { quote: '`' }\nconnections:\n  a: { engine: readonly postgres backtick_sql }\n", out diags);
         Assert.Contains(diags, d => d.Found.Contains("already has a dialect"));
     }
 
@@ -324,7 +324,7 @@ public class ReadOriginsTests
     [Fact]
     public void A_copy_reads_in_the_origins_dialect_and_a_positional_origin_records_the_order_of_its_values()
     {
-        var cfg = Load("dialects:\n  proxy_sql: { extends: ansi, quote: '`' }\nconnections:\n  shop: { engine: readonly postgres }\n", out _)!;
+        var cfg = Load("dialects:\n  backtick_sql: { extends: ansi, quote: '`' }\nconnections:\n  shop: { engine: readonly postgres }\n", out _)!;
         var def = Copy(new CopyWatermark("changed", null));
         var ddl = TargetRegistry.Get("sqlserver").CreateDdl(cfg);
 
@@ -342,7 +342,7 @@ public class ReadOriginsTests
         Assert.Equal("2024-01-01", spec.Watermark!.Value);
 
         // and one with quoting of its own
-        var proxy = With(cfg, "proxy", "flightsql", "proxy_sql");
+        var proxy = With(cfg, "proxy", "flightsql", "backtick_sql");
         var (_, viaProxy) = Planner.CopyTransfer(proxy, def, ddl, new CopyOrigin("proxy", "flightsql", "src.items", null, "x"));
         Assert.Equal("SELECT `id`, `changed`, `label` FROM `src`.`items` WHERE `changed` >= ?", viaProxy.ReadText);
     }

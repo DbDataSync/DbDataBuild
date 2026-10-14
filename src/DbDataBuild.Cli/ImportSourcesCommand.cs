@@ -58,6 +58,7 @@ internal static class ImportSourcesCommand
         }
 
         var rows = new List<Row>();
+        var catalogNotes = new List<string>();
         var skipped = new List<Skipped>();
         var diags = new List<Diagnostic>();
         try
@@ -74,8 +75,11 @@ internal static class ImportSourcesCommand
                     var shapes = await CatalogReader.ReadObjectsAsync(read, engine, schema);
                     var keys = await SourceCatalogReader.PrimaryKeysAsync(read, engine, schema);
                     var foreignKeys = await SourceCatalogReader.ForeignKeysAsync(read, engine, schema);
-                    foreach (var (qualified, shape) in shapes.OrderBy(k => k.Key, StringComparer.Ordinal))
+                    // the engines' shapes carry their indexes already; an origin's come from its own catalog where it has one (duckdb_indexes(), ODBC's SQLStatistics) and are said to be missing where it has none
+                    var indexes = await SourceCatalogReader.IndexesAsync(read, engine, schema);
+                    foreach (var (qualified, shape0) in shapes.OrderBy(k => k.Key, StringComparer.Ordinal))
                     {
+                        var shape = indexes != null && indexes.TryGetValue(shape0.Name, out var found) ? shape0 with { Physical = shape0.Physical.Concat(found).ToList() } : shape0;
                         if (!wanted.Any(w => w.SchemaName.IsMatch(shape.SchemaName) && w.Table.IsMatch(shape.Name))) continue;
                         seen.Add(qualified);
                         if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a model, not a source")); continue; }
@@ -91,6 +95,7 @@ internal static class ImportSourcesCommand
                         rows.Add(Compare(root, target, live, committed.GetValueOrDefault(qualified), diags));
                     }
                 }
+                catalogNotes.AddRange(read.CatalogNotes);
                 // descriptors the project has for tables the target does not show (in the schema names searched)
                 foreach (var d in committed.Values.Where(d => wanted.Any(w => { var (s, t) = Split(d.Name)!.Value; return w.SchemaName.IsMatch(s) && w.Table.IsMatch(t); })))
                 {
@@ -120,6 +125,7 @@ internal static class ImportSourcesCommand
             columns = r.Live?.Columns.Select(c => new { name = c.Name, native_type = c.NativeType, logical_type = c.LogicalType, fit = c.Fit.ToString().ToLowerInvariant(), reason = c.Reason.Length == 0 ? null : c.Reason, nullable = c.Nullable }).ToList(),
         }).ToList());
         output.Payload("skipped", skipped.Select(s => new { @object = s.Object, reason = s.Reason }).ToList());
+        output.Payload("catalog_notes", catalogNotes);
 
         if (rows.Count == 0)
         {
@@ -138,6 +144,7 @@ internal static class ImportSourcesCommand
                     output.WriteLine($"          {c.Name}: {c.NativeType} -> {c.LogicalType ?? "no logical type"}{(c.Reason.Length > 0 ? " (" + c.Reason + ")" : "")}");
         }
         foreach (var s in skipped) output.WriteLine($"skipped   {s.Object}: {s.Reason}");
+        foreach (var note in catalogNotes) output.WriteLine($"note: {note}");
 
         var changed = rows.Where(r => r.Status is "new" or "changed").ToList();
         foreach (var r in changed) { output.WriteLine(); output.Write(UnifiedDiff.Create(r.OldText, r.NewText!, r.File!)); }

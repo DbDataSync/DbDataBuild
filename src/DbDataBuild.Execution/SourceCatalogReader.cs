@@ -60,7 +60,9 @@ ORDER BY t.relname, c.conname, k.ord";
     // DuckDB: its own schemas are information_schema and pg_catalog (`main` is where tables go when no schema is named); the constraints come from duckdb_constraints(), parameters by position
     private const string DuckDbSchemas = "SELECT schema_name FROM information_schema.schemata WHERE catalog_name = current_database() AND schema_name NOT IN ('information_schema', 'pg_catalog') ORDER BY schema_name";
     private const string DuckDbPrimaryKeys = "SELECT table_name, array_to_string(constraint_column_names, chr(31)) FROM duckdb_constraints() WHERE constraint_type = 'PRIMARY KEY' AND database_name = current_database() AND schema_name = ? ORDER BY table_name";
-    private const string DuckDbForeignKeys = "SELECT table_name, constraint_name, array_to_string(constraint_column_names, chr(31)), referenced_table, array_to_string(referenced_column_names, chr(31)) FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' AND database_name = current_database() AND schema_name = ? ORDER BY table_name, constraint_name";
+    // duckdb_indexes(): the columns of an index are in the CREATE INDEX text (its `expressions` column is a VARCHAR that spells a list); ART indexes are ascending and cannot be INCLUDE-d
+    private const string DuckDbIndexes = "SELECT table_name, index_name, is_unique, sql FROM duckdb_indexes() WHERE database_name = current_database() AND schema_name = ? ORDER BY table_name, index_name";
+    private const string DuckDbForeignKeys = "SELECT table_name, constraint_name, array_to_string(constraint_column_names, chr(31)), referenced_table, array_to_string(referenced_column_names, chr(31)), constraint_text FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' AND database_name = current_database() AND schema_name = ? ORDER BY table_name, constraint_name";
 
     // A source known by its ODBC driver: the standard views. sys and pg_catalog are the engines' own and are left out whichever engine is behind the driver; every other schema name is the person's to select with the pattern.
     private const string AnsiSchemas = "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'sys') ORDER BY schema_name";
@@ -80,8 +82,10 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
 
     private static bool IsAnsiSource(string target) => target is "odbc" or "flightsql";
 
-    // For a Flight SQL server the metadata calls come first and `information_schema` is the fallback; true when the dialect says there is no catalog at all.
-    private static IMetadataCatalog? FlightSqlMetadata(ReadSession read, string target) => target == "flightsql" ? read.Metadata : null;
+    // For a Flight SQL server the metadata calls come first and `information_schema` is the fallback; for an ODBC source whose dialect says `catalog: odbc` the driver's catalog functions are the only way.
+    private static IMetadataCatalog? FlightSqlMetadata(ReadSession read, string target) => target == "flightsql" || OdbcFunctions(read, target) ? read.Metadata : null;
+
+    private static bool OdbcFunctions(ReadSession read, string target) => target == "odbc" && read.Dialect.Catalog == Models.CatalogStyle.Odbc;
 
     private static async Task<T> FlightSqlFallbackAsync<T>(ReadSession read, Func<Task<T>> informationSchema)
     {
@@ -101,6 +105,7 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
         {
             RequireCatalog(read);
             if (FlightSqlMetadata(read, target) is { } metadata && await metadata.SchemasAsync(ct) is { } named) return named.Where(n => n is not ("information_schema" or "pg_catalog" or "sys")).ToList();
+            if (OdbcFunctions(read, target)) throw CatalogUnavailableException.OdbcWithoutFunction(read.Dialect.Name, "SQLTables");
             Task<IReadOnlyList<string>> ask() => ReadSchemaNamesAsync(read, ct);
             return target == "flightsql" ? await FlightSqlFallbackAsync(read, ask) : await ask();
         }
@@ -118,6 +123,7 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
         {
             RequireCatalog(read);
             if (FlightSqlMetadata(read, target) is { } metadata && await metadata.PrimaryKeysAsync(schema, ct) is { } offered) return offered;
+            if (OdbcFunctions(read, target)) { read.Note("primary keys were not read: the ODBC driver does not offer SQLPrimaryKeys, so a descriptor's grain is declared by hand"); return new Dictionary<string, IReadOnlyList<string>>(); }
             var ansi = target == "flightsql" ? await FlightSqlFallbackAsync(read, () => read.QueryAsync(AnsiPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct))
                 : await read.QueryAsync(AnsiPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct);
             return ansi.GroupBy(r => r[0]!.ToString()!, StringComparer.Ordinal)
@@ -141,6 +147,7 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
             RequireCatalog(read);
             if (FlightSqlMetadata(read, target) is { } metadata && await metadata.ForeignKeysAsync(schema, ct) is { } offered)
                 return offered.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<State.ForeignKeyShape>)kv.Value.Select(k => new State.ForeignKeyShape(k.Name, k.Columns, k.ReferencedSchema, k.ReferencedTable, k.ReferencedColumns)).ToList(), StringComparer.Ordinal);
+            if (OdbcFunctions(read, target)) { read.Note("foreign keys were not read: the ODBC driver does not offer SQLForeignKeys"); return new Dictionary<string, IReadOnlyList<State.ForeignKeyShape>>(); }
             var ansi = target == "flightsql" ? await FlightSqlFallbackAsync(read, () => read.QueryAsync(AnsiForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct))
                 : await read.QueryAsync(AnsiForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
             return ansi.GroupBy(r => r[0]!.ToString()!, StringComparer.Ordinal).ToDictionary(
@@ -154,11 +161,12 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
         }
         if (target == "duckdb")
         {
-            // DuckDB does not say which schema the referenced table is in: it is read as the same one
+            // duckdb_constraints() has no column for the schema of the referenced table; its constraint text does (`FOREIGN KEY (a) REFERENCES s.p(id)`), and says none when the table is in the key's own schema.
+            // (DuckDB 1.5 refuses a foreign key across schemas, so today the answer is always the key's own schema; reading the text keeps it true if a later release allows more.)
             var keys = await read.QueryAsync(DuckDbForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
             return keys.GroupBy(r => (string)r[0]!, StringComparer.Ordinal).ToDictionary(
                 table => table.Key,
-                table => (IReadOnlyList<State.ForeignKeyShape>)table.Select(r => new State.ForeignKeyShape((string)r[1]!, ((string)r[2]!).Split('\u001f').ToList(), schema, (string)r[3]!, ((string)r[4]!).Split('\u001f').ToList())).ToList(),
+                table => (IReadOnlyList<State.ForeignKeyShape>)table.Select(r => new State.ForeignKeyShape((string)r[1]!, ((string)r[2]!).Split('\u001f').ToList(), DuckDbReferencedSchema(r[5] as string, (string)r[3]!, schema), (string)r[3]!, ((string)r[4]!).Split('\u001f').ToList())).ToList(),
                 StringComparer.Ordinal);
         }
         var rows = await read.QueryAsync(target == "postgres" ? PostgresForeignKeys : SqlServerForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
@@ -170,5 +178,94 @@ ORDER BY kcu.table_name, kcu.constraint_name, kcu.ordinal_position";
                 return new State.ForeignKeyShape(fk.Key, ordered.Select(r => (string)r[2]!).ToList(), (string)ordered[0][3]!, (string)ordered[0][4]!, ordered.Select(r => (string)r[5]!).ToList());
             }).ToList(),
             StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The schema a DuckDB foreign key points to, from the key's constraint text: what stands between `REFERENCES ` and the referenced table's name (`s.` or `catalog.s.`), or the key's own schema when the text names none.
+    /// A name with a dot in it (quoted) cannot be told from a qualifier by its text; the part after the last dot is taken.
+    /// </summary>
+    internal static string DuckDbReferencedSchema(string? constraintText, string referencedTable, string ownSchema)
+    {
+        if (constraintText == null) return ownSchema;
+        var start = constraintText.IndexOf("REFERENCES ", StringComparison.Ordinal);
+        var at = constraintText.LastIndexOf(referencedTable + "(", StringComparison.Ordinal);
+        if (start < 0 || at < 0 || at < start + 11) return ownSchema;
+        var qualifier = constraintText[(start + 11)..at].TrimEnd('.').Trim('"');
+        if (qualifier.Length == 0) return ownSchema;
+        var dot = qualifier.LastIndexOf('.');
+        return (dot < 0 ? qualifier : qualifier[(dot + 1)..]).Trim('"');
+    }
+
+    /// <summary>
+    /// The key columns of a DuckDB index from its `CREATE INDEX` text, or `&lt;expression&gt;` where a key is an expression (the importer says such an index was not exported). Null when the text is not a
+    /// CREATE INDEX this reader understands.
+    /// </summary>
+    internal static IReadOnlyList<string>? DuckDbIndexColumns(string? createIndex)
+    {
+        if (createIndex == null) return null;
+        var on = createIndex.IndexOf(" ON ", StringComparison.OrdinalIgnoreCase);
+        var open = on < 0 ? -1 : createIndex.IndexOf('(', on);
+        var close = createIndex.LastIndexOf(')');
+        if (open < 0 || close <= open) return null;
+        var columns = new List<string>();
+        var (depth, quoted, from) = (0, false, open + 1);
+        for (var i = open + 1; i <= close; i++)
+        {
+            var c = createIndex[i];
+            if (c == '"') quoted = !quoted;
+            if (quoted) continue;
+            if (c == '(') depth++;
+            else if (c == ')' && depth > 0) depth--;
+            else if ((c == ',' && depth == 0) || (c == ')' && depth == 0 && i == close))
+            {
+                columns.Add(IndexKey(createIndex[from..i].Trim()));
+                from = i + 1;
+            }
+        }
+        return columns;
+    }
+
+    private static string IndexKey(string text)
+    {
+        if (text.Length >= 2 && text[0] == '"' && text[^1] == '"' && !text[1..^1].Replace("\"\"", "", StringComparison.Ordinal).Contains('"', StringComparison.Ordinal)) return text[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal);
+        return text.Length > 0 && (char.IsLetter(text[0]) || text[0] == '_') && text.All(ch => char.IsLetterOrDigit(ch) || ch == '_') ? text : "<expression>";
+    }
+
+    /// <summary>
+    /// The indexes of the tables of a schema name where the origin's catalog says them, per table: DuckDB's `duckdb_indexes()`, an ODBC driver's `SQLStatistics`. Null where there is nothing to add: the three engines
+    /// give theirs with the columns (<see cref="CatalogReader"/>); a Flight SQL server has no metadata call for indexes and `information_schema` has no indexes view, so those say so in <see cref="ReadSession.CatalogNotes"/>
+    /// instead of guessing.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, IReadOnlyList<State.PhysicalItem>>?> IndexesAsync(ReadSession read, string target, string schema, CancellationToken ct = default)
+    {
+        static IReadOnlyDictionary<string, IReadOnlyList<State.PhysicalItem>> Items(IEnumerable<(string Table, string Name, bool Unique, IReadOnlyList<string> Columns, IReadOnlyList<string> Include)> indexes) =>
+            indexes.GroupBy(i => i.Table, StringComparer.Ordinal).ToDictionary(g => g.Key,
+                g => (IReadOnlyList<State.PhysicalItem>)g.Select(i => new State.PhysicalItem("index", i.Name, State.IndexText.Canonical(i.Unique, i.Columns, i.Include))).ToList(), StringComparer.Ordinal);
+
+        if (target == "duckdb")
+        {
+            var rows = await read.QueryAsync(DuckDbIndexes, [new GateParameter("schema", DbType.String, schema)], ct);
+            var parsed = rows.Select(r => (Table: (string)r[0]!, Name: (string)r[1]!, Unique: Convert.ToBoolean(r[2], CultureInfo.InvariantCulture), Columns: DuckDbIndexColumns(r[3] as string))).ToList();
+            foreach (var bad in parsed.Where(p => p.Columns == null)) read.Note($"index {bad.Name} of {schema}.{bad.Table} was not understood and was not exported");
+            return Items(parsed.Where(p => p.Columns != null).Select(p => (p.Table, p.Name, p.Unique, p.Columns!, (IReadOnlyList<string>)[])));
+        }
+        if (target == "flightsql")
+        {
+            read.Note("indexes were not read: Flight SQL has no metadata call for indexes, so declare them by hand");
+            return null;
+        }
+        if (target != "odbc" || read.Dialect.Catalog == Models.CatalogStyle.None) return null;
+        try
+        {
+            if (read.Metadata is { } metadata && await metadata.IndexesAsync(schema, ct) is { } offered)
+                return Items(offered.Values.SelectMany(x => x).Select(i => (i.Table, i.Name, i.Unique, i.Columns, i.Include)));
+            read.Note("indexes were not read: the ODBC driver does not offer SQLStatistics, so declare them by hand");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // the catalog functions need the driver manager's library to load and the driver to answer; an import without indexes is still an import
+            read.Note($"indexes were not read: SQLStatistics failed ({DriverFailure.Describe(ex)}), so declare them by hand");
+        }
+        return null;
     }
 }
