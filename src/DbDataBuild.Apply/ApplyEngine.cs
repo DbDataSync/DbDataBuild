@@ -27,9 +27,20 @@ public sealed record ApplyTracking(LoginSettings Read, LoginSettings? Write, str
 /// <param name="ApproveMoved">Asked when a computed input is not what the plan was made with: true continues with the new values (an interactive deployer said yes). Without it the apply stops (DDB-454).</param>
 /// <param name="Timezone">The zone the clock of an expression resolver means when inputs are computed again.</param>
 /// <param name="Parallel">For a refresh: how many loads may run at once (1 is one after another). Each runs on sessions of its own.</param>
+/// <param name="CheckOrigin">Asked just before each transfer step runs (never in a dry run): is this origin reachable, with its read login, and (a deploy) does its table still have what the copy declares? Each origin is checked at its own turn, not all before the first statement.</param>
 public sealed record ApplyOptions(bool DryRun, bool AllowRisky, IReadOnlySet<string> AllowDestructive, string? GitCommit, bool GitDirty, string Invoker, Func<bool>? StopRequested = null, Func<string, CancellationToken, Task<ReadSession>>? OpenOrigin = null,
     string Lane = "deploy", string? ProjectHash = null, string? PlanHash = null, bool Refresh = false, bool RecordShapes = true, bool RecordText = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null,
-    IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, string Timezone = "UTC", Func<DateTimeOffset>? Clock = null, int Parallel = 1);
+    IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, string Timezone = "UTC", Func<DateTimeOffset>? Clock = null, int Parallel = 1, Func<PlanStep, CancellationToken, Task<OriginVerdict>>? CheckOrigin = null);
+
+/// <summary>What the check of an origin found: it is fine, the origin is to be left out (`on_mismatch: skip`: its transfer and the load of its rows do not run) or the run stops (a refresh: the load fails as `failed: origin`).</summary>
+public enum OriginVerdictKind { Ok, Skip, Fail }
+
+/// <param name="Detail">Said to the person: what is wrong with the origin, in words that quote nothing a driver said.</param>
+/// <param name="Finding">The diagnostic to report when the verdict is a failure that has a code of its own (DDB-230).</param>
+public sealed record OriginVerdict(OriginVerdictKind Kind, string? Detail = null, Diagnostic? Finding = null)
+{
+    public static readonly OriginVerdict Fine = new(OriginVerdictKind.Ok);
+}
 
 /// <param name="Status">ok, dry-run, skipped (done in an earlier attempt), stopped (the operator stopped before it) or failed.</param>
 public sealed record StepOutcome(string StepId, string Description, string Status, string? Detail = null);
@@ -83,17 +94,7 @@ public static class ApplyEngine
             if (status.AsDiagnostic(scope.SchemaName) is { } notReady) return new ApplyResult([], [notReady]);
         }
 
-        // every connection the plan reads rows from answers before the first statement runs: a copy that cannot read its origin fails before it touches anything
-        if (!o.DryRun)
-            foreach (var origin in plan.Steps.Where(s => s.Transfer != null).Select(s => s.Transfer!.Origin).Distinct(StringComparer.Ordinal))
-            {
-                if (o.OpenOrigin == null) return new ApplyResult([], [new Diagnostic(DiagnosticCatalog.StepFailed, new($"connection:{origin}", 0, 0), $"The plan reads rows from `{origin}`, and this run has no way to open it. Nothing was executed.")]);
-                try { await using var probe = await o.OpenOrigin(origin, ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException and not GateRefusedException)
-                {
-                    return new ApplyResult([], [new Diagnostic(DiagnosticCatalog.StepFailed, new($"connection:{origin}", 0, 0), $"The connection `{origin}`, which the plan reads rows from, could not be opened ({ex.GetType().Name}). Nothing was executed.")]);
-                }
-            }
+        // an origin is checked when its own transfer's turn comes (ApplyOptions.CheckOrigin), not all before the first statement: one unreachable system must not refuse the origins that are fine
 
         await using var gate = o.DryRun
             ? MutationGate.DryRunGate("apply", StatementKind.Tracking | StatementKind.Data | StatementKind.Ddl, log, runId)
@@ -201,9 +202,15 @@ public static class ApplyEngine
                 await tracker.PlanMemberAsync($"member:{m.Position}", plan.Id, m.Position, m.Membership, m.Model, m.Load, m.LoadPlanHash, m.Selected, ct);
         }
 
+        string? leftOut = null;                                  // the model whose current origin was left out: the hooks and the load of that origin's rows do not run
         foreach (var step in steps)
         {
             if (done.Contains(step.Id)) { outcomes.Add(new(step.Id, step.Description, "skipped", "finished in an earlier attempt")); continue; }
+            if (leftOut != null)
+            {
+                if (step.Object == leftOut && step.Type is StepType.Hook or StepType.Load or StepType.Backfill) { outcomes.Add(new(step.Id, step.Description, "skipped", "its origin was left out")); continue; }
+                leftOut = null;
+            }
             // an operator's request to stop is honoured between steps only: a statement that has started is never abandoned
             if (o.StopRequested?.Invoke() == true)
             {
@@ -215,6 +222,23 @@ public static class ApplyEngine
             var clock = System.Diagnostics.Stopwatch.StartNew();
             try
             {
+                if (step.Type == StepType.Transfer && !gate.DryRun && o.CheckOrigin != null)
+                {
+                    var verdict = await o.CheckOrigin(step, ct);
+                    if (verdict.Kind == OriginVerdictKind.Skip)
+                    {
+                        outcomes.Add(new(step.Id, step.Description, "skipped", verdict.Detail));
+                        leftOut = step.Object;
+                        continue;
+                    }
+                    if (verdict.Kind == OriginVerdictKind.Fail)
+                    {
+                        var found = verdict.Finding ?? new Diagnostic(DiagnosticCatalog.StepFailed, new($"step:{step.Id}", 0, 0), $"step {step.Id} ({step.Description}): origin `{step.Transfer!.Origin}`: {verdict.Detail} Later steps did not run.");
+                        outcomes.Add(new(step.Id, step.Description, "failed", verdict.Detail));
+                        await FinishMigration(tracker, gate, plan, planHash, planText, o, "failed", ct);
+                        return new ApplyResult(outcomes, [found]);
+                    }
+                }
                 var diagnostic = await ExecuteStepAsync(plan, step, reader, gate, tracker, o, runId, null, null, null, ct);
                 if (diagnostic != null)
                 {

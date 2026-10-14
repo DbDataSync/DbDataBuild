@@ -129,10 +129,7 @@ internal sealed class PlanningSession
         var graph = new ModelGraph(ctx.Project.Models, ctx.Project.AllDescriptors);
         findings.AddRange(new DefineEngine(graph, ctx.Config, ctx.Linter).Check(defineTargets));
 
-        // each origin of a copy against its declaration (version skew between the systems of one application); `on_mismatch: skip` leaves an origin out of the plan
-        var copyDefinitions = mine.Select(m => m.Source.Definition).Where(d => d.IsCopy && !d.LocalCopy).ToList();
-        var originCheck = copyDefinitions.Count == 0 ? new CopyOriginCheck.Result([], new HashSet<(string, string)>()) : CopyOriginCheck.Run(ctx, copyDefinitions, target, env);
-        findings.AddRange(originCheck.Findings);
+        // an origin of a copy is checked against its declaration (DDB-230) by the apply, just before that origin's own transfer
         findings.AddRange(NativeShapeCheck.Run(ctx, mine.SelectMany(m => ctx.BaseTablesOf(m.Source, m.Sql)), target, env));
 
         var renderedOps = new List<RenderedOperation>();
@@ -188,7 +185,7 @@ internal sealed class PlanningSession
             var bases = m.Source.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Source, m.Sql));
             // views are transpiled from the lowered query too (errors were reported in the preflight, so a failed lowering here is not reachable)
             var body = ctx.Lowering.Enabled && ctx.Lowering.Lower(m.Source, m.Sql, m.Source.QueryParameterList(root, ctx.Config)).Model is { } lowered ? lowered.Sql : m.Sql;
-            return new PlannedModel(m.Source.Definition, body, m.Source.QueryFile, hash, bases, HookLoader.Load(m.Source, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Source.Definition, target).Where(o => !originCheck.Skipped.Contains((m.Source.Definition.Name, o.Connection))).ToList(), Merge(m.Source.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
+            return new PlannedModel(m.Source.Definition, body, m.Source.QueryFile, hash, bases, HookLoader.Load(m.Source, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Source.Definition, target).ToList(), Merge(m.Source.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
         }).ToList();
 
         // where the records about this connection are kept: itself, another connection (its read login is needed), or nowhere (a warning, unless that was chosen)

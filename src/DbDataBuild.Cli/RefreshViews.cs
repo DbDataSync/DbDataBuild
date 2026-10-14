@@ -137,7 +137,7 @@ internal static class RefreshViews
             : i.Source == RefreshParameter.FromParameter ? $"{i.Value}  (parameter)"
             : i.Source == RefreshParameter.FromDefault ? $"{i.Value}  (default)"
             : i.Source == RefreshParameter.FromResolver ? "found when it runs  (resolver)"
-            : i.Source == RefreshParameter.Computed && i.Resolver is { } r ? $"found when it runs  (resolver: {r.Kind} {(r.Text != null ? "`" + r.Text.ReplaceLineEndings(" ") + "`" : r.File)}{(i.Provides.Count > 0 ? ", provides " + string.Join(", ", i.Provides) : "")}){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
+            : i.Source == RefreshParameter.Computed && i.Resolver is { } r ? $"found when it runs  (resolver: {r.Kind} `{r.Text.ReplaceLineEndings(" ")}`{(i.Provides.Count > 0 ? ", provides " + string.Join(", ", i.Provides) : "")}){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
             : i.Source == RefreshParameter.Provided ? $"found when it runs  (provided by `{i.ProvidedBy}`){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
             : "no default";
 
@@ -153,7 +153,7 @@ internal static class RefreshViews
                 {
                     name = i.Name, type = i.Type, source = given != null ? "membership" : i.Source, value = given != null ? given.Value : i.Value,
                     resolver = i.Resolver != null && given == null ? i.Resolver.Kind : i.ProvidedBy != null && given == null ? "provided" : null,
-                    resolver_text = i.Resolver?.Text, resolver_file = i.Resolver?.File,
+                    resolver_text = i.Resolver?.Text,
                     free = i.Free ? (bool?)true : null, on_null = i.OnNull == "fail" ? null : i.OnNull,
                     resolved_value = resolve && found != null && found.IsComputed ? found.Value : null, resolved_source = resolve && found != null ? found.Source : null,
                 };

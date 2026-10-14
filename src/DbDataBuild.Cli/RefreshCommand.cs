@@ -264,8 +264,6 @@ internal static class RefreshCommand
             if (l.ResolverFile != null && ReadFile(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
             foreach (var h in l.Before.Concat(l.After))
                 if (ReadFile(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
-            foreach (var r in l.Inputs.Concat(l.Copy?.Origins.SelectMany(o => o.Inputs) ?? []).Select(i => i.Resolver).Where(r => r?.File != null))
-                if (ReadFile(r!.File!, r.FileHash ?? "", "input resolver") is { } text) scripts[r.File!] = text;
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
 
@@ -519,10 +517,7 @@ internal static class RefreshCommand
             return new PreparedLoad(steps, InputsJson([(null, inputs)], context, one.UsedClock));
         }
 
-        // the origin check: every origin of the copy must have its read login and answer, before anything is written (a failure is the load's: `failed: origin`, and the failure rules apply)
-        foreach (var o in copy.Origins)
-            if (await origins.CheckAsync(o.Connection, ct) is { } why)
-                return new PreparedLoad(skeleton, InputsJson([(null, inputs)], context, false), $"origin `{o.Connection}`: {why}", LoadStatus.FailedOrigin);
+        // an origin is checked (reachable, read login, SELECT 1) just before its own transfer, by the engine, so an origin that is down fails this load as `failed: origin` while the origins before it stay loaded
 
         // an incremental copy reads each origin from the newest value the destination holds for it, less the lookback; nothing there yet reads everything
         var bounds = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -579,7 +574,7 @@ internal static class RefreshCommand
         {
             var given = inputs.Where(x => x.Source is "flag" or "membership").ToDictionary(x => x.Name, x => (x.Value!, x.Source), StringComparer.Ordinal);
             var resolution = await InputResolution.ResolveAsync(item.Display, defs.Where(d => d.Source != RefreshParameter.FromResolver).ToList(), given, context, runner,
-                r => r.File != null && scripts.TryGetValue(r.File, out var text) ? text : null, ct);
+                r => r.Text, ct);
             usedClock = resolution.UsedClock;
             foreach (var r in resolution.Inputs)
                 if (inputs.FindIndex(x => x.Name == r.Name) is var at and >= 0 && inputs[at].Source == "computed")

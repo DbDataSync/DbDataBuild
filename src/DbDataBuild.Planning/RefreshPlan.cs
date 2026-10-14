@@ -16,14 +16,13 @@ public sealed record RefreshHook(string Name, string Event, string File, string 
 public sealed record RefreshParameterRef(string Name, string Type, string Value);
 
 /// <summary>
-/// How an input is computed when its load runs (docs/research/refresh-plans.md, section 8). An `expression` is committed as the text written; a `target` or `source` resolver is committed as a file under `rendered/`
-/// (<see cref="File"/> and its hash), lowered for the engine it runs on, and its <see cref="Text"/> is read from that file when the load runs. <see cref="Provides"/> are the inputs a resolver that answers several
-/// (named columns) provides. <see cref="Hash"/> is what the event records with the value.
+/// How an input is computed when its load runs (docs/research/refresh-plans.md, section 8). The text is in the load plan beside the input's name, so it is hashed with the plan: an `expression` as written, a `target` or
+/// `source` resolver lowered for the engine it runs on. <see cref="Provides"/> are the inputs a resolver that answers several (named columns) provides. <see cref="Hash"/> is what the event records with the value.
 /// </summary>
 /// <param name="Engine">For a `source` resolver: the engine of the origin the text is lowered for (a copy may have origins of several engines, each with its own file).</param>
-public sealed record RefreshInputResolver(string Kind, string? Text, string? File, string? FileHash, IReadOnlyList<string> Provides, IReadOnlyList<RefreshParameterRef> Parameters, string? Engine = null)
+public sealed record RefreshInputResolver(string Kind, string Text, IReadOnlyList<string> Provides, IReadOnlyList<RefreshParameterRef> Parameters, string? Engine = null)
 {
-    public string Hash => Hashing.Sha256Hex(string.Join("\n", Kind, FileHash ?? Text ?? "", string.Join(",", Parameters.Select(p => $"{p.Name}={p.Value}"))));
+    public string Hash => Hashing.Sha256Hex(string.Join("\n", Kind, Text, string.Join(",", Parameters.Select(p => $"{p.Name}={p.Value}"))));
 }
 
 /// <summary>An input of a load: its name and type, and where its default comes from.</summary>
@@ -174,8 +173,7 @@ internal static class RefreshInputYaml
         if (prm.Resolver is not { } rv) return;
         sb.Append(pad).AppendLineLf("resolver:");
         sb.Append(pad).Append("  kind: ").AppendLineLf(Q(rv.Kind));
-        if (rv.Text != null) sb.Append(pad).Append("  text: ").AppendLineLf(Q(rv.Text));
-        if (rv.File != null) { sb.Append(pad).Append("  file: ").AppendLineLf(Q(rv.File)); sb.Append(pad).Append("  file_hash: ").AppendLineLf(Q(rv.FileHash ?? "")); }
+        sb.Append(pad).Append("  text: ").AppendLineLf(Q(rv.Text));
         if (rv.Engine != null) sb.Append(pad).Append("  engine: ").AppendLineLf(Q(rv.Engine));
         if (rv.Provides.Count > 0) { sb.Append(pad).AppendLineLf("  provides:"); foreach (var p in rv.Provides) sb.Append(pad).Append("    - ").AppendLineLf(Q(p)); }
         if (rv.Parameters.Count > 0)
@@ -192,11 +190,11 @@ internal static class RefreshInputYaml
         RefreshInputResolver? resolver = null;
         if (pm.Get("resolver") is YamlMapping rm)
         {
-            r.Keys(rm, ["kind", "text", "file", "file_hash", "engine", "provides", "parameters"], "a resolver");
+            r.Keys(rm, ["kind", "text", "engine", "provides", "parameters"], "a resolver");
             var provides = ((rm.Get("provides") as YamlSequence)?.Items ?? []).OfType<YamlScalar>().Select(x => x.Value).ToList();
             var refs = new List<RefreshParameterRef>();
             foreach (var qm in r.Maps(rm, "parameters", "parameter")) { r.Keys(qm, ["name", "type", "value"], "a parameter"); refs.Add(new(r.Req(qm, "name"), r.Req(qm, "type"), r.Req(qm, "value"))); }
-            resolver = new(r.Req(rm, "kind"), r.S(rm, "text"), r.S(rm, "file"), r.S(rm, "file_hash"), provides, refs, r.S(rm, "engine"));
+            resolver = new(r.Req(rm, "kind"), r.Req(rm, "text"), provides, refs, r.S(rm, "engine"));
         }
         else if (pm.Get("resolver") is { } bad) r.Bad(bad, "A resolver must be a mapping.");
         return new(r.Req(pm, "name"), r.Req(pm, "type"), r.Req(pm, "source"), r.S(pm, "value"), resolver, r.S(pm, "free") == "true", r.S(pm, "provided_by"), r.S(pm, "on_null") ?? "fail", r.S(pm, "initial"));

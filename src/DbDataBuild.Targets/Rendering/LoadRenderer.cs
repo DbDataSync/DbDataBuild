@@ -18,7 +18,7 @@ public sealed record OperationReport(string Model, string Target, string Operati
 /// The resolver of one input of a load, as committed. An `expression` is its DuckDB text; a `target` or `source` resolver is a SELECT lowered for the engine it runs on, in the file at <see cref="Path"/> (relative to
 /// rendered/) with <see cref="Text"/> as its content. A `source` resolver has one per engine of the copy's origins (<see cref="Engine"/>).
 /// </summary>
-public sealed record RenderedInput(string Name, string Kind, string Text, string? Path, string? Engine = null);
+public sealed record RenderedInput(string Name, string Kind, string Text, string? Engine = null);
 
 /// <summary>A rendered load operation with everything a plan needs: the script as committed, its resolver, parameters and watermark rule.</summary>
 public sealed record RenderedOperation(

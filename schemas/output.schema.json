@@ -4689,12 +4689,6 @@
                                   "null"
                                 ]
                               },
-                              "resolver_file": {
-                                "type": [
-                                  "string",
-                                  "null"
-                                ]
-                              },
                               "on_null": {
                                 "type": [
                                   "string",

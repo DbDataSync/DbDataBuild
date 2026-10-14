@@ -101,10 +101,11 @@ internal static class RefreshPlanBuilder
             if (i.Resolver == null) return null;
             var problems = new List<string>();
             var refs = InputCompiler.ParametersOf(source, ctx.Config, connection, i.Resolver.Text, problems);
-            if (i.Resolver.Kind == InputResolverKinds.Expression) return new(i.Resolver.Kind, i.Resolver.Text, null, null, i.Provides, refs);
+            if (i.Resolver.Kind == InputResolverKinds.Expression) return new(i.Resolver.Kind, i.Resolver.Text, i.Provides, refs);
+            // a `target` or `source` resolver is the text lowered for the engine it runs on; the load plan carries it beside the input's name
             var rendered = op.InputList.FirstOrDefault(r => r.Name == i.Name && r.Kind == i.Resolver.Kind && (r.Engine == null || originEngine == null || r.Engine == originEngine));
-            if (rendered?.Path == null) { Bad(i, "has no rendered resolver (see the errors of the compile)"); return null; }
-            return new(i.Resolver.Kind, null, rendered.Path, Hashing.ScriptHash(rendered.Text), i.Provides, refs, rendered.Engine);
+            if (rendered == null) { Bad(i, "has no rendered resolver (see the errors of the compile)"); return null; }
+            return new(i.Resolver.Kind, rendered.Text, i.Provides, refs, rendered.Engine);
         }
 
         // the value a default gives: a literal, or the parameter it names
