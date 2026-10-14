@@ -1,0 +1,50 @@
+using System.Data.Odbc;
+
+namespace DbDataBuild.Execution;
+
+/// <summary>
+/// What went wrong with a driver, described without the driver's message (which can quote data, a path or a user name): the exception's type and an error number, and for the one failure a person can
+/// fix on the machine, a missing ODBC driver manager or a missing ODBC driver, a sentence that says which is missing.
+/// </summary>
+public static class DriverFailure
+{
+    /// <summary>` (error 1234)` for a database exception (SQL Server's `Number`, PostgreSQL's `SqlState`, the SQLSTATE of an ODBC driver), else nothing.</summary>
+    public static string Number(Exception ex)
+    {
+        if (ex is OdbcException odbc) return odbc.Errors.Count > 0 && State(odbc.Errors[0].SQLState) is { } state ? $" (error {state})" : "";
+        if (ex is not System.Data.Common.DbException) return "";
+        foreach (var name in new[] { "Number", "SqlState" })
+            if (ex.GetType().GetProperty(name)?.GetValue(ex) is { } value && value.ToString() is { Length: > 0 and <= 12 } text && text != "0") return $" (error {text})";
+        return "";
+    }
+
+    private static string? State(string? sqlState) => sqlState is { Length: 5 } && sqlState.All(char.IsAsciiLetterOrDigit) ? sqlState : null;
+
+    /// <summary>
+    /// The sentence for an ODBC prerequisite that is missing, or null when the exception is something else: the driver manager (unixODBC on Linux and macOS; Windows has one) or the driver or data source the login names.
+    /// Only the SQLSTATE and the type are looked at; nothing the driver said is repeated.
+    /// </summary>
+    public static string? Prerequisite(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is DllNotFoundException or EntryPointNotFoundException)
+                return "the ODBC driver manager is not installed on this machine (install unixODBC on Linux or macOS; Windows has one built in)";
+            if (e is not OdbcException odbc) continue;
+            var states = odbc.Errors.Cast<OdbcError>().Select(x => x.SQLState).ToList();
+            if (states.Contains("IM002"))
+                return "the ODBC driver or data source named in the login was not found (no such driver in odbcinst.ini and no such DSN; the vendor's driver must be installed)";
+            // unixODBC reports a driver it cannot open as a warning (01000), and its text is the only thing that tells it from any other: the text is read, never repeated
+            if (states.Contains("IM003") || odbc.Errors.Cast<OdbcError>().Any(x => x.SQLState == "01000" && x.Message.Contains("Can't open lib", StringComparison.Ordinal)))
+                return "the ODBC driver named in the login is not installed or could not be loaded (it is not listed in odbcinst.ini, or its file is missing, or a library it needs is)";
+            if (states.Contains("IM004") || states.Contains("IM014"))
+                return "the ODBC driver manager could not use the driver named in the login (the driver does not match the manager, or the driver is not an ODBC driver)";
+            if (states.Contains("IM012") || states.Contains("IM010"))
+                return "the ODBC login is not a valid connection string or DSN";
+        }
+        return null;
+    }
+
+    /// <summary>The failure in words that quote nothing: the missing prerequisite when that is it, else the type and the error number.</summary>
+    public static string Describe(Exception ex) => Prerequisite(ex) ?? $"{ex.GetType().Name}{Number(ex)}";
+}

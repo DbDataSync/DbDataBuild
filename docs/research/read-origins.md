@@ -1,6 +1,6 @@
 # Read-only origins: ODBC, Arrow Flight SQL, DuckDB and configurable dialects
 
-Status: steps 1 and 2 are built (entries 157 and 158; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Steps 3 to 5 are not. Written from the code as of entry 156.
+Status: steps 1 to 3 are built (entries 157, 158 and 159; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Steps 4 and 5 are not. Written from the code as of entry 156.
 
 ## 1. The goal
 
@@ -141,6 +141,17 @@ Still open:
 4. **Snapshot.** A copy's read is "a snapshot where the engine offers one". For ODBC and Flight SQL the tool cannot know. OK to document it as the origin's behaviour?
 5. **Parameter order.** Positional `?` records the order of parameters in the plan; a placeholder used twice is passed twice. Confirm.
 6. **A destination later?** `readonly` is a keyword, so a later release can allow writing DuckDB or ODBC by dropping the rule in section 3.
+
+## 8a. As built, step 3 (the ODBC origin, entry 159)
+
+What was built is what section 4 says, with these facts the build settled:
+
+* **The login** is an ODBC connection string or a DSN with its credentials; a bare word is read as `DSN=word`. It reaches the driver manager as written. Only the user (`UID`, `User`, `Username`, `User Id`) is read from it, for the command header.
+* **The source** is `OdbcRowSource` over `System.Data.Odbc` 10.0.13. Positional `?` values come in the order of the plan's `parameter_order`; the ADO types are mapped to ODBC's (`DateTime2` to `DateTime`; text as `NVarChar`). A native text is described with the driver's schema-only mode and the ODBC types are named as `information_schema` names, so one type table (the profile's `types:`) serves both ways of finding a column's type.
+* **The catalog** is `information_schema` (columns, primary keys, foreign keys; no indexes) when the profile says so; `catalog: none` makes `project import` say it plainly, `connection inspect` say the schema names were not read, and the structure check of a copy skipped with a note. `ConnectionConfig.Profile` carries a project's own dialect to every login, which step 1 had not needed.
+* **Missing prerequisites**: `DriverFailure` (Execution) names a missing driver manager (`DllNotFoundException`) and a missing or unloadable driver (SQLSTATE `IM002`, `IM003`, unixODBC's `01000` "Can't open lib", `IM004`, `IM010`, `IM012`, `IM014`) in a sentence of ours; any other failure is the exception type and the SQLSTATE. It is used by `connection inspect`, the check of the origin before a copy's transfer and a refresh (so the copy ends `failed: origin`), a session that cannot be opened and the resolvers.
+* **psqlodbc hands a boolean over as text** unless `BoolsAsChar=0` is in the connection string; the copy reads `t`/`f` (and `true`/`false`, `1`/`0`, `y`/`n`) as well, so the default driver setting works.
+* **Tested against** PostgreSQL 17 through psqlodbc 16 and unixODBC 2.3.12 into SQL Server and PostgreSQL. No second driver and no Windows or macOS driver manager was tried.
 
 ## 9. Not covered
 

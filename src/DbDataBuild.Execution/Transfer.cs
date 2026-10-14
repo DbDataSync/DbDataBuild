@@ -28,6 +28,14 @@ public static partial class TransferValues
         return copy.ToArray();
     }
 
+    /// <summary>An ODBC driver can hand a boolean over as text (psqlodbc does unless `BoolsAsChar=0`): `t`/`f`, `true`/`false`, `1`/`0`, `y`/`n`, `yes`/`no`. Anything else is not a boolean.</summary>
+    private static bool BooleanOfText(string text) => text.Trim().ToLowerInvariant() switch
+    {
+        "t" or "true" or "1" or "y" or "yes" => true,
+        "f" or "false" or "0" or "n" or "no" => false,
+        _ => throw new FormatException(),
+    };
+
     /// <summary>Converts one value read from the origin to the CLR type the destination's bulk writer takes for <paramref name="column"/>. A null stays null.</summary>
     public static object? Convert(object? value, TransferColumn column)
     {
@@ -42,7 +50,7 @@ public static partial class TransferValues
                 "SMALLINT" or "TINYINT" => System.Convert.ToInt16(value, CultureInfo.InvariantCulture),
                 "DOUBLE" => System.Convert.ToDouble(value, CultureInfo.InvariantCulture),
                 "FLOAT" or "REAL" => System.Convert.ToSingle(value, CultureInfo.InvariantCulture),
-                "BOOLEAN" => System.Convert.ToBoolean(value, CultureInfo.InvariantCulture),
+                "BOOLEAN" => value is string flag ? BooleanOfText(flag) : System.Convert.ToBoolean(value, CultureInfo.InvariantCulture),
                 "DATE" => value switch { DateOnly d => d.ToDateTime(TimeOnly.MinValue), DateTime dt => dt.Date, _ => System.Convert.ToDateTime(value, CultureInfo.InvariantCulture).Date },
                 "TIMESTAMP" => value switch { DateTime dt => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), DateTimeOffset o => DateTime.SpecifyKind(o.UtcDateTime, DateTimeKind.Unspecified), _ => System.Convert.ToDateTime(value, CultureInfo.InvariantCulture) },
                 "TIME" => value switch { TimeSpan s => s, TimeOnly o => o.ToTimeSpan(), _ => TimeSpan.Parse(System.Convert.ToString(value, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture) },

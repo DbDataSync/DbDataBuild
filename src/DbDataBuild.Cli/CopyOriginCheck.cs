@@ -28,10 +28,15 @@ internal static class CopyOriginCheck
         if (declared == null) return none;
         if (declared.Native is { Access: NativeQuery.Command }) return none;      // a command is not described: the transfer's own check is its net
 
-        var (login, missing) = LoginSettings.FromEnvironment(origin.Connection, origin.Engine, Login.Read, env);
+        var (login, missing) = LoginSettings.FromEnvironment(ctx.Config, origin.Connection, Login.Read, env);
         if (login == null)
         {
             findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the origin `{origin.Connection}` was not checked against `{copy.From}`: {missing?.Found}") with { SeverityOverride = Severity.Note });
+            return none;
+        }
+        if (login.Dialect.Catalog == CatalogStyle.None && !declared.IsNative)
+        {
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the origin `{origin.Connection}` has the dialect `{login.Dialect.Name}` (`catalog: none`), so `{copy.From}` was not checked against its declaration; the transfer's own check of the columns it reads is the net.") with { SeverityOverride = Severity.Note });
             return none;
         }
         var differences = declared.IsNative ? await NativeShapeCheck.DifferencesAsync(ctx.Config, declared, origin.Connection, login) : await Differences(login, origin, declared);
@@ -62,7 +67,7 @@ internal static class CopyOriginCheck
         var (schema, name) = (origin.Table[..origin.Table.IndexOf('.')], origin.Table[(origin.Table.IndexOf('.') + 1)..]);
         var shapes = await CatalogReader.ReadObjectsAsync(read, origin.Engine, schema);
         if (!shapes.TryGetValue(origin.Table, out var shape)) return [$"the table does not exist there"];
-        var live = SourceImport.Describe(origin.Engine, shape, null);
+        var live = SourceImport.Describe(origin.Engine, shape, null, dialect: login.Dialect);
         var now = SourceImport.ToDescriptor(live, declared);
         // what a copy reads: a column that is gone, a type that changed, a column that can now be NULL where the declaration says it cannot; an added column is not read, so it is no difference
         return SourceImport.Compare(declared, now)

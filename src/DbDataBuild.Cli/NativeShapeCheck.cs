@@ -27,7 +27,7 @@ internal static class NativeShapeCheck
         await using var read = await ReadSession.OpenAsync(login);
         var columns = await read.DescribeAsync(text, engine, parameters);
         if (columns == null) return null;
-        var live = SourceImport.Describe(engine, new ObjectShape("native", native.Name, ObjectKind.Table, columns, []), null);
+        var live = SourceImport.Describe(engine, new ObjectShape("native", native.Name, ObjectKind.Table, columns, []), null, dialect: login.Dialect);
         var now = SourceImport.ToDescriptor(live, native);
         return SourceImport.Compare(native, now)
             .Where(c => c.Kind is SourceChangeKind.ColumnRemoved or SourceChangeKind.TypeChanged)       // not nullability: an engine calls any computed column nullable, so a declared NOT NULL is the author's assertion
@@ -41,7 +41,7 @@ internal static class NativeShapeCheck
         foreach (var native in readNames.Distinct(StringComparer.OrdinalIgnoreCase).Select(n => ctx.Project.NativeModels.FirstOrDefault(d => string.Equals(d.Name, n, StringComparison.OrdinalIgnoreCase)))
                      .Where(d => d is { Native.Access: NativeQuery.Select }).OrderBy(d => d!.Name, StringComparer.Ordinal))
         {
-            var (login, missing) = LoginSettings.FromEnvironment(target, ctx.Config.EngineOf(target) ?? target, Login.Read, env);
+            var (login, missing) = LoginSettings.FromEnvironment(ctx.Config, target, Login.Read, env);
             if (login == null) { findings.Add(Finding(native!, $"{native!.Name}: not checked against the engine on `{target}`: {missing?.Found}", true)); continue; }
             var differences = Task.Run(() => DifferencesAsync(ctx.Config, native!, target, login)).GetAwaiter().GetResult();
             if (differences == null) findings.Add(Finding(native!, $"{native!.Name}: the engine on `{target}` could not describe the native text, so its columns were not checked.", true));

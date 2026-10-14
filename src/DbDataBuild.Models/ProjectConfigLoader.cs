@@ -470,7 +470,7 @@ public static class ProjectConfigLoader
                     if (mp is YamlScalar mps && int.TryParse(mps.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap is >= 1 and <= 64) maxParallel = cap;
                     else Add(DiagnosticCatalog.InvalidValue, mp, $"`connections.{name}.max_parallel` must be a whole number from 1 to 64.");
                 }
-                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel, DeclaredKind = kind };
+                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel, DeclaredKind = kind, Profile = kind != null && dialects.TryGetValue(kind.Dialect, out var own) ? own : null };
             }
             return result;
         }

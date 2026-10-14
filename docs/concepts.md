@@ -136,9 +136,9 @@ When a check fails the refresh stops (`refresh.on_fail: block`) and names the ob
 | Term | Meaning |
 |---|---|
 | connection | a named database the project is built on |
-| engine | what kind of connection it is, as keywords in `engine:` (any order): the driver (`sqlserver`, `postgres`, `fabric`, `duckdb`), `readonly`, and a dialect where the driver has none of its own |
+| engine | what kind of connection it is, as keywords in `engine:` (any order): the driver (`sqlserver`, `postgres`, `fabric`, `duckdb`, `odbc`), `readonly`, and a dialect where the driver has none of its own |
 | readonly | a connection the tool only reads: a copy's origin, a mapped or native model's, a `source` resolver's. It has no write login and is never a destination, a tracking connection or a deploy, refresh, seed, publish or init target |
-| origin | a connection a copy (or a mapped or native model) reads from; it needs only a read login |
+| origin | a connection a copy (or a mapped or native model) reads from; it needs only a read login. A DuckDB file (`readonly duckdb`) or any system with an ODBC driver (`readonly odbc`) can be one; the tool ships no ODBC driver manager or driver |
 | dialect | the SQL an origin takes: how a name is quoted, how a parameter is written, what to send to see it answers. Built in for the three engines, DuckDB and `ansi`; a project adds its own under `dialects:` |
 | lane | deploy or refresh |
 | event | one run of a plan, with an id like `dep-20261007T204550-a7f3` or `ref-…` |

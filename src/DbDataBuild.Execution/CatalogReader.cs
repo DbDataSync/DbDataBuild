@@ -4,6 +4,12 @@ using DbDataBuild.State;
 
 namespace DbDataBuild.Execution;
 
+/// <summary>A source whose dialect says `catalog: none` was asked for its tables and columns. The tool does not guess them: they are declared by hand.</summary>
+public sealed class CatalogUnavailableException(string dialect) : Exception($"The dialect `{dialect}` says `catalog: none`: this source's tables and columns are not read from a catalog, so declare them by hand.")
+{
+    public string Dialect { get; } = dialect;
+}
+
 /// <summary>Reads the live shape of the objects under a schema name, through the read session (DESIGN.md 12.2: catalog hashing on every target).</summary>
 public static class CatalogReader
 {
@@ -63,10 +69,19 @@ JOIN information_schema.columns c ON c.table_catalog = t.table_catalog AND c.tab
 WHERE t.table_catalog = current_database() AND t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW') AND (? = '' OR t.table_name = ?)
 ORDER BY t.table_name, c.ordinal_position";
 
+    // A system known only by its ODBC driver (or any dialect whose profile says `catalog: information_schema`): the standard views and nothing else, the parameters by position (schema, then the object when one is asked for).
+    private const string AnsiColumnsHead = @"
+SELECT t.table_name, t.table_type, c.ordinal_position, c.column_name, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable
+FROM information_schema.tables t
+JOIN information_schema.columns c ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+WHERE t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW')";
+    private const string AnsiColumnsTail = " ORDER BY t.table_name, c.ordinal_position";
+
     /// <param name="objectName">Only this object of the schema name (a step that checks what it just did reads one object, not the hundreds a schema name may hold); null reads them all.</param>
     public static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadObjectsAsync(ReadSession read, string target, string schema, CancellationToken ct = default, string? objectName = null)
     {
         if (target == "duckdb") return await ReadDuckDbObjectsAsync(read, schema, objectName, ct);
+        if (target is "odbc" or "flightsql") return await ReadInformationSchemaObjectsAsync(read, schema, objectName, ct);
         var p = new[] { new GateParameter("schema", DbType.String, schema), new GateParameter("object", DbType.String, objectName ?? "") };
         var postgres = target == "postgres";
         var columnRows = await read.QueryAsync(postgres ? PostgresColumns : SqlServerColumns, p, ct);
@@ -104,6 +119,25 @@ ORDER BY t.table_name, c.ordinal_position";
             var type = declared.Contains('(') ? declared[..declared.IndexOf('(')].Trim() : declared;          // DECIMAL(18,3) is the type decimal with a precision and scale of its own
             var decimalType = type == "decimal";
             o.Columns.Add(new((string)r[3]!, type, Int(r[5]), decimalType ? Int(r[6]) : null, decimalType ? Int(r[7]) : null, (string?)r[8] == "YES", null, null));
+        }
+        return objects.ToDictionary(kv => $"{schema}.{kv.Key}", kv => new ObjectShape(schema, kv.Key, kv.Value.Kind, kv.Value.Columns, []));
+    }
+
+    private static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadInformationSchemaObjectsAsync(ReadSession read, string schema, string? objectName, CancellationToken ct)
+    {
+        if (read.Dialect.Catalog == Models.CatalogStyle.None) throw new CatalogUnavailableException(read.Dialect.Name);
+        var parameters = new List<GateParameter> { new("schema", DbType.String, schema) };
+        if (objectName != null) parameters.Add(new("object", DbType.String, objectName));
+        var rows = await read.QueryAsync(AnsiColumnsHead + (objectName != null ? " AND t.table_name = ?" : "") + AnsiColumnsTail, parameters, ct);
+        var objects = new Dictionary<string, (ObjectKind Kind, List<ColumnShape> Columns)>(StringComparer.Ordinal);
+        foreach (var r in rows)
+        {
+            var table = r[0]?.ToString() ?? "";
+            if (!objects.TryGetValue(table, out var o)) objects[table] = o = (r[1]?.ToString() == "VIEW" ? ObjectKind.View : ObjectKind.Table, []);
+            var type = (r[4]?.ToString() ?? "").ToLowerInvariant();
+            if (type.Contains('(')) type = type[..type.IndexOf('(')].Trim();
+            var decimalType = type is "decimal" or "numeric";
+            o.Columns.Add(new(r[3]?.ToString() ?? "", type, Int(r[5]), decimalType ? Int(r[6]) : null, decimalType ? Int(r[7]) : null, string.Equals(r[8]?.ToString(), "YES", StringComparison.OrdinalIgnoreCase), null, null));
         }
         return objects.ToDictionary(kv => $"{schema}.{kv.Key}", kv => new ObjectShape(schema, kv.Key, kv.Value.Kind, kv.Value.Columns, []));
     }

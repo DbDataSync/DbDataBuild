@@ -177,7 +177,7 @@ internal static class RefreshEngine
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // the connection would not give another session: the load fails, the failure rules apply
-                results[i] = await NoRunAsync(unit, LoadStatus.Failed, $"a session for it could not be opened ({ex.GetType().Name}{SessionNumber(ex)})");
+                results[i] = await NoRunAsync(unit, LoadStatus.Failed, $"a session for it could not be opened ({(DriverFailure.Prerequisite(ex) ?? ex.GetType().Name + SessionNumber(ex))})");
                 return null;
             }
             return async () =>
