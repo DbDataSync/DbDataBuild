@@ -44,7 +44,8 @@ public class TrackingDdlTests
     {
         var t = TargetRegistry.Get("postgres");
         foreach (var s in TrackingDdl.For("postgres").InitScript("dbdatabuild", "0.1.0"))
-            Assert.Empty(t.Validate(s.Text, s.Id));
+            if (!s.Text.StartsWith("DO $$", StringComparison.Ordinal))      // the one DO block (the view that has `model_kind` only when the table does) is run on PostgreSQL by the conformance tests, not parsed here
+                Assert.Empty(t.Validate(s.Text, s.Id));
     }
 
     [Fact]
@@ -84,7 +85,7 @@ public class TrackingDdlTests
         Assert.Equal(target != "fabric", text.Contains("VIEW [dbdatabuild].[metadata_columns]") || text.Contains("VIEW \"dbdatabuild\".\"metadata_columns\""));
         if (target == "postgres") Assert.Contains("\"document\" jsonb NOT NULL", text);
         if (target == "sqlserver") Assert.Contains("CHECK (ISJSON([document]) = 1)", text);          // SQL Server holds JSON as text, so the engine checks it
-        Assert.Equal(7, TrackingSchema.Version);
+        Assert.Equal(8, TrackingSchema.Version);
         Assert.Contains("[version], [tool_version]", TrackingDdl.Render(TrackingDdl.For("sqlserver").InitScript("d", "x")));
     }
 }

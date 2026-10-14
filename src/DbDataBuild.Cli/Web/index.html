@@ -398,7 +398,7 @@ async function modelDetail(root, m, tab) {
   const tabs = [["columns", "Columns"], ["sql", "Query"], ["lowered", "Lowered"], ...targets.map((t) => ["connection:" + t, t])];
   const body = h("div");
   root.append(
-    h("div", { class: "panel" }, h("h2", null, m.name, " ", badge(m.kind?.type ?? m.kind, "note")),
+    h("div", { class: "panel" }, h("h2", null, m.name, " ", badge(m.kind, "note")),
       h("div", null, h("span", { class: "muted" }, "grain "), (m.grain || []).length ? m.grain.map((g) => h("span", { class: "tag" }, g)) : h("span", { class: "warn" }, "not declared")),
       h("div", null, h("span", { class: "muted" }, "connections "), targets.map((t) => h("span", { class: "tag" }, t))),
       h("div", null, h("span", { class: "muted" }, "reads "), (m.upstream || []).map((u) => [h("span", { class: "tag" }, u.kind === "model" ? modelLink(u.name) : h("a", { class: "link", href: "#/models/" + encodeURIComponent(u.name) }, u.name)), " "])),

@@ -31,15 +31,18 @@ internal static class PublishMetadataCommand
         }
 
         var (commit, _) = GitInfo.Read(root);
-        var documents = MetadataPublisher.Collect(ctx, models.Length == 0 ? null : selected.Select(m => m.Source.Definition.Name).ToList(), plan: null);   // no models named: everything, sources no model reads included
+        var named = models.Length == 0 ? null : selected.Select(m => m.Source.Definition.Name).ToList();
+        var documents = MetadataPublisher.Collect(ctx, named, plan: null);   // no models named: everything, sources no model reads included
+        var dependencies = MetadataPublisher.CollectDependencies(ctx, named);
         MetadataPublisher.Result result;
-        try { result = Task.Run(() => MetadataPublisher.PublishAsync(documents, tracking.Scope, read, write, spec.Name, root, null, commit)).GetAwaiter().GetResult(); }
+        try { result = Task.Run(() => MetadataPublisher.PublishAsync(documents, tracking.Scope, read, write, spec.Name, root, null, commit, dependencies)).GetAwaiter().GetResult(); }
         catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); return CliApp.ExitFindings; }
 
         output.Payload("connection", target);
         output.Payload("written", result.Written.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
         output.Payload("unchanged", result.Unchanged.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
-        output.WriteLine($"Stored {result.Written.Count} document(s); {result.Unchanged.Count} already up to date. Query `{tracking.Scope.SchemaName}.metadata_current` and `{tracking.Scope.SchemaName}.metadata_columns` on `{tracking.Target.Connection}`.");
+        output.Payload("dependencies", new { rows = result.DependencyRows, subjects_written = result.DependencySubjectsWritten });
+        output.WriteLine($"Stored {result.Written.Count} document(s); {result.Unchanged.Count} already up to date; dependencies of {result.DependencySubjectsWritten} model(s) written ({result.DependencyRows} row(s) in the project). Query `{tracking.Scope.SchemaName}.metadata_current` and `{tracking.Scope.SchemaName}.metadata_columns` (and `metadata_dependency`) on `{tracking.Target.Connection}`.");
         return CliApp.ExitOk;
     }
 }

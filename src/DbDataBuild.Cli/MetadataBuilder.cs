@@ -17,7 +17,7 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class MetadataBuilder
 {
-    public const string ModelSchema = "dbdatabuild.model/1";
+    public const string ModelSchema = "dbdatabuild.model/2";
     public const string ProjectSchema = "dbdatabuild.project/1";
     public const string SourceSchema = "dbdatabuild.source/1";
 
@@ -67,6 +67,62 @@ internal static class MetadataBuilder
                 definition_hash = ctx.DefinitionHashOf(s.ReadQuery(ctx.Root, ctx.Config)),
             }).ToList(),
         };
+    }
+
+    /// <summary>The settings of a model's kind, each kind its own (an empty object when it has none): the document says the kind as a plain string, and these beside it.</summary>
+    public static object KindSettings(ModelDefinition d) => d.Kind switch
+    {
+        ModelKinds.IncrementalByUniqueKey => new { unique_key = d.UniqueKey },
+        ModelKinds.IncrementalByTimeRange => new { time_column = d.TimeColumn, lookback = d.Lookback },
+        ModelKinds.Copy => new
+        {
+            from = d.From,
+            slice = d.Slice == null ? null : new { column = d.Slice.Column, value = d.Slice.Value, type = d.Slice.Type },
+            on_mismatch = d.OnMismatch,
+            unique_key = d.UniqueKey.Count == 0 ? null : d.UniqueKey,
+            watermark = d.Watermark == null ? null : new { column = d.Watermark.Column, lookback = d.Watermark.Lookback },
+        },
+        _ => new { },
+    };
+
+    /// <summary>The kind of a table name in the project: model, native, source (a mapped model) or unknown.</summary>
+    private static Func<string, string> KindLookup(ProjectContext ctx)
+    {
+        var models = ctx.Project.Sources.Select(m => m.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var natives = ctx.Project.NativeModels.Select(n => n.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var sources = ctx.Project.AllDescriptors.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? "source" : "unknown";
+    }
+
+    /// <summary>
+    /// What a model's query reads, with the kind of each (model, native, source, unknown) and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the query could not be
+    /// read and calls no macro, so the document says nothing rather than something wrong.
+    /// </summary>
+    public static List<(string Name, string Kind)>? UpstreamOf(ProjectContext ctx, ModelSource source, string sql, bool analysed, Func<string, string>? kindOf = null)
+    {
+        var macros = ctx.MacrosCalledBy(sql);
+        if (!analysed && macros.Count == 0) return null;
+        kindOf ??= KindLookup(ctx);
+        return ctx.BaseTablesOf(source, sql).Select(n => (n, kindOf(n))).Concat(macros.Select(m => (m, "macro"))).ToList();
+    }
+
+    /// <summary>
+    /// The dependency rows of the whole project (DESIGN.md 12, `metadata_dependency`): each model with what its query reads, each native model with what it says it reads, and the transitive closure of both. Computed from the
+    /// project and not from the documents, so publishing some of the models still gives each of them its whole ancestry.
+    /// </summary>
+    public static IReadOnlyList<DependencyRow> Dependencies(ProjectContext ctx)
+    {
+        var kindOf = KindLookup(ctx);
+        var direct = new List<(string, string, string)>();
+        foreach (var m in ctx.Project.Sources)
+        {
+            var sql = m.ReadQuery(ctx.Root, ctx.Config);
+            var analysed = AnalyzeAgainstUpstream(ctx, m.Definition.Name, ctx.AnalysisSql(m, sql)).Facts != null;
+            foreach (var (name, kind) in UpstreamOf(ctx, m, sql, analysed, kindOf) ?? []) direct.Add((m.Definition.Name, name, kind));
+        }
+        foreach (var n in ctx.Project.NativeModels)
+            foreach (var read in n.Native?.Reads ?? []) direct.Add((n.Name, read, kindOf(read)));
+        return MetadataDependencies.Closure(direct);
     }
 
     private static object HookJson(HookDefinition h) => h.IsReference
@@ -168,8 +224,6 @@ internal static class MetadataBuilder
 
         // lineage and inferred nullability, against the declared columns of everything upstream
         var (facts, _) = AnalyzeAgainstUpstream(ctx, def.Name, ctx.AnalysisSql(source, sql));
-        var known = ctx.Project.Models.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var sources = ctx.Project.AllDescriptors.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var ddls = targets.ToDictionary(t => t, t => TargetRegistry.Get(ctx.Config.EngineOf(t) ?? t).CreateDdl(ctx.Config.ForConnection(t)));      // the DDL is the engine's; the keys are the model's connections
         object Native(ColumnDefinition c) => targets.ToDictionary(t => t, t =>
@@ -226,7 +280,8 @@ internal static class MetadataBuilder
             schema = ModelSchema,
             name = def.Name,
             title = def.Info.Title, description = def.Info.Description,
-            kind = new { type = def.Kind, unique_key = def.UniqueKey, time_column = def.TimeColumn, lookback = def.Lookback },
+            kind = def.Kind,
+            kind_settings = KindSettings(def),
             grain = def.Grain,
             tags = def.Info.TagsForDocument,
             properties = def.Info.PropertiesForDocument,
@@ -234,8 +289,7 @@ internal static class MetadataBuilder
             files = new { definition = source.DefinitionFile, query = source.QueryFile },
             inherited = source.Inherited.Select(o => new { path = o.Path, file = o.File, line = o.Line, value = o.Value }).ToList(),
             definition_hash = hash,
-            upstream = facts == null && ctx.MacrosCalledBy(sql).Count == 0 ? null : ctx.BaseTablesOf(source, sql).Select(n => new { name = n, kind = known.Contains(n) ? "model" : ctx.Project.NativeModels.Any(x => string.Equals(x.Name, n, StringComparison.OrdinalIgnoreCase)) ? "native" : sources.Contains(n) ? "source" : "unknown" })
-                .Concat(ctx.MacrosCalledBy(sql).Select(m => new { name = m, kind = "macro" })).ToList(),
+            upstream = UpstreamOf(ctx, source, sql, facts != null)?.Select(u => new { name = u.Name, kind = u.Kind }).ToList(),
             rewrites_off = RewriteCatalog.For(ctx.Config, def).Disabled.Order(StringComparer.Ordinal).ToList(),
             lowered = lowered == null ? null : new
             {

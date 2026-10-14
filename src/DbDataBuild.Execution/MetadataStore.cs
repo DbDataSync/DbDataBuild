@@ -1,4 +1,5 @@
 using System.Data;
+using DbDataBuild.Core;
 using DbDataBuild.State;
 
 namespace DbDataBuild.Execution;
@@ -71,17 +72,71 @@ public static class MetadataStore
 
     public static string Key(string kind, string subject) => $"{kind}|{subject}";
 
+    /// <summary>The rows of `metadata_dependency` for the connection: what the models (and native models) depend on, as last published.</summary>
+    public static async Task<IReadOnlyList<DependencyRow>> DependenciesAsync(ReadSession read, TrackingScope scope, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var rows = await read.QueryAsync($"SELECT d.{c("subject")}, d.{c("depends_on")}, d.{c("depends_on_kind")}, d.{c("depth")} FROM {c(scope.SchemaName)}.{c("metadata_dependency")} d WHERE d.{c("connection")} = @connection",
+            [new GateParameter("connection", DbType.String, scope.Connection)], ct);
+        return rows.Select(r => new DependencyRow((string)r[0]!, (string)r[1]!, ((string)r[2]!).Trim(), Convert.ToInt32(r[3]))).ToList();
+    }
+
+    /// <summary>
+    /// What a sync of the dependency rows would change: the subjects whose rows differ from <paramref name="stored"/> (or that are stored and no longer computed, when <paramref name="all"/>). <paramref name="computed"/> is the
+    /// project's rows; <paramref name="subjects"/> are the subjects this publish is about (every subject when <paramref name="all"/>).
+    /// </summary>
+    public static IReadOnlyList<string> DependencySubjectsToWrite(IReadOnlyList<DependencyRow> computed, IReadOnlyList<DependencyRow> stored, IReadOnlySet<string> subjects, bool all)
+    {
+        static string Shape(IEnumerable<DependencyRow> rows) => string.Join("\n", rows.OrderBy(r => r.DependsOn, StringComparer.Ordinal).Select(r => $"{r.DependsOn}|{r.DependsOnKind}|{r.Depth}"));
+        var want = computed.GroupBy(r => r.Subject, StringComparer.Ordinal).ToDictionary(g => g.Key, g => Shape(g), StringComparer.Ordinal);
+        var have = stored.GroupBy(r => r.Subject, StringComparer.Ordinal).ToDictionary(g => g.Key, g => Shape(g), StringComparer.Ordinal);
+        var names = want.Keys.Where(k => all || subjects.Contains(k)).Concat(all ? have.Keys : have.Keys.Where(subjects.Contains)).Distinct(StringComparer.Ordinal);
+        return names.Where(n => want.GetValueOrDefault(n) != have.GetValueOrDefault(n)).Order(StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// Replaces the dependency rows of some subjects: their old rows go, the computed ones are written (a subject that is no longer in <paramref name="computed"/> just loses its rows). Not part of the document write, and found by
+    /// comparing with what is stored, so a publish that stopped half way is finished by the next one.
+    /// </summary>
+    public static async Task ReplaceDependenciesAsync(MutationGate gate, TrackingScope scope, string stepId, IReadOnlyList<string> subjects, IReadOnlyList<DependencyRow> computed, CancellationToken ct = default)
+    {
+        string c(string n) => C(scope.Engine, n);
+        var table = $"{c(scope.SchemaName)}.{c("metadata_dependency")}";
+        var n = 0;
+        foreach (var subject in subjects)
+            await gate.ExecuteAsync(GateStatement.Tracking($"{stepId}-dep-delete-{++n:000}", $"DELETE FROM {table} WHERE {c("connection")} = @connection AND {c("subject")} = @subject",
+                [new("connection", DbType.String, scope.Connection), new("subject", DbType.String, subject)]), ct);
+        var set = subjects.ToHashSet(StringComparer.Ordinal);
+        var rows = computed.Where(r => set.Contains(r.Subject)).ToList();
+        const int PerStatement = 100;      // 4 values a row and the connection: far below the 2100 parameters SQL Server takes in one statement
+        for (var start = 0; start < rows.Count; start += PerStatement)
+        {
+            var chunk = rows.Skip(start).Take(PerStatement).ToList();
+            var parameters = new List<GateParameter> { new("connection", DbType.String, scope.Connection) };
+            var values = new List<string>();
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                values.Add($"(@connection, @subject{i}, @depends_on{i}, @kind{i}, @depth{i})");
+                parameters.Add(new($"subject{i}", DbType.String, chunk[i].Subject)); parameters.Add(new($"depends_on{i}", DbType.String, chunk[i].DependsOn));
+                parameters.Add(new($"kind{i}", DbType.AnsiString, chunk[i].DependsOnKind)); parameters.Add(new($"depth{i}", DbType.Int32, chunk[i].Depth));
+            }
+            await gate.ExecuteAsync(GateStatement.Tracking($"{stepId}-dep-{start / PerStatement + 1:000}",
+                $"INSERT INTO {table} ({c("connection")}, {c("subject")}, {c("depends_on")}, {c("depends_on_kind")}, {c("depth")}) VALUES {string.Join(", ", values)}", parameters), ct);
+        }
+    }
+
     /// <summary>Stores one document. The JSON is bound as a parameter (cast to jsonb on PostgreSQL), never interpolated.</summary>
     public static Task StoreAsync(MutationGate gate, TrackingScope scope, string stepId, string kind, string subject, string json, string hash, string toolVersion, string? planId, string? gitCommit, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
         var document = scope.Engine == "postgres" ? "CAST(@document AS jsonb)" : "@document";
-        var text = $"INSERT INTO {c(scope.SchemaName)}.{c("metadata_document")} ({c("connection")}, {c("kind")}, {c("subject")}, {c("document")}, {c("document_hash")}, {c("recorded_utc")}, {c("tool_version")}, {c("plan_id")}, {c("git_commit")}) " +
-                   $"VALUES (@connection, @kind, @subject, {document}, @document_hash, @recorded_utc, @tool_version, @plan_id, @git_commit)";
+        var text = $"INSERT INTO {c(scope.SchemaName)}.{c("metadata_document")} ({c("connection")}, {c("kind")}, {c("subject")}, {c("document")}, {c("document_hash")}, {c("recorded_utc")}, {c("tool_version")}, {c("plan_id")}, {c("git_commit")}, {c("model_kind")}) " +
+                   $"VALUES (@connection, @kind, @subject, {document}, @document_hash, @recorded_utc, @tool_version, @plan_id, @git_commit, @model_kind)";
         return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
         [
             new("connection", DbType.String, scope.Connection), new("kind", DbType.AnsiString, kind), new("subject", DbType.String, subject), new("document", DbType.String, json), new("document_hash", DbType.AnsiStringFixedLength, hash),
             new("recorded_utc", DbType.DateTime2, TrackingClock.NextUtc()), new("tool_version", DbType.AnsiString, toolVersion), new("plan_id", DbType.AnsiString, planId), new("git_commit", DbType.AnsiString, gitCommit),
+            new("model_kind", DbType.AnsiString, MetadataDependencies.ModelKindOf(kind, json)),
         ]), ct);
     }
 }

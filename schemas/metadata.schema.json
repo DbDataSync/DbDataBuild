@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:dbdatabuild:schemas:metadata",
   "title": "DbDataBuild metadata documents",
-  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/1`), one per source table the project reads but does not build (`dbdatabuild.source/1`), and one per model (`dbdatabuild.model/1`). The same documents are printed by `validate` and `metadata` with `--format json`, and stored in the target's tracking tables (`publish-metadata`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
+  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/1`), one per source table the project reads but does not build (`dbdatabuild.source/1`), and one per model (`dbdatabuild.model/2`: version 1 had `kind` as an object with a `type` inside; in version 2 `kind` is the model kind as a plain string and its settings are `kind_settings`). The same documents are printed by `validate` and `metadata` with `--format json`, and stored in the target's tracking tables (`publish-metadata`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
   "oneOf": [
     {
       "$ref": "#/$defs/project"
@@ -305,7 +305,14 @@
                 "type": "string"
               },
               "kind": {
-                "type": "string"
+                "description": "The model kind, as a plain string (see `model.kind`).",
+                "enum": [
+                  "view",
+                  "full",
+                  "incremental_by_unique_key",
+                  "incremental_by_time_range",
+                  "copy"
+                ]
               },
               "connections": {
                 "type": "array",
@@ -700,38 +707,19 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "dbdatabuild.model/1"
+          "const": "dbdatabuild.model/2"
         },
         "name": {
           "type": "string"
         },
         "kind": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "type": {
-              "enum": [
-                "view",
-                "full",
-                "incremental_by_unique_key",
-                "incremental_by_time_range"
-              ]
-            },
-            "unique_key": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "time_column": {
-              "type": "string"
-            },
-            "lookback": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
+          "description": "The model kind, as a plain string: the model kinds that have a model document. A mapped model and a native model have a source document, which has no kind. The settings of the kind are in `kind_settings`.",
+          "enum": [
+            "view",
+            "full",
+            "incremental_by_unique_key",
+            "incremental_by_time_range",
+            "copy"
           ]
         },
         "grain": {
@@ -962,12 +950,79 @@
               "boolean"
             ]
           }
+        },
+        "kind_settings": {
+          "description": "The settings of the kind, each kind its own, and an empty object for a kind that has none. incremental_by_unique_key: `unique_key`. incremental_by_time_range: `time_column`, `lookback`. copy: `from`, `slice`, `on_mismatch`, `unique_key`, `watermark`.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "unique_key": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "time_column": {
+              "type": "string"
+            },
+            "lookback": {
+              "type": "string"
+            },
+            "from": {
+              "description": "A copy: the model it copies, `schema_name.table_name`.",
+              "type": "string"
+            },
+            "slice": {
+              "description": "A copy: which rows are an origin's.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "column": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "type": {
+                  "description": "The column's SQL type, when the copy adds the column.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "column",
+                "value"
+              ]
+            },
+            "on_mismatch": {
+              "enum": [
+                "fail",
+                "skip"
+              ]
+            },
+            "watermark": {
+              "description": "A copy: only the rows at or after the newest value the destination holds, less `lookback`.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "column": {
+                  "type": "string"
+                },
+                "lookback": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "column"
+              ]
+            }
+          }
         }
       },
       "required": [
         "schema",
         "name",
         "kind",
+        "kind_settings",
         "grain",
         "connections",
         "files",

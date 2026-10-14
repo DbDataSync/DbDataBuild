@@ -70,11 +70,12 @@ public sealed class ModelsWindow : Ui.Modal
     private static string Describe(JsonNode m)
     {
         var sb = new StringBuilder();
-        var kind = m["kind"]!;
-        sb.AppendLineLf($"{(string?)m["name"]}   {(string?)kind["type"]}");
+        var settings = m["kind_settings"] as JsonObject ?? [];
+        sb.AppendLineLf($"{(string?)m["name"]}   {(string?)m["kind"]}");
         sb.AppendLineLf($"connections: {Join(m["connections"])}    grain: {Join(m["grain"])}");
-        if (kind["unique_key"] is JsonArray { Count: > 0 } uk) sb.AppendLineLf($"unique key: {Join(uk)}");
-        if ((string?)kind["time_column"] is { } tc) sb.AppendLineLf($"time column: {tc}{((string?)kind["lookback"] is { } lb ? ", lookback " + lb : "")}");
+        if (settings["unique_key"] is JsonArray { Count: > 0 } uk) sb.AppendLineLf($"unique key: {Join(uk)}");
+        if ((string?)settings["time_column"] is { } tc) sb.AppendLineLf($"time column: {tc}{((string?)settings["lookback"] is { } lb ? ", lookback " + lb : "")}");
+        if ((string?)settings["from"] is { } origin) sb.AppendLineLf($"copies: {origin}");
         sb.AppendLineLf($"files: {(string?)m["files"]!["query"]}");
         if (m["upstream"] is JsonArray { Count: > 0 } up) sb.AppendLineLf("reads: " + string.Join(", ", up.Select(u => $"{(string?)u!["name"]} ({(string?)u["kind"]})")));
         sb.AppendLineLf().AppendLineLf("Columns");

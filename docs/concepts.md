@@ -146,7 +146,7 @@ When a check fails the refresh stops (`refresh.on_fail: block`) and names the ob
 | dialect | the SQL an origin takes: how a name is quoted, how a parameter is written, what to send to see it answers, where the catalog is read from (`information_schema`, the ODBC driver's own functions, or nowhere). It is the dialect of the system a connection reaches, not of the server in front of it (a proxy in front of PostgreSQL and SQL Server is two connections, `readonly flightsql postgres` and `readonly flightsql sqlserver`). Built in for the three engines, DuckDB and `ansi`; a project adds its own under `dialects:` (`help dialects`) |
 | lane | deploy or refresh |
 | event | one run of a plan, with an id like `dep-20261007T204550-a7f3` or `ref-…` |
-| tracking tables | the tables the tool keeps in the database: plans, events, steps, shape history, decisions |
+| tracking tables | the tables the tool keeps in the database: plans, events, steps, shape history, decisions, the metadata documents (with each model's kind) and what each model depends on (`metadata_dependency`) |
 | statement log | a local file of each statement, written before it is sent |
 | shape hash | the hash of an object's columns, types and nullability |
 | drift | an object changed outside the tool |

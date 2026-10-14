@@ -15,8 +15,8 @@ public sealed record TrackingTable(string Name, string Purpose, IReadOnlyList<Tr
 /// </summary>
 public static class TrackingSchema
 {
-    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`); 6 added `object_info`, the title, description, tags and properties of the project, its connections, models, sources, columns and indexes as rows (the documents hold them as well); 7 recorded refresh plans: the plan, the selection and the plan's members as run on each event, and the membership, load plan, inputs with their sources, attempt and duration on each load row.</summary>
-    public const int Version = 7;
+    /// <summary>Layout version. 2 added `metadata_document` and its views; 3 made `metadata_columns` cover source descriptors too (a `kind` column); 4 keyed every record by the `connection` it describes, so one tracking store can hold any number of connections' records; `init` upgrades an older layout by creating what is missing; 5 told a deploy from a refresh and recorded the project's structure on each event (`lane`, `project_hash`); 6 added `object_info`, the title, description, tags and properties of the project, its connections, models, sources, columns and indexes as rows (the documents hold them as well); 7 recorded refresh plans: the plan, the selection and the plan's members as run on each event, and the membership, load plan, inputs with their sources, attempt and duration on each load row; 8 recorded the kind of each model beside its document (`model_kind` on `metadata_document`, and so on the view `metadata_current`) and what each model or native model depends on as rows (the table `metadata_dependency`).</summary>
+    public const int Version = 8;
 
     private static TrackingColumn C(string n, TrackingType t, bool nullable = false) => new(n, t, nullable);
 
@@ -92,7 +92,13 @@ public static class TrackingSchema
             C("connection", TrackingType.Name),
             C("kind", TrackingType.Short), C("subject", TrackingType.Name), C("document", TrackingType.Json), C("document_hash", TrackingType.Hash),
             C("recorded_utc", TrackingType.TimestampUtc), C("tool_version", TrackingType.Short), C("plan_id", TrackingType.Short, true), C("git_commit", TrackingType.Short, true),
+            C("model_kind", TrackingType.Short, true),
         ], ["connection", "kind", "subject", "recorded_utc"]),
+        new("metadata_dependency", "What each model, and each native model that says what it reads, depends on, one row each: depth 1 is a direct edge, a greater depth is a thing it depends on through others (the shortest path). Written with the documents when they are published, from the committed project; the views metadata_upstream and metadata_ancestors of the metadata rules read the same rows.",
+        [
+            C("connection", TrackingType.Name),
+            C("subject", TrackingType.Name), C("depends_on", TrackingType.Name), C("depends_on_kind", TrackingType.Short), C("depth", TrackingType.Int),
+        ], ["connection", "subject", "depends_on"]),
     ];
 
     /// <summary>
@@ -115,6 +121,14 @@ public static class TrackingSchema
     ];
 
     public const string TableAddedInLayout7 = "refresh_plan_member";
+
+    /// <summary>
+    /// What layout 8 added to a store of layout 7: a column on a table it has (the init script never alters a table, so `init --upgrade` adds it) and the table of dependencies (the init script creates it). Documents stored before
+    /// layout 8 have no `model_kind`; the next publish writes the documents again (their text changed with the model document's version), and with them the kind.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Table, string Column)> AddedInLayout8 = [("metadata_document", "model_kind")];
+
+    public const string TableAddedInLayout8 = "metadata_dependency";
 
     public static TrackingTable Table(string name) => Tables.First(t => t.Name == name);
 }

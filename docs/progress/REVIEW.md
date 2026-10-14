@@ -19,6 +19,7 @@ dbdatabuild is a .NET 10 CLI that builds analytics tables and views on **SQL Ser
 | Names and strings | a model's name is its definition's `name:`, `model_layout` checks file names; `string_semantics` per connection, DDB-236 and `trimmed` | DESIGN 6.5.6, 7.4, entries 84 to 86 |
 | Interfaces | `--format json` on every command with closed schemas, the terminal interface, the MCP server and app, the read-only web page, `agent-kit` | DESIGN 9, entries 27 to 61 |
 | Tests and samples | `sample`, `test` (metadata rules and model tests, a gate by tag before `plan`), `seed`/`load-seeds`, `diff` (one connection, or across connections and engines by digests), `graph`, `tag:` selectors, templates | DESIGN 15, entries 37 to 47, 92, 99, 101 |
+| Model kind and metadata | one word ("model kind"); `kind` keyed by the kind's name with its settings beneath it (`kind: view` when it has none), the old `{type: ...}` read with a warning and rewritten by `project model update`; model documents `dbdatabuild.model/2` (`kind` a string, `kind_settings`); tracking layout 8 (`model_kind`, the table `metadata_dependency`: direct and transitive dependencies as rows) | DESIGN 6.1, 9.4.1, 12, entries 163, 164 |
 | Documentation | `docs/getting-started.md`, `docs/commands.md` (generated from the command tree; a test keeps it current), `docs/operations.md` | entry 93 |
 
 The command list is `dbdatabuild --help` (every command declares an effect class, printed in its header).

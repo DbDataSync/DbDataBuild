@@ -3390,6 +3390,23 @@
         "connection": {
           "type": "string"
         },
+        "dependencies": {
+          "description": "The rows of the tracking table metadata_dependency: how many the project has, and for how many models (and native models) this publish wrote them again because they differed from the stored ones.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rows": {
+              "type": "integer"
+            },
+            "subjects_written": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "rows",
+            "subjects_written"
+          ]
+        },
         "written": {
           "type": "array",
           "items": {

@@ -1,0 +1,82 @@
+using System.Text.Json;
+
+namespace DbDataBuild.Core;
+
+/// <summary>One row of the tracking table `metadata_dependency` (and of the in-memory table of the same name): <paramref name="Subject"/> depends on <paramref name="DependsOn"/>, a thing of kind <paramref name="DependsOnKind"/> (model, source, native, macro or unknown), <paramref name="Depth"/> steps away: 1 is a direct edge, more is the transitive closure.</summary>
+public sealed record DependencyRow(string Subject, string DependsOn, string DependsOnKind, int Depth);
+
+/// <summary>
+/// The dependency rows (DESIGN.md 12): each model, and each native model that says what it reads, with everything it depends on, directly (depth 1) and through the things it depends on (greater depths, the shortest path
+/// when there are several). They are computed from the committed project when it is published, and the in-memory `metadata_upstream` and `metadata_ancestors` views read the same rows, so a rule means the same against
+/// the project and against what was published.
+/// </summary>
+public static class MetadataDependencies
+{
+    /// <param name="direct">The direct edges: a subject, what it depends on and the kind of that. The things a subject is made of are its model or native model's own; a thing that is no subject (a mapped model, a macro, an unknown table) has no edges of its own.</param>
+    public static IReadOnlyList<DependencyRow> Closure(IEnumerable<(string Subject, string DependsOn, string Kind)> direct)
+    {
+        var edges = new Dictionary<string, List<(string DependsOn, string Kind)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (subject, dependsOn, kind) in direct)
+        {
+            if (string.Equals(subject, dependsOn, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!edges.TryGetValue(subject, out var list)) edges[subject] = list = [];
+            if (!list.Any(e => string.Equals(e.DependsOn, dependsOn, StringComparison.OrdinalIgnoreCase))) list.Add((dependsOn, kind));
+        }
+        var rows = new List<DependencyRow>();
+        foreach (var subject in edges.Keys.OrderBy(s => s, StringComparer.Ordinal))
+        {
+            var seen = new Dictionary<string, DependencyRow>(StringComparer.OrdinalIgnoreCase);
+            var frontier = new List<string> { subject };
+            for (var depth = 1; frontier.Count > 0; depth++)
+            {
+                var next = new List<string>();
+                foreach (var node in frontier)
+                    foreach (var (dependsOn, kind) in edges.GetValueOrDefault(node) ?? [])
+                    {
+                        if (string.Equals(dependsOn, subject, StringComparison.OrdinalIgnoreCase) || seen.ContainsKey(dependsOn)) continue;
+                        seen[dependsOn] = new DependencyRow(subject, dependsOn, kind, depth);
+                        next.Add(dependsOn);
+                    }
+                frontier = next;
+            }
+            rows.AddRange(seen.Values.OrderBy(r => r.Depth).ThenBy(r => r.DependsOn, StringComparer.Ordinal));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// The rows from the metadata documents alone (a model's `upstream`, a native model's `native.reads`): what the in-memory database builds when it is given no rows of its own. The kind of a thing a native model reads is
+    /// found among the documents (a model, a native model or another source; an unknown table otherwise).
+    /// </summary>
+    public static IReadOnlyList<DependencyRow> FromDocuments(IEnumerable<(string Kind, string Subject, string Json)> documents)
+    {
+        var list = documents.ToList();
+        var kinds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (kind, subject, json) in list.Where(d => d.Kind is "model" or "source"))
+        {
+            using var doc = JsonDocument.Parse(json);
+            kinds[subject] = kind == "model" ? "model" : doc.RootElement.TryGetProperty("native", out var n) && n.ValueKind == JsonValueKind.Object ? "native" : "source";
+        }
+        var direct = new List<(string, string, string)>();
+        foreach (var (kind, subject, json) in list)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (kind == "model" && root.TryGetProperty("upstream", out var upstream) && upstream.ValueKind == JsonValueKind.Array)
+                foreach (var u in upstream.EnumerateArray())
+                    direct.Add((subject, u.GetProperty("name").GetString()!, u.GetProperty("kind").GetString()!));
+            else if (kind == "source" && root.TryGetProperty("native", out var native) && native.ValueKind == JsonValueKind.Object && native.TryGetProperty("reads", out var reads) && reads.ValueKind == JsonValueKind.Array)
+                foreach (var r in reads.EnumerateArray().Select(r => r.GetString()!))
+                    direct.Add((subject, r, kinds.GetValueOrDefault(r, "unknown")));
+        }
+        return Closure(direct);
+    }
+
+    /// <summary>The model kind of a model document (the `model_kind` column of the stored documents), or null for any other kind of document.</summary>
+    public static string? ModelKindOf(string documentKind, string json)
+    {
+        if (documentKind != "model") return null;
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() : null;
+    }
+}

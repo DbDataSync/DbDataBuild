@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using DbDataBuild.Core;
 using DuckDB.NET.Data;
 
 namespace DbDataBuild.Targets.DuckDb;
@@ -20,7 +21,9 @@ public sealed record RuleRun(RuleOutcome Outcome, string? Message, IReadOnlyList
 /// </summary>
 public sealed class MetadataDatabase : IDisposable
 {
-    private const string Table = "CREATE TABLE metadata_current(connection VARCHAR, kind VARCHAR, subject VARCHAR, document JSON, document_hash VARCHAR, recorded_utc TIMESTAMP, tool_version VARCHAR, plan_id VARCHAR, git_commit VARCHAR)";
+    private const string Table = "CREATE TABLE metadata_current(connection VARCHAR, kind VARCHAR, subject VARCHAR, document JSON, document_hash VARCHAR, recorded_utc TIMESTAMP, tool_version VARCHAR, plan_id VARCHAR, git_commit VARCHAR, model_kind VARCHAR)";
+
+    private const string DependencyTable = "CREATE TABLE metadata_dependency(connection VARCHAR, subject VARCHAR, depends_on VARCHAR, depends_on_kind VARCHAR, depth INTEGER)";
 
     private const string Views = """
 CREATE VIEW metadata_columns AS
@@ -31,8 +34,8 @@ FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c)
 WHERE m.kind IN ('model', 'source');
 
 CREATE VIEW metadata_models AS
-SELECT m.subject AS model, m.document->'kind'->>'type' AS kind_type,
-  CAST(m.document->'kind'->'unique_key' AS VARCHAR[]) AS unique_key, m.document->'kind'->>'time_column' AS time_column, m.document->'kind'->>'lookback' AS lookback,
+SELECT m.subject AS model, m.model_kind AS kind, m.document->'kind_settings' AS kind_settings,
+  CAST(m.document->'kind_settings'->'unique_key' AS VARCHAR[]) AS unique_key, m.document->'kind_settings'->>'time_column' AS time_column, m.document->'kind_settings'->>'lookback' AS lookback,
   CAST(m.document->'grain' AS VARCHAR[]) AS grain, CAST(m.document->'connections' AS VARCHAR[]) AS connections,
   m.document->'files'->>'definition' AS definition_file, m.document->'files'->>'query' AS query_file, m.document->>'definition_hash' AS definition_hash,
   json_array_length(m.document->'columns') AS column_count,
@@ -47,18 +50,10 @@ SELECT m.subject AS source, CAST(m.document->'grain' AS VARCHAR[]) AS grain, m.d
 FROM metadata_current m WHERE m.kind = 'source';
 
 CREATE VIEW metadata_upstream AS
-SELECT m.subject AS model, u->>'name' AS upstream, u->>'kind' AS upstream_kind
-FROM metadata_current m, unnest(CAST(m.document->'upstream' AS JSON[])) AS t(u) WHERE m.kind = 'model'
-UNION ALL
-SELECT m.subject, r, 'source' FROM metadata_current m, unnest(CAST(m.document->'native'->'reads' AS VARCHAR[])) AS t(r) WHERE m.kind = 'source';
+SELECT d.subject AS model, d.depends_on AS upstream, d.depends_on_kind AS upstream_kind FROM metadata_dependency d WHERE d.depth = 1;
 
 CREATE VIEW metadata_ancestors AS
-WITH RECURSIVE a(model, ancestor, depth) AS (
-  SELECT model, upstream, 1 FROM metadata_upstream
-  UNION ALL
-  SELECT a.model, u.upstream, a.depth + 1 FROM a JOIN metadata_upstream u ON u.model = a.ancestor
-)
-SELECT model, ancestor, min(depth) AS depth FROM a GROUP BY model, ancestor;
+SELECT d.subject AS model, d.depends_on AS ancestor, d.depth AS depth FROM metadata_dependency d;
 
 CREATE VIEW metadata_lineage AS
 SELECT m.subject AS model, c->>'name' AS column_name, c->'lineage'->>'transform' AS transform, c->'lineage'->>'cast_type' AS cast_type,
@@ -127,7 +122,7 @@ FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t
     /// <summary>The names of the views, for documentation and tests.</summary>
     public static readonly IReadOnlyList<string> Names =
     [
-        "metadata_current", "metadata_columns", "metadata_models", "metadata_sources", "metadata_upstream", "metadata_ancestors", "metadata_lineage",
+        "metadata_current", "metadata_dependency", "metadata_columns", "metadata_models", "metadata_sources", "metadata_upstream", "metadata_ancestors", "metadata_lineage",
         "metadata_native_types", "metadata_indexes", "metadata_source_indexes", "metadata_source_foreign_keys", "metadata_loads", "metadata_hooks", "metadata_index_advice", "metadata_info",
     ];
 
@@ -135,23 +130,37 @@ FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t
 
     private MetadataDatabase(DuckDBConnection db) => this.db = db;
 
-    public static MetadataDatabase Open(IEnumerable<MetadataDocument> documents, string toolVersion)
+    /// <param name="dependencies">The dependency rows (`metadata_dependency`) the project computes, the same that `publish` stores. Without them the rows are worked out from the documents' `upstream` and `native.reads`.</param>
+    public static MetadataDatabase Open(IEnumerable<MetadataDocument> documents, string toolVersion, IEnumerable<DependencyRow>? dependencies = null)
     {
+        var all = documents.ToList();
         var db = new DuckDBConnection("DataSource=:memory:");
         db.Open();
         try
         {
             foreach (var setting in new[] { "SET autoinstall_known_extensions = false", "SET autoload_known_extensions = false", "SET enable_external_access = false" }) Exec(db, setting);
             Exec(db, Table);
-            foreach (var d in documents)
+            Exec(db, DependencyTable);
+            foreach (var d in all)
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = "INSERT INTO metadata_current VALUES (NULL, $kind, $subject, CAST($document AS JSON), $hash, NULL, $version, NULL, NULL)";
+                cmd.CommandText = "INSERT INTO metadata_current VALUES (NULL, $kind, $subject, CAST($document AS JSON), $hash, NULL, $version, NULL, NULL, $model_kind)";
+                cmd.Parameters.Add(new DuckDBParameter("model_kind", MetadataDependencies.ModelKindOf(d.Kind, d.Json)));
                 cmd.Parameters.Add(new DuckDBParameter("kind", d.Kind));
                 cmd.Parameters.Add(new DuckDBParameter("subject", d.Subject));
                 cmd.Parameters.Add(new DuckDBParameter("document", d.Json));
                 cmd.Parameters.Add(new DuckDBParameter("hash", d.Hash));
                 cmd.Parameters.Add(new DuckDBParameter("version", toolVersion));
+                cmd.ExecuteNonQuery();
+            }
+            foreach (var row in dependencies ?? MetadataDependencies.FromDocuments(all.Select(d => (d.Kind, d.Subject, d.Json))))
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = "INSERT INTO metadata_dependency VALUES (NULL, $subject, $depends_on, $kind, $depth)";
+                cmd.Parameters.Add(new DuckDBParameter("subject", row.Subject));
+                cmd.Parameters.Add(new DuckDBParameter("depends_on", row.DependsOn));
+                cmd.Parameters.Add(new DuckDBParameter("kind", row.DependsOnKind));
+                cmd.Parameters.Add(new DuckDBParameter("depth", row.Depth));
                 cmd.ExecuteNonQuery();
             }
             foreach (var statement in Views.Split(";\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) Exec(db, statement.TrimEnd(';'));

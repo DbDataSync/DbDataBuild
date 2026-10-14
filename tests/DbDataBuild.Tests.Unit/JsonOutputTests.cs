@@ -91,8 +91,10 @@ public class JsonOutputTests
         var data = doc["data"]!;
         Assert.Equal(1, data["counts"]!["models"]!.GetValue<int>());
         var model = data["models"]![0]!;
-        Assert.Equal("dbdatabuild.model/1", model["schema"]!.GetValue<string>());
+        Assert.Equal("dbdatabuild.model/2", model["schema"]!.GetValue<string>());
         Assert.Equal("marts.fct_orders", model["name"]!.GetValue<string>());
+        Assert.Equal("incremental_by_unique_key", model["kind"]!.GetValue<string>());                                        // the kind is a plain string, its settings are beside it
+        Assert.Equal(["order_id"], model["kind_settings"]!["unique_key"]!.AsArray().Select(k => k!.GetValue<string>()));
         Assert.Matches("^[0-9a-f]{64}$", model["definition_hash"]!.GetValue<string>());
         var amount = model["columns"]!.AsArray().Single(c => c!["name"]!.GetValue<string>() == "amount")!;
         Assert.Equal("DECIMAL(14, 2)", amount["logical_type"]!.GetValue<string>());
@@ -151,7 +153,7 @@ public class JsonOutputTests
 
         var init = Run("connection", "init", "--project", dir);
         Assert.False(init.Doc["data"]!["applied"]!.GetValue<bool>());
-        Assert.Equal(15, init.Doc["data"]!["statements"]!.AsArray().Count);        // schema, eleven tables, two views, the version row
+        Assert.Equal(16, init.Doc["data"]!["statements"]!.AsArray().Count);        // schema, twelve tables, two views, the version row
         Assert.Contains("CREATE TABLE", init.Doc["data"]!["statements"]![1]!["text"]!.GetValue<string>());
 
         var meta = Run("project", "show", "metadata", "--project", dir);
@@ -229,7 +231,7 @@ public class JsonOutputTests
         Assert.Equal(("DDB-223", "warning", "merge_key", "ux_fct_orders_order_id"), ((string)advice["code"]!, (string)advice["severity"]!, (string)advice["reason"]!, (string)advice["suggested"]!));
         Assert.False((bool)advice["silenced"]!);
         var broken = JsonNode.Parse(model.ToJsonString())!;
-        broken["schema"] = "dbdatabuild.model/2";
+        broken["schema"] = "dbdatabuild.model/1";
         Assert.False(Valid(broken));
     }
 

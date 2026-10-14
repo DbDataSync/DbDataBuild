@@ -50,7 +50,7 @@ internal static class TestCommand
         }
         if (rules.Count > 0)
         {
-            using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, plan: null).Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version);
+            using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, plan: null).Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
             foreach (var rule in rules) outcomes.Add(EvaluateRule(db, rule, limit, error));
         }
 

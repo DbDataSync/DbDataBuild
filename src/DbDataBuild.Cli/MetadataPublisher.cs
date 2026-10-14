@@ -10,7 +10,24 @@ namespace DbDataBuild.Cli;
 internal static class MetadataPublisher
 {
     public sealed record Document(string Kind, string Subject, string Json, string Hash);
-    public sealed record Result(IReadOnlyList<Document> Written, IReadOnlyList<Document> Unchanged);
+    public sealed record Result(IReadOnlyList<Document> Written, IReadOnlyList<Document> Unchanged, int DependencySubjectsWritten = 0, int DependencyRows = 0);
+
+    /// <summary>The dependency rows of the project (`metadata_dependency`) and whether this publish is about every subject (then rows of subjects the project no longer has go too).</summary>
+    public sealed record Dependencies(IReadOnlyList<DependencyRow> Rows, IReadOnlySet<string> Subjects, bool All);
+
+    /// <summary>
+    /// The dependency rows for a publish of the same models as <see cref="Collect"/>: the whole project's rows, of which the models published (and the native models they depend on) are the ones this publish writes; every row when all
+    /// the models are published.
+    /// </summary>
+    public static Dependencies CollectDependencies(ProjectContext ctx, IEnumerable<string>? models)
+    {
+        var rows = MetadataBuilder.Dependencies(ctx);
+        if (models == null) return new Dependencies(rows, new HashSet<string>(StringComparer.Ordinal), All: true);
+        var subjects = models.ToHashSet(StringComparer.Ordinal);
+        var natives = ctx.Project.NativeModels.Select(n => n.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows.Where(r => subjects.Contains(r.Subject) && natives.Contains(r.DependsOn)).ToList()) subjects.Add(row.DependsOn);
+        return new Dependencies(rows, subjects, All: false);
+    }
 
     public static Document Make(string kind, string subject, object document)
     {
@@ -37,7 +54,7 @@ internal static class MetadataPublisher
     }
 
     /// <param name="scope">Where the records go: the tracking store of the connection the documents describe. <paramref name="read"/> and <paramref name="write"/> are the logins of that tracking connection.</param>
-    public static async Task<Result> PublishAsync(IReadOnlyList<Document> documents, TrackingScope scope, LoginSettings read, LoginSettings write, string command, string root, string? planId, string? gitCommit)
+    public static async Task<Result> PublishAsync(IReadOnlyList<Document> documents, TrackingScope scope, LoginSettings read, LoginSettings write, string command, string root, string? planId, string? gitCommit, Dependencies? dependencies = null)
     {
         await using var reader = await ReadSession.OpenAsync(read);
         var status = await TrackingStore.StatusAsync(reader, scope.Engine, scope.SchemaName);
@@ -48,7 +65,15 @@ internal static class MetadataPublisher
         var unchanged = new List<Document>();
         var changed = documents.Where(d => !latest.TryGetValue(MetadataStore.Key(d.Kind, d.Subject), out var h) || h != d.Hash).ToList();
         unchanged.AddRange(documents.Except(changed));
-        if (changed.Count == 0) return new Result(written, unchanged);
+
+        // the dependency rows are found by comparing with the stored ones, not by what changed above: a publish that stopped between the two is finished by the next
+        IReadOnlyList<string> dependencySubjects = [];
+        if (dependencies != null)
+        {
+            var stored = await MetadataStore.DependenciesAsync(reader, scope);
+            dependencySubjects = MetadataStore.DependencySubjectsToWrite(dependencies.Rows, stored, dependencies.Subjects, dependencies.All);
+        }
+        if (changed.Count == 0 && dependencySubjects.Count == 0) return new Result(written, unchanged, 0, dependencies?.Rows.Count ?? 0);
 
         var runId = Guid.NewGuid();
         using var log = new FileStatementLog(Path.Combine(root, InitCommand.StatementLogDir), command, runId);
@@ -62,6 +87,7 @@ internal static class MetadataPublisher
             await MetadataStore.StoreAsync(gate, scope, step, d.Kind, d.Subject, d.Json, d.Hash, ProductInfo.Version, planId, gitCommit);
             written.Add(d);
         }
-        return new Result(written, unchanged);
+        if (dependencySubjects.Count > 0) await MetadataStore.ReplaceDependenciesAsync(gate, scope, "metadata-dependencies", dependencySubjects, dependencies!.Rows);
+        return new Result(written, unchanged, dependencySubjects.Count, dependencies?.Rows.Count ?? 0);
     }
 }

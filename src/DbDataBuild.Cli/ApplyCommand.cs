@@ -26,7 +26,8 @@ internal static class ApplyCommand
             }
             var touched = plan.Steps.Select(s => s.Object).Distinct(StringComparer.Ordinal).ToList();
             var docs = MetadataPublisher.Collect(ctx, touched, plan);
-            var stored = Task.Run(() => MetadataPublisher.PublishAsync(docs, scope, read, write, "apply-metadata", root, plan.Id, commit)).GetAwaiter().GetResult();
+            var dependencies = MetadataPublisher.CollectDependencies(ctx, touched);
+            var stored = Task.Run(() => MetadataPublisher.PublishAsync(docs, scope, read, write, "apply-metadata", root, plan.Id, commit, dependencies)).GetAwaiter().GetResult();
             output.WriteLine($"Metadata stored: {stored.Written.Count} document(s) written, {stored.Unchanged.Count} unchanged.");
             output.Payload("metadata_stored", stored.Written.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
         }
