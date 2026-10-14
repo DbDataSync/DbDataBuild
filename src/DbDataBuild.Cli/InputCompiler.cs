@@ -9,15 +9,13 @@ namespace DbDataBuild.Cli;
 
 /// <summary>
 /// Compiles the resolvers of a load's `inputs:` (docs/research/refresh-plans.md, section 8): an `expression` is checked by DuckDB (one expression or one SELECT with no FROM, naming only inputs, parameters and run variables,
-/// with no circle between inputs), and a `target` or `source` resolver is lowered like a model's query and rendered for the engine it runs on, into a file under `rendered/<connection>/<model>/`. What it finds is attached
-/// to the rendered operation, so the load plan and the deploy plan carry the same text.
+/// with no circle between inputs), and a `target` or `source` resolver is lowered like a model's query and rendered for the engine it runs on. What it finds is attached to the rendered operation, and the load plan
+/// (`loads.yml`) and the deploy plan carry the text beside the name of the input, so there is no file of its own.
 /// </summary>
 internal static class InputCompiler
 {
     /// <summary>The words an expression may use besides the load's inputs: the variables of a run.</summary>
     public static readonly IReadOnlyList<string> RunVariables = ["run_started", "plan", "connection"];
-
-    public static string FileName(string operation, string input, string? engine = null) => engine == null ? $"input.{operation}.{input}.sql" : $"input.{operation}.{input}.{engine}.sql";
 
     /// <summary>The `${scope.name}` references of a resolver text with the value each has on <paramref name="connection"/>; the ones the project does not have, or a scope a resolver may not use, are in <paramref name="problems"/>.</summary>
     public static IReadOnlyList<RefreshParameterRef> ParametersOf(ModelSource source, ProjectConfig config, string connection, string text, List<string> problems)
@@ -38,7 +36,6 @@ internal static class InputCompiler
     {
         if (result.Loads.Count == 0) return result;
         var def = source.Definition;
-        var files = new List<RenderedFile>(result.Files);
         var diags = new List<Diagnostic>(result.Diagnostics);
         var operations = new List<RenderedOperation>();
         foreach (var op in result.Loads)
@@ -70,19 +67,17 @@ internal static class InputCompiler
                         if (unknown.Count > 0) { Bad(input, $"names {string.Join(", ", unknown.Select(n => $"`{n}`"))}, which {(unknown.Count == 1 ? "is" : "are")} not an input of the load or a run variable ({string.Join(", ", RunVariables)})"); break; }
                         edges[input.Name] = check.Names.Where(n => n != input.Name).Select(n => producer.GetValueOrDefault(n, n)).Distinct(StringComparer.Ordinal).ToList();
                         if (check.Names.Contains(input.Name)) { Bad(input, "names the input it computes", DiagnosticCatalog.InputsDependOnEachOther); break; }
-                        rendered.Add(new(input.Name, InputResolverKinds.Expression, resolver.Text, null));
+                        rendered.Add(new(input.Name, InputResolverKinds.Expression, resolver.Text));
                         break;
                     }
                     case InputResolverKinds.Target:
                     {
                         var (lowered, error) = ctx.Lowering.LowerResolver(def, source.QueryFile, $"{def.Name}.{op.Operation}.{input.Name}", text);
                         if (lowered == null) { Bad(input, $"cannot be lowered: {error?.Found}"); break; }
-                        var path = $"{op.Target}/{def.Name}/{FileName(op.Operation, input.Name)}";
-                        var (rendering, rdiags) = ctx.Renderer.RenderInputQuery(def, op.Operation, input.Name, lowered, op.Target, op.Target, $"rendered/{path}");
+                        var (rendering, rdiags) = ctx.Renderer.RenderInputQuery(def, op.Operation, input.Name, lowered, op.Target, op.Target, $"rendered/{op.Target}/{LoadsDocument.FileName}");
                         diags.AddRange(rdiags);
                         if (rendering == null) break;
-                        files.Add(new RenderedFile(path, rendering));
-                        rendered.Add(new(input.Name, InputResolverKinds.Target, rendering, path));
+                        rendered.Add(new(input.Name, InputResolverKinds.Target, rendering));
                         break;
                     }
                     case InputResolverKinds.Source:
@@ -93,12 +88,10 @@ internal static class InputCompiler
                         if (lowered == null) { Bad(input, $"cannot be lowered: {error?.Found}"); break; }
                         foreach (var byEngine in origins.GroupBy(o => o.Engine).OrderBy(g => g.Key, StringComparer.Ordinal))
                         {
-                            var path = $"{op.Target}/{def.Name}/{FileName(op.Operation, input.Name, byEngine.Key)}";
-                            var (rendering, rdiags) = ctx.Renderer.RenderInputQuery(def, op.Operation, input.Name, lowered, op.Target, byEngine.First().Connection, $"rendered/{path}");
+                            var (rendering, rdiags) = ctx.Renderer.RenderInputQuery(def, op.Operation, input.Name, lowered, op.Target, byEngine.First().Connection, $"rendered/{op.Target}/{LoadsDocument.FileName}");
                             diags.AddRange(rdiags);
                             if (rendering == null) continue;
-                            files.Add(new RenderedFile(path, rendering));
-                            rendered.Add(new(input.Name, InputResolverKinds.Source, rendering, path, byEngine.Key));
+                            rendered.Add(new(input.Name, InputResolverKinds.Source, rendering, byEngine.Key));
                         }
                         break;
                     }
@@ -111,7 +104,7 @@ internal static class InputCompiler
             }
             operations.Add(op with { Inputs = rendered });
         }
-        return result with { Files = files.OrderBy(f => f.Path, StringComparer.Ordinal).ToList(), Diagnostics = diags, RenderedOperations = operations };
+        return result with { Diagnostics = diags, RenderedOperations = operations };
     }
 
     /// <summary>The names of a circle in the dependencies (each input to the inputs its expression names), or null when there is none.</summary>

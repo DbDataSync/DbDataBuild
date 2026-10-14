@@ -271,6 +271,13 @@ internal static class RefreshEngine
                 if (step.Type is StepType.Load or StepType.Backfill) loadStarted = true;          // from here the load has a row of its own
                 try
                 {
+                    // each origin is checked just before its own transfer; the origins before it stay loaded (each is its own unit), and this load fails
+                    if (step.Type == StepType.Transfer && !gate.DryRun && o.CheckOrigin != null && await o.CheckOrigin(step, ct) is { Kind: not OriginVerdictKind.Ok } verdict)
+                    {
+                        var detail = $"origin `{step.Transfer!.Origin}`: {verdict.Detail}";
+                        if (!gate.DryRun) await tracker.UnrunLoadAsync(step.Id, runId, unit.Model, unit.Load, LoadStatus.FailedOrigin, plan.Id, o.GitCommit, unit.DefinitionHash, record, CancellationToken.None);
+                        return await Ended(LoadStatus.FailedOrigin, detail, prepared.InputsJson, writeRow: false);
+                    }
                     var diagnostic = await ApplyEngine.ExecuteStepAsync(plan, step, reader, gate, tracker, o, runId, record, measure, limit, limit.Token);
                     if (diagnostic != null) return await Failed(LoadStatus.Failed, diagnostic.Found);
                 }

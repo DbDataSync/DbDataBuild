@@ -176,24 +176,25 @@ public class InputResolversTests
     }
 
     [Fact]
-    public void A_target_resolver_is_lowered_for_the_engine_and_committed_under_the_connection_with_its_hash()
+    public void A_target_resolver_is_lowered_for_the_engine_and_committed_in_the_load_plan_beside_the_name_of_its_input()
     {
         var dir = Project("    inputs:\n      end: {resolver: {target: \"SELECT max(event_day) + 1 FROM marts.fct_events\"}}\n      start: {resolver: {expression: '\"end\" - 30'}}\n");
         var (exit, _, err) = RenderFiles("--write", "--project", dir);
         Assert.True(exit == 0, err);
-        var file = Path.Combine(dir, "rendered/sqlserver/marts.fct_events/input.backfill.end.sql");
-        Assert.True(File.Exists(file));
-        var text = File.ReadAllText(file);
-        Assert.Contains("input resolver", text);
-        Assert.Contains("MAX", text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("\r", text);
+        Assert.Empty(Directory.GetFiles(Path.Combine(dir, "rendered/sqlserver/marts.fct_events"), "input.*"));                       // no file of its own
+        var loadsFile = Path.Combine(dir, "rendered/sqlserver/loads.yml");
         var (_, loads) = Read(dir, "daily");
         var end = loads.Find("marts.fct_events", "backfill")!.Inputs.Single(i => i.Name == "end");
-        Assert.Equal(("target", "marts.fct_events/input.backfill.end.sql".Insert(0, "sqlserver/")), (end.Resolver!.Kind, end.Resolver.File));
-        Assert.Equal(DbDataBuild.State.Hashing.ScriptHash(text), end.Resolver.FileHash);
+        Assert.Equal("target", end.Resolver!.Kind);
+        Assert.Contains("input resolver", end.Resolver.Text);
+        Assert.Contains("MAX", end.Resolver.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\r", end.Resolver.Text);
+        var yaml = File.ReadAllText(loadsFile);
+        Assert.Contains("name: \"end\"", yaml);                                                                                    // the name of the input is beside its query
+        Assert.Contains("MAX(", yaml, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, RenderFiles("--check", "--project", dir).Exit);
-        File.WriteAllText(file, text + "-- edited\n");
-        Assert.NotEqual(0, RenderFiles("--check", "--project", dir).Exit);
+        File.WriteAllText(loadsFile, yaml.Replace("MAX(", "MIN(", StringComparison.OrdinalIgnoreCase));
+        Assert.NotEqual(0, RenderFiles("--check", "--project", dir).Exit);                                                           // the text is hashed with the plan: an edit is a refusal
     }
 
     [Fact]
@@ -253,7 +254,7 @@ public class InputResolversTests
     }
 
     private static RefreshParameter Expr(string name, string type, string text, string onNull = "fail", string? initial = null, IReadOnlyList<string>? provides = null) =>
-        new(name, type, RefreshParameter.Computed, null, new("expression", text, null, null, provides ?? [], []), Free: false, OnNull: onNull, Initial: initial);
+        new(name, type, RefreshParameter.Computed, null, new("expression", text, provides ?? [], []), Free: false, OnNull: onNull, Initial: initial);
 
     private static RefreshParameter Days() => new("days", "INTEGER", RefreshParameter.FromDefault, "7", Free: true);
 
@@ -284,7 +285,7 @@ public class InputResolversTests
     [Fact]
     public void One_resolver_may_provide_several_inputs_by_column_name()
     {
-        var group = new RefreshParameter("window", "", RefreshParameter.Computed, null, new("expression", "SELECT current_date - 7 AS start, current_date + 1 AS \"end\"", null, null, ["start", "end"], []), Free: true);
+        var group = new RefreshParameter("window", "", RefreshParameter.Computed, null, new("expression", "SELECT current_date - 7 AS start, current_date + 1 AS \"end\"", ["start", "end"], []), Free: true);
         var defs = new[] { group, new RefreshParameter("start", "DATE", RefreshParameter.Provided, null, ProvidedBy: "window"), new RefreshParameter("end", "DATE", RefreshParameter.Provided, null, ProvidedBy: "window") };
         var r = Resolve(defs);
         Assert.True(r.Ok, r.Failure);
@@ -328,7 +329,7 @@ public class InputResolversTests
     [Fact]
     public void A_target_resolver_returns_exactly_one_row_and_runs_only_when_nothing_replaces_it()
     {
-        RefreshParameter Target(string name) => new(name, "DATE", RefreshParameter.Computed, null, new("target", null, "sqlserver/m/input.backfill.end.sql", "h", [], []));
+        RefreshParameter Target(string name) => new(name, "DATE", RefreshParameter.Computed, null, new("target", "SELECT 1", [], []));
         var runner = new FakeRunner(_ => new(["x"], [[new DateTime(2026, 2, 28)]], null));
         var r = Resolve([Target("end")], runner: runner, text: _ => "SELECT 1");
         Assert.True(r.Ok, r.Failure);
@@ -418,7 +419,7 @@ public class InputResolversTests
         var load = new RenderedLoad("default", true, "-- load script", new string('a', 64), null, [new("start", "DATE", "runtime", null), new("end", "DATE", "runtime", null)], null);
 
         PlannedInput Input(string name, string value, string source, string? origin = null) =>
-            new(new RefreshParameter(name, "DATE", RefreshParameter.Computed, null, new("source", "SELECT max(day) FROM pos.orders", null, null, [], [])), source, value, "h1", origin);
+            new(new RefreshParameter(name, "DATE", RefreshParameter.Computed, null, new("source", "SELECT max(day) FROM pos.orders", [], [])), source, value, "h1", origin);
         var sets = new Dictionary<string, PlannedLoadInputs>
         {
             [PlanInput.InputsKey("dst.orders", "default", "store_17")] = new([Input("start", "2026-02-01", "resolver:source", "store_17"), Input("end", "2026-03-01", "resolver:expression")], null, false),

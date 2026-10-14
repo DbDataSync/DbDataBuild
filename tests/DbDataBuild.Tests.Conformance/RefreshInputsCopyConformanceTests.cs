@@ -31,8 +31,9 @@ public partial class CopyConformanceTests
 
             Ok(pair.Cli("connection", "init", destination, "--apply"), "init");
             Ok(pair.Cli("project", "compile"), "compile");
-            // one file per engine of the origins, committed under the destination
-            Assert.True(File.Exists(Path.Combine(dir, $"rendered/{destination}/dst.events/input.window.start.{origin}.sql")));
+            // the text for each engine of the origins is in the load plan, beside the name of the input (no file of its own)
+            Assert.False(File.Exists(Path.Combine(dir, $"rendered/{destination}/dst.events/input.window.start.{origin}.sql")));
+            Assert.Contains($"engine: \"{origin}\"", File.ReadAllText(Path.Combine(dir, $"rendered/{destination}/loads.yml")));
             var plan = pair.Cli("connection", "deploy", destination, "--write-plan", "--op", "dst.events=window");
             Ok(plan, "plan");
             var planFile = Path.Combine(dir, Regex.Match(plan.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);

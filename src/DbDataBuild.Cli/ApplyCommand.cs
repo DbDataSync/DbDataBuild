@@ -133,7 +133,7 @@ internal static class ApplyCommand
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
     /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
     /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null, int Parallel = 1, SessionLimits? Limits = null);
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null, int Parallel = 1, SessionLimits? Limits = null, IReadOnlyList<string>? Warnings = null);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -159,8 +159,9 @@ internal static class ApplyCommand
         foreach (var origin in plan.Steps.Where(s => s.Transfer != null).Select(s => s.Transfer!.Origin).Distinct(StringComparer.Ordinal))
         {
             if (!config.Connections.TryGetValue(origin, out var originConnection)) { originMissing.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new($"connection:{origin}", 0, 0), $"The plan reads rows from the connection `{origin}`, which this project does not have.")); continue; }
-            var (originLogin, missingLogin) = LoginSettings.FromEnvironment(originConnection.Name, originConnection.Engine, Login.Read, env);
-            if (originLogin != null) originLogins[origin] = originLogin; else if (missingLogin != null) originMissing.Add(missingLogin);
+            var (originLogin, _) = LoginSettings.FromEnvironment(originConnection.Name, originConnection.Engine, Login.Read, env);
+            // a login that is missing is not a refusal here: that origin is checked when its own transfer's turn comes, and the others are not held back by it
+            if (originLogin != null) originLogins[origin] = originLogin;
         }
         // a refresh opens the origins of its copies by name when a copy runs; a login that is missing is not a refusal here: that copy fails with `failed: origin` and the failure rules apply
         foreach (var origin in mode.Origins ?? [])
@@ -217,10 +218,32 @@ internal static class ApplyCommand
         var lifecycle = config.LifecycleOf(plan.Connection);
         var audit = (mode.Refresh ? lifecycle.Refresh : lifecycle.Deploy).Audit;
         if (audit != AuditLevel.Full) planText = "";
+        // each origin of a copy is checked just before its own transfer: it answers on its read login and, in a deploy, its table still has what the copy declares (DDB-230; `on_mismatch` says fail or leave it out)
+        Func<PlanStep, CancellationToken, Task<OriginVerdict>>? checkOrigin = null;
+        if (plan.Steps.Any(st => st.Transfer != null) || mode.Origins is { Count: > 0 })
+        {
+            var access = new OriginAccess(config, env, mode.Limits);
+            ProjectContext? structureContext = null;
+            checkOrigin = async (step, token) =>
+            {
+                var originName = step.Transfer!.Origin;
+                if (await access.CheckAsync(originName, token) is { } why) return new OriginVerdict(OriginVerdictKind.Fail, why);
+                if (mode.Refresh) return OriginVerdict.Fine;            // a refresh asks no connection about structure: the transfer's own check of the columns it reads is the net
+                structureContext ??= ProjectContext.Load(root);
+                var copyModel = structureContext.Project.Models.FirstOrDefault(m => m.IsCopy && m.Name == step.Object);
+                var copyOrigin = copyModel == null ? null : structureContext.OriginsOf(copyModel, plan.Connection).FirstOrDefault(x => x.Connection == originName);
+                if (copyModel == null || copyOrigin == null) return OriginVerdict.Fine;
+                var found = await CopyOriginCheck.RunOneAsync(structureContext, copyModel, copyOrigin, env);
+                foreach (var finding in found.Findings.Where(f => f.Severity != Severity.Error)) error.Diag(finding);
+                if (found.Skipped) return new OriginVerdict(OriginVerdictKind.Skip, $"the origin `{originName}` differs from its declaration and the copy says `on_mismatch: skip`: it is left out of this apply");
+                if (found.Findings.FirstOrDefault(f => f.Severity == Severity.Error) is { } differs) return new OriginVerdict(OriginVerdictKind.Fail, differs.Found, differs);
+                return OriginVerdict.Fine;
+            };
+        }
         var options = new ApplyOptions(dryRun, allowRisky, allowDestructive.ToHashSet(StringComparer.Ordinal), audit == AuditLevel.Minimal ? null : commit, dirty, audit == AuditLevel.Minimal ? "" : write?.User ?? Environment.UserName, stopRequested,
             (name, token) => originLogins.TryGetValue(name, out var login) ? (mode.Limits ?? SessionLimits.None).OpenAsync(name, () => ReadSession.OpenAsync(login, token), token) : throw new InvalidOperationException($"no read login for connection {name}"),
             Lane: mode.Refresh ? "refresh" : "deploy", ProjectHash: mode.Refresh ? null : plan.ProjectHash, PlanHash: mode.PlanHash, Refresh: mode.Refresh, RecordShapes: mode.RecordShapes, RecordText: audit == AuditLevel.Full, Run: mode.Run, Execution: mode.Execution,
-            InputPins: mode.InputPins, ApproveMoved: mode.ApproveMoved, Timezone: config.TimezoneOf(plan.Connection), Clock: RefreshCommand.Now, Parallel: mode.Parallel);
+            InputPins: mode.InputPins, ApproveMoved: mode.ApproveMoved, Timezone: config.TimezoneOf(plan.Connection), Clock: RefreshCommand.Now, Parallel: mode.Parallel, CheckOrigin: checkOrigin);
 
         // refusals that need no connection come first
         var offline = new List<Diagnostic>(ApplyEngine.CheckAllowances(plan, options));
@@ -274,7 +297,7 @@ internal static class ApplyCommand
         {
             output.Payload("outcome", refreshed.Outcome);
             output.Payload("results", refreshed.Loads.Select(l => new { model = l.Unit.Model, member = l.Unit.Membership, load = l.Unit.Load, state = l.State, reason = l.Reason, status = l.Status, rows = l.Rows, duration_ms = l.DurationMs, detail = l.Detail, note = l.Note }).ToList());
-            output.Payload("warnings", refreshed.Warnings.ToList());
+            output.Payload("warnings", (mode.Warnings ?? []).Concat(refreshed.Warnings).ToList());
         }
         if (result.Moved is { Count: > 0 } movedInputs)
         {
@@ -299,7 +322,7 @@ internal static class ApplyCommand
             foreach (var group in summary.Loads.Where(l => l.State != "done").GroupBy(l => l.State))
                 output.WriteLine($"  {group.Key}: {string.Join("; ", group.Select(l => $"{l.Unit.Display}{(l.Reason != null ? $" ({l.Reason})" : "")}"))}");
             foreach (var note in summary.Loads.Where(l => l.Note != null)) output.WriteLine($"  {note.Unit.Display} ran: {note.Note}");
-            foreach (var w in summary.Warnings) output.WriteLine($"  warning: {w}");
+            foreach (var w in (mode.Warnings ?? []).Concat(summary.Warnings)) output.WriteLine($"  warning: {w}");
             if (summary.Loads.Any(l => l.Status == LoadStatus.FailedCheck))
                 output.Next("connection deploy", $"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed");
             else if (summary.Outcome != RefreshSummary.Completed)

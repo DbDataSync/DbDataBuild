@@ -1,6 +1,6 @@
 # Open decisions from refresh plans, steps 4 and 5
 
-For the owner's review. Both steps are merged to `main` (entries 154 and 155; `refresh-plans.md` sections 15 and 16 describe them as built). Each decision below says what was built, shows it, gives the alternatives, and ends with a recommendation. Nothing here blocks anything; the defaults are what runs today.
+For the owner's review. Both steps are merged to `main` (entries 154 and 155; `refresh-plans.md` sections 15 and 16 describe them as built). Each decision below says what was built, shows it, gives the alternatives, and ends with a recommendation. Nothing here blocks anything; the defaults are what runs today. **The owner has decided every item; each ends with a "Decided" line, and entry 156 built the changes (`refresh-plans.md` section 17).**
 
 Samples come from `templates/fan_in_fan_out` (two shop systems, `store_east` and `store_west`, copied into a SQL Server warehouse `sqlserver`, with a PostgreSQL `postgres` for reporting, and central tracking on `sqlserver`).
 
@@ -54,6 +54,8 @@ The deploy would have said `DDB-230` before touching anything.
 
 **Recommendation.** 1 now, 2 later. It gives `on_mismatch: skip` a meaning in a refresh for people who chose the slow check, without taxing the hourly path.
 
+**Decided (owner):** keep as is. A low-priority open discussion item (an origin structure check in a refresh, perhaps under `check: live`) is in OPEN-ITEMS U.
+
 ### A2. One unreachable origin fails one load (not the whole plan)
 
 **Built.** A deploy refuses the whole plan before its first statement when any origin cannot be reached or has no read login. A refresh checks each origin when the copy's turn comes, under the load lock, before anything is written to the destination:
@@ -79,6 +81,8 @@ The unreachable origin fails the **copy as a whole** (all origins are checked be
 
 **Recommendation.** 1. A refresh runs unattended every hour; an unrelated model should not wait on a shop's login. Take 2 if you ever need cross-shop consistency within a run.
 
+**Decided (owner):** do not check all origins up front. A refresh checks each origin just before that origin's own transfer (reachable, read login, `SELECT 1` through `ReadSession`); a failure fails the load `failed: origin` as before, and the origins already loaded stay loaded (each origin is its own unit). A deploy no longer refuses the plan up front either: each origin is checked when its transfer's turn comes, and the DDB-230 structure check moved to that point (`on_mismatch: skip` still leaves that origin out). Built in entry 156. A configuration to choose one commit per source or one for all sources is a future item in OPEN-ITEMS U.
+
 ### A3. An incremental copy cannot be fully re-read inside a refresh
 
 **Built.** A deploy has `connection deploy --full-refresh` (re-read everything). A refresh has no equivalent: an incremental copy always reads from the newest value held for that origin, less the lookback. This is why `fan_in_fan_out` has no separate full copy in `daily`; `daily` runs the same incremental copy as `hourly`.
@@ -103,6 +107,8 @@ refresh: { daily: default }
 3. `connection refresh ... --input mode=full` on an ad hoc `warehouse.orders.<load>`.
 
 **Recommendation.** 1 now. 2 is the right shape, and it is the "user-defined reload strategies" item you parked; build it there, not as a special case for copies.
+
+**Decided (owner):** no implicit `--full-refresh`. A copy declares a named second load that re-reads in full (`loads:` with `default` and `full`, a `full_replace`), usable in a plan (`weekly: { load: full }`) or ad hoc (`<copy>.full`); `fan_in_fan_out` shows it. `connection deploy --full-refresh` is removed (0.5.0 is not cut). Built in entry 156.
 
 ### A4. The refresh's write login creates and drops a staging table
 
@@ -130,6 +136,8 @@ This is DDL, but on scratch, not on a model's table: "a refresh never changes st
 
 **Recommendation.** 1 now; plan 2 if a least-privilege refresh login is a requirement, since it removes the leftover-table case and the DDL grant at once. I would test the no-rights case before 0.5.0 either way.
 
+**Decided (owner):** leave as is. An OPEN-ITEMS U item "Staging tables configuration" records the wish to choose native session-scoped temp tables, custom session-scoped temp tables or persistent staging tables.
+
 ### A5. The copy's text is inside `loads.yml`
 
 **Built.** The `copy:` block (staging, create/drop text, origin reads in each dialect) is part of the load plan's text, hashed with it. Step 3 went the other way for resolver text: `target` and `source` resolvers are separate rendered files (`input.<load>.<input>[.<engine>].sql`) with only the hash in `loads.yml`. So the project now has two conventions for "SQL the tool generated for a load".
@@ -150,11 +158,15 @@ with `loads.yml` holding the file names and hashes.
 
 **Recommendation.** 2, before 0.5.0 (the layout has not been released, so it breaks nothing). It is a mechanical change in the compile step with golden files to regenerate. If you would rather not spend the effort now, 1 is correct and only less pretty.
 
+**Decided (owner):** the copy's text stays in `loads.yml`, and the resolver text moves into it too (the input's entry, beside its name, hashed with the load plan); the separate `input.*.sql` files and the code that wrote and read them are gone. Built in entry 156.
+
 ### A6. `fan_in_fan_out` changed behaviour
 
 **Built.** `warehouse.orders` was a full copy left out of the plans. It is now incremental (watermark on `ordered_on`, 7 days of lookback, `unique_key: [order_id]`) and in both `hourly` and `daily`, so the template shows a refresh that reads two shops. Anyone who copied the old template gets a different model.
 
 **Recommendation.** Accept. It is the point of the template; the README explains it. (There was no `stores` model; the earlier "stores copy stays excluded" note was about this one.)
+
+**Decided (owner):** nothing to change.
 
 ---
 
@@ -197,6 +209,8 @@ The design said "loads in flight finish". They are not cancelled because a load 
 
 **Recommendation.** 1. A nearly done load should finish; the operator's Ctrl-C already behaves this way. 3 can come with user-defined strategies if anyone asks.
 
+**Decided (owner):** keep as is.
+
 ### B2. Two loads of one model never overlap
 
 **Built.** If a plan has `fct_sales_lines` in both `default` and `reconcile`, the scheduler runs them one after the other even with `parallel: 8`; the second waits for the first to end.
@@ -206,6 +220,8 @@ The design said "loads in flight finish". They are not cancelled because a load 
 **Alternatives.** 1. Keep. 2. Let them start together and let the lock decide (`on_busy` applies). 
 
 **Recommendation.** 1.
+
+**Decided (owner):** keep as is.
 
 ### B3. If the project graph cannot be read, the run is silently sequential
 
@@ -225,11 +241,15 @@ connection refresh sqlserver hourly --parallel 8
 
 **Recommendation.** 2. Cheap, no new failure, and removes the surprise. The reason belongs in `warnings` too.
 
+**Decided (owner):** print the line, add it to `warnings`, and add `parallel_effective` to the refresh JSON document (`schemas/output.schema.json`). Built in entry 156.
+
 ### B4. A dry run ignores `--parallel`
 
 **Built.** `connection refresh ... --dry-run --parallel 4` goes one load at a time and prints a line saying so. A dry run executes nothing, so there is nothing to overlap, and its output stays in plan order.
 
 **Recommendation.** Accept. (If you want a dry run to show what would start together, that is a separate preview: "wave 1: A, B; wave 2: C" in `project show refresh`. Not built; say so if wanted.)
+
+**Decided (owner):** keep as is.
 
 ### B5. What `max_parallel` limits
 
@@ -258,6 +278,8 @@ parallel: 3 (max_parallel of sqlserver)
 
 **Recommendation.** 1 now. If the dual meaning bothers you, 2 is a rename with no engine work. 3 only when someone runs several refreshes against one origin and sees it hurt.
 
+**Decided (owner):** keep as is.
+
 ### B6. "Upstream skipped" names the first skipped load
 
 **Built.** When a load's upstream loads were skipped as busy, its reason names one:
@@ -272,6 +294,8 @@ If both `warehouse.orders` and `shop.stores` were skipped as busy, only the firs
 **Alternatives.** 1. Keep. 2. Name all, comma separated (the reason is stored in `run_log.status` text; limited length).
 
 **Recommendation.** 1. Name all only if someone needs it; the plan's `results` list every skipped load anyway.
+
+**Decided (owner):** keep as is.
 
 ---
 

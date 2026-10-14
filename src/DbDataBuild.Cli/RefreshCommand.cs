@@ -264,8 +264,6 @@ internal static class RefreshCommand
             if (l.ResolverFile != null && ReadFile(l.ResolverFile, l.ResolverHash ?? "", "resolver") is { } resolver) scripts[l.ResolverFile] = resolver;
             foreach (var h in l.Before.Concat(l.After))
                 if (ReadFile(h.File, h.FileHash, "hook script") is { } hook) scripts[h.File] = hook;
-            foreach (var r in l.Inputs.Concat(l.Copy?.Origins.SelectMany(o => o.Inputs) ?? []).Select(i => i.Resolver).Where(r => r?.File != null))
-                if (ReadFile(r!.File!, r.FileHash ?? "", "input resolver") is { } text) scripts[r.File!] = text;
         }
         if (changed.Count > 0) { foreach (var d in changed) error.Diag(d); output.WriteLine("Nothing was executed."); output.Next("project compile"); return CliApp.ExitFindings; }
 
@@ -301,8 +299,14 @@ internal static class RefreshCommand
         var requestedParallel = parallelArg ?? plan?.Settings.Parallel ?? 1;
         var parallel = dryRun ? 1 : Math.Min(requestedParallel, connection.MaxParallel ?? requestedParallel);
         output.Payload("parallel", parallel);
+        // the scheduler orders loads by the project graph; a refresh does not otherwise load the models, so it is read now, and a project that cannot be read makes the run sequential, said aloud
+        var (graph, effective, parallelWarning) = ReadGraphFor(parallel, () => ProjectContext.Load(root).Graph);
+        parallel = effective;
+        var parallelWarnings = parallelWarning == null ? new List<string>() : [parallelWarning];
+        output.Payload("parallel_effective", parallel);
         if (requestedParallel > 1)
-            output.WriteLine(dryRun ? $"parallel {requestedParallel} asked for; a dry run goes one load at a time."
+            output.WriteLine(parallelWarnings.Count > 0 ? parallelWarnings[0][..parallelWarnings[0].IndexOf(';', StringComparison.Ordinal)]
+                : dryRun ? $"parallel {requestedParallel} asked for; a dry run goes one load at a time."
                 : parallel < requestedParallel ? $"parallel {requestedParallel} asked for; {parallel} load(s) at a time (`max_parallel: {connection.MaxParallel}` on `{connection.Name}`)."
                 : $"parallel {parallel}: up to {parallel} loads at a time, each when the loads it reads are done.");
         output.Payload("loads", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value }).ToList() }).ToList());
@@ -336,7 +340,6 @@ internal static class RefreshCommand
             byUnit[item.Position] = item;
         }
         IReadOnlySet<string>? everyModel = null;
-        DependencyGraph? graph = null;
         IReadOnlySet<string> Downstream(string model)
         {
             // the compiled files do not carry the project graph: it is read when a load fails or is skipped, and only then. A project that cannot be read leaves nothing to go by, so everything after is taken as reading it
@@ -354,11 +357,25 @@ internal static class RefreshCommand
         var originNames = items.SelectMany(i => i.Entry.Copy?.Origins.Select(o => o.Connection) ?? []).Distinct(StringComparer.Ordinal).ToList();
         var audit = settings.Refresh.Audit;
         var exit = ApplyCommand.RunPlan(spec, executable, audit == AuditLevel.Full ? (planText.Length > 0 ? planText : "direct: " + string.Join(", ", items.Select(i => $"{i.Entry.FullName} {i.Entry.Hash}")) + "\n") : "", planRelative ?? Relative(loadsPath), root, dryRun, allowRisky: false, allowDestructive: [], allowDirty,
-            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed, Origins: originNames, Parallel: parallel, Limits: limits), output, error, env);
+            new ApplyCommand.ApplyMode(Refresh: true, PlanHash: planHash, RecordShapes: check == RefreshCheck.Live, Header: false, Run: run, Execution: execution, OnlyFailed: onlyFailed, Origins: originNames, Parallel: parallel, Limits: limits, Warnings: parallelWarnings), output, error, env);
         // a dry run resolved the inputs (the resolvers ran, read-only): the values it would have used, and where each came from
         if (dryRun)
             output.Payload("resolved_inputs", items.Select(i => new { model = i.Entry.Model, operation = i.Entry.Load, member = i.Membership, inputs = inputs[i].Select(x => new { name = x.Name, type = x.Type, source = x.Source, value = x.Value, resolver_hash = x.ResolverHash }).ToList() }).ToList());
         return exit;
+    }
+
+    /// <summary>
+    /// The scheduler orders loads by the project graph, which a refresh does not otherwise read. With more than one load at a time asked for it is read up front; a project that cannot be read makes the run sequential
+    /// (every earlier load then counts as read), and the warning says so, so a person who asked for 8 and got 1 is told.
+    /// </summary>
+    internal static (DependencyGraph? Graph, int Parallel, string? Warning) ReadGraphFor(int parallel, Func<DependencyGraph> read)
+    {
+        if (parallel <= 1) return (null, parallel, null);
+        try { return (read(), parallel, null); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, 1, $"parallel: 1 (the project graph could not be read; loads run in plan order); {parallel} was asked for ({ex.GetType().Name})");
+        }
     }
 
     /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
@@ -500,10 +517,7 @@ internal static class RefreshCommand
             return new PreparedLoad(steps, InputsJson([(null, inputs)], context, one.UsedClock));
         }
 
-        // the origin check: every origin of the copy must have its read login and answer, before anything is written (a failure is the load's: `failed: origin`, and the failure rules apply)
-        foreach (var o in copy.Origins)
-            if (await origins.CheckAsync(o.Connection, ct) is { } why)
-                return new PreparedLoad(skeleton, InputsJson([(null, inputs)], context, false), $"origin `{o.Connection}`: {why}", LoadStatus.FailedOrigin);
+        // an origin is checked (reachable, read login, SELECT 1) just before its own transfer, by the engine, so an origin that is down fails this load as `failed: origin` while the origins before it stay loaded
 
         // an incremental copy reads each origin from the newest value the destination holds for it, less the lookback; nothing there yet reads everything
         var bounds = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -560,7 +574,7 @@ internal static class RefreshCommand
         {
             var given = inputs.Where(x => x.Source is "flag" or "membership").ToDictionary(x => x.Name, x => (x.Value!, x.Source), StringComparer.Ordinal);
             var resolution = await InputResolution.ResolveAsync(item.Display, defs.Where(d => d.Source != RefreshParameter.FromResolver).ToList(), given, context, runner,
-                r => r.File != null && scripts.TryGetValue(r.File, out var text) ? text : null, ct);
+                r => r.Text, ct);
             usedClock = resolution.UsedClock;
             foreach (var r in resolution.Inputs)
                 if (inputs.FindIndex(x => x.Name == r.Name) is var at and >= 0 && inputs[at].Source == "computed")

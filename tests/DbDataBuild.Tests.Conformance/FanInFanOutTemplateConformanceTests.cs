@@ -116,6 +116,7 @@ public partial class FanInFanOutTemplateConformanceTests
             Assert.Equal(["E01|61", "W01|60"], await reporting.RowsAsync("SELECT store_id || '|' || COUNT(*) FROM warehouse.orders GROUP BY store_id"));
 
             // a shop that cannot be reached fails the copy (`failed: origin`) and the report that reads it is skipped; the rest of the plan goes on
+            await east.ExecAsync("INSERT INTO pos.orders VALUES (1001, '2024-03-21', 'web', 10.00)");
             string? Broken(string v) => v == "DBDATABUILD_STORE_WEST_READ" ? null : Env(v);
             var o = new StringWriter(); var e = new StringWriter();
             var exit = CliApp.Run(["connection", "refresh", "sqlserver", "hourly", "--project", dir], o, e, environment: Broken);
@@ -123,7 +124,15 @@ public partial class FanInFanOutTemplateConformanceTests
             Assert.Contains("failed", o.ToString());
             Assert.Contains("origin", o.ToString() + e.ToString());
             Assert.Contains("skipped", o.ToString());
-            Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // nothing was half-written
+            Assert.Equal(["E01|62", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // each origin is its own unit: the east shop's new order landed although the west shop could not be reached
+
+            // the plan `weekly` runs the copy's `full` load: each shop is read in full and everything of that shop replaced, so an order deleted at a shop goes (the incremental load never sees a delete)
+            await east.ExecAsync("DELETE FROM pos.orders WHERE order_id = 1000");
+            Ok(Cli("connection", "refresh", "sqlserver", "hourly"), "refresh sqlserver hourly after a delete");
+            Assert.Equal(["E01|62", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // still there
+            var weekly = Cli("connection", "refresh", "sqlserver", "weekly");
+            Ok(weekly, "refresh sqlserver weekly");
+            Assert.Equal(["E01|61", "W01|60"], await warehouse.RowsAsync("SELECT store_id + '|' + CAST(COUNT(*) AS VARCHAR(10)) FROM warehouse.orders GROUP BY store_id"));   // gone, and the other shop's rows kept
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }

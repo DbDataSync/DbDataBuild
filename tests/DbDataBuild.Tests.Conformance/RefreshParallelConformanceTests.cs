@@ -67,6 +67,7 @@ public partial class ApplyConformanceTests
             Ok(one, "parallel 1");
             var oneDoc = JsonNode.Parse(one.Out)!["data"]!;
             Assert.Equal(1, (int)oneDoc["parallel"]!);
+            Assert.Equal(1, (int)oneDoc["parallel_effective"]!);
             Assert.Equal("completed", (string)oneDoc["outcome"]!);
             Assert.True(oneTime >= TimeSpan.FromSeconds(9), $"three pauses of 3 s one after another took {oneTime}");
             var dataOne = await SnapshotAsync(run);
@@ -80,6 +81,7 @@ public partial class ApplyConformanceTests
             Ok(three, "parallel from the plan");
             var threeDoc = JsonNode.Parse(three.Out)!["data"]!;
             Assert.Equal(3, (int)threeDoc["parallel"]!);
+            Assert.Equal(3, (int)threeDoc["parallel_effective"]!);
             Assert.Equal(Shape(oneDoc), Shape(threeDoc));
             Assert.Equal(dataOne, await SnapshotAsync(run));
             Assert.True(threeTime < oneTime - TimeSpan.FromSeconds(3), $"parallel 3 took {threeTime}, one at a time {oneTime}");

@@ -53,9 +53,8 @@ internal static class InputPlanning
                 // the inputs the model declares, with a value given where a person pinned one; one nobody gave a value is a question, as it always was
                 var defs = recipes.Where(r => declaredNames.Contains(r.Name) && (r.Source != RefreshParameter.Required || given.ContainsKey(r.Name))).ToList();
                 if (defs.Count == 0) continue;
-                string? TextOf(RefreshInputResolver r) => r.File == null ? null : op.InputList.FirstOrDefault(x => x.Path == r.File)?.Text;
                 await using var originRunner = origin == null ? null : new OriginInputRunner((name, token) => OpenOrigin(ctx, name, env, token), origin);
-                var set = await ResolveOneAsync($"{def.Name}.{op.Operation}", defs, given, run, origin == null ? new SessionInputRunner(read) : new SourceOrTargetRunner(new SessionInputRunner(read), originRunner!), TextOf, origin, ct);
+                var set = await ResolveOneAsync($"{def.Name}.{op.Operation}", defs, given, run, origin == null ? new SessionInputRunner(read) : new SourceOrTargetRunner(new SessionInputRunner(read), originRunner!), origin, ct);
                 result[PlanInput.InputsKey(def.Name, op.Operation, origin)] = set;
             }
         }
@@ -66,17 +65,16 @@ internal static class InputPlanning
     private static IReadOnlyList<string> PinnableNames(RenderedOperation op, ModelDefinition def, string target) =>
         op.Parameters.Select(p => p.Name).Concat(LoadPlan.For(def, target).First(o => o.Name == op.Operation).InputList.Where(i => i.Provides.Count == 0).Select(i => i.Name)).Distinct().ToList();
 
-    private static async Task<PlannedLoadInputs> ResolveOneAsync(string load, IReadOnlyList<RefreshParameter> defs, Dictionary<string, (string, string)> given, InputRunContext run, IInputQueryRunner runner, Func<RefreshInputResolver, string?> textOf, string? origin, CancellationToken ct)
+    private static async Task<PlannedLoadInputs> ResolveOneAsync(string load, IReadOnlyList<RefreshParameter> defs, Dictionary<string, (string, string)> given, InputRunContext run, IInputQueryRunner runner, string? origin, CancellationToken ct)
     {
-        var res = await InputResolution.ResolveAsync(load, defs, given.ToDictionary(kv => kv.Key, kv => (kv.Value.Item1, kv.Value.Item2), StringComparer.Ordinal), run, runner, textOf, ct);
+        var res = await InputResolution.ResolveAsync(load, defs, given.ToDictionary(kv => kv.Key, kv => (kv.Value.Item1, kv.Value.Item2), StringComparer.Ordinal), run, runner, r => r.Text, ct);
         string Strip(string m) => m.StartsWith(DiagnosticCatalog.InputNotResolved.Code + ": ", StringComparison.Ordinal) ? m[(DiagnosticCatalog.InputNotResolved.Code.Length + 2)..] : m;
         if (res.Failure != null) return new([], Strip(res.Failure), false);
         if (res.SkipLoad) return new([], null, true);
         var planned = new List<PlannedInput>();
         foreach (var d in defs)
         {
-            // the resolver's text goes into the plan, so apply needs no other file to compute the value again
-            var def = d.Resolver is { } r && r.Text == null && textOf(r) is { } text ? d with { Resolver = r with { Text = text } } : d;
+            var def = d;
             if (res.Inputs.FirstOrDefault(i => i.Name == d.Name) is { } found)
             {
                 var owner = d.ProvidedBy != null ? defs.FirstOrDefault(g => g.Name == d.ProvidedBy) ?? d : d;

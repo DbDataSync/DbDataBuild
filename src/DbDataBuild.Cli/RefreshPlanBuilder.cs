@@ -101,10 +101,11 @@ internal static class RefreshPlanBuilder
             if (i.Resolver == null) return null;
             var problems = new List<string>();
             var refs = InputCompiler.ParametersOf(source, ctx.Config, connection, i.Resolver.Text, problems);
-            if (i.Resolver.Kind == InputResolverKinds.Expression) return new(i.Resolver.Kind, i.Resolver.Text, null, null, i.Provides, refs);
+            if (i.Resolver.Kind == InputResolverKinds.Expression) return new(i.Resolver.Kind, i.Resolver.Text, i.Provides, refs);
+            // a `target` or `source` resolver is the text lowered for the engine it runs on; the load plan carries it beside the input's name
             var rendered = op.InputList.FirstOrDefault(r => r.Name == i.Name && r.Kind == i.Resolver.Kind && (r.Engine == null || originEngine == null || r.Engine == originEngine));
-            if (rendered?.Path == null) { Bad(i, "has no rendered resolver (see the errors of the compile)"); return null; }
-            return new(i.Resolver.Kind, null, rendered.Path, Hashing.ScriptHash(rendered.Text), i.Provides, refs, rendered.Engine);
+            if (rendered == null) { Bad(i, "has no rendered resolver (see the errors of the compile)"); return null; }
+            return new(i.Resolver.Kind, rendered.Text, i.Provides, refs, rendered.Engine);
         }
 
         // the value a default gives: a literal, or the parameter it names
@@ -211,13 +212,14 @@ internal static class RefreshPlanBuilder
                 var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
                 var (inputs, skipReason) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, diags, copy?.Origins[0].Engine);
                 if (inputs == null) { Skip(op, skipReason!); continue; }
-                var opCopy = copy;
-                if (copy != null && inputs.Any(i => i.Resolver?.Kind == InputResolverKinds.Source))
+                // a load that replaces everything of an origin reads it in full: no watermark bound, so the run never works one out
+                var opCopy = declaredOp?.ReadsAll == true && copy?.Watermark != null ? copy with { Watermark = null, Origins = copy.Origins.Select(o => o with { ReadWithWatermark = null }).ToList() } : copy;
+                if (opCopy != null && inputs.Any(i => i.Resolver?.Kind == InputResolverKinds.Source))
                 {
                     // a `source` resolver is lowered for the engine of each origin: each origin carries the inputs as its own engine runs them
                     var first = true;
                     var perOrigin = new List<RefreshCopyOrigin>();
-                    foreach (var o in copy.Origins)
+                    foreach (var o in opCopy.Origins)
                     {
                         var (its, why) = InputsOf(ctx, sources[def.Name], connection, def, op, model.ParameterValues, first ? diags : [], o.Engine);
                         first = false;
@@ -225,7 +227,7 @@ internal static class RefreshPlanBuilder
                         perOrigin.Add(o with { Inputs = its });
                     }
                     if (perOrigin.Count == 0) continue;
-                    opCopy = copy with { Origins = perOrigin };
+                    opCopy = opCopy with { Origins = perOrigin };
                 }
                 loads.Add(new(def.Name, op.Operation, op.Strategy, op.IsDefault, op.ScriptPath, Hashing.ScriptHash(op.Script), op.ResolverPath, op.Resolver == null ? null : Hashing.ScriptHash(op.Resolver), model.DefinitionHash,
                     shape, inputs, op.Watermark?.OnNull, op.Watermark?.Initial, hooks.Where(h => h.Hook.Event == "pre_load").Select(Hook).ToList(), hooks.Where(h => h.Hook.Event == "post_load").Select(Hook).ToList(), declaredOp?.MaxRuntime?.Text, opCopy));

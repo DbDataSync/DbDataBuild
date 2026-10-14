@@ -7,56 +7,53 @@ using DbDataBuild.State;
 namespace DbDataBuild.Cli;
 
 /// <summary>
-/// Plan-time check of a copy's origins: each origin's live table against the mapped model that declares it (version skew between the systems of one application). An origin whose table lost a column or changed
-/// a type the copy reads is named, with what differs; the copy's `on_mismatch` decides whether that stops the plan (`fail`, the default) or leaves that origin out of it (`skip`), never silently. An origin whose
-/// login is not in the environment is not checked, and the plan says so. Only mapped origins are checked: a model's shape is the business of the plan that builds it.
+/// The check of one origin of a copy against the mapped model that declares it (version skew between the systems of one application), made by the apply just before that origin's own transfer. An origin whose table
+/// lost a column or changed a type the copy reads is named, with what differs; the copy's `on_mismatch` decides whether that stops the apply (`fail`, the default) or leaves that origin out (`skip`), never silently.
+/// An origin whose login is not in the environment cannot be described, and the apply says so. Only mapped origins are checked: a model's shape is the business of the plan that builds it.
 /// </summary>
 internal static class CopyOriginCheck
 {
-    public sealed record Result(IReadOnlyList<Diagnostic> Findings, IReadOnlySet<(string Model, string Origin)> Skipped);
+    /// <param name="Findings">What to say: notes and warnings, and the error DDB-230 when the origin differs and the copy says `fail`.</param>
+    /// <param name="Skipped">The origin is to be left out (`on_mismatch: skip`).</param>
+    public sealed record Result(IReadOnlyList<Diagnostic> Findings, bool Skipped);
 
-    public static Result Run(ProjectContext ctx, IReadOnlyList<ModelDefinition> copies, string destination, Func<string, string?> env)
+    public static async Task<Result> RunOneAsync(ProjectContext ctx, ModelDefinition copy, CopyOrigin origin, Func<string, string?> env)
     {
         var findings = new List<Diagnostic>();
-        var skipped = new HashSet<(string, string)>();
-        foreach (var copy in copies)
+        var none = new Result(findings, false);
+        var declared = ctx.Project.Descriptors.Concat(ctx.Project.NativeModels).FirstOrDefault(d => string.Equals(d.Name, copy.From, StringComparison.OrdinalIgnoreCase));
+        // a model the project builds on the origin is declared by its own columns: the origin's table is what that model's plan made (or it is not built yet)
+        var builtModel = declared == null && ctx.Project.Models.FirstOrDefault(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase) && !m.IsCopy) is { } model;
+        if (builtModel) declared = new SourceDescriptor(ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Name, ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Columns, []);
+        if (declared == null) return none;
+        if (declared.Native is { Access: NativeQuery.Command }) return none;      // a command is not described: the transfer's own check is its net
+
+        var (login, missing) = LoginSettings.FromEnvironment(origin.Connection, origin.Engine, Login.Read, env);
+        if (login == null)
         {
-            var declared = ctx.Project.Descriptors.Concat(ctx.Project.NativeModels).FirstOrDefault(d => string.Equals(d.Name, copy.From, StringComparison.OrdinalIgnoreCase));
-            // a model the project builds on the origin is declared by its own columns: the origin's table is what that model's plan made (or it is not built yet)
-            var builtModel = declared == null && ctx.Project.Models.FirstOrDefault(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase) && !m.IsCopy) is { } model;
-            if (builtModel) declared = new SourceDescriptor(ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Name, ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Columns, []);
-            if (declared == null) continue;
-            if (declared.Native is { Access: NativeQuery.Command }) continue;      // a command is not described: the transfer's own check at apply is its net
-            foreach (var origin in ctx.OriginsOf(copy, destination))
-            {
-                var (login, missing) = LoginSettings.FromEnvironment(origin.Connection, origin.Engine, Login.Read, env);
-                if (login == null)
-                {
-                    findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the origin `{origin.Connection}` was not checked against `{copy.From}`: {missing?.Found}") with { SeverityOverride = Severity.Note });
-                    continue;
-                }
-                var differences = declared.IsNative ? Task.Run(() => NativeShapeCheck.DifferencesAsync(ctx.Config, declared, origin.Connection, login)).GetAwaiter().GetResult() : Task.Run(() => Differences(login, origin, declared)).GetAwaiter().GetResult();
-                if (differences == null)
-                {
-                    findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the engine on `{origin.Connection}` could not describe `{copy.From}`, so its columns were not checked.") with { SeverityOverride = Severity.Warning });
-                    continue;
-                }
-                if (differences.Count == 0) continue;
-                if (builtModel && differences is [{ } only] && only == "the table does not exist there")
-                {
-                    findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: `{copy.From}` is not built on `{origin.Connection}` yet, so it was not checked against its declaration (plan and apply it there first).") with { SeverityOverride = Severity.Warning });
-                    continue;
-                }
-                var text = $"{copy.Name}: `{copy.From}` on `{origin.Connection}` differs from its declaration: {string.Join("; ", differences)}.";
-                if (copy.OnMismatch == CopySlice.Skip)
-                {
-                    skipped.Add((copy.Name, origin.Connection));
-                    findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), text + " The origin is left out of the plan (`on_mismatch: skip`).") with { SeverityOverride = Severity.Warning });
-                }
-                else findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), text));
-            }
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the origin `{origin.Connection}` was not checked against `{copy.From}`: {missing?.Found}") with { SeverityOverride = Severity.Note });
+            return none;
         }
-        return new Result(findings, skipped);
+        var differences = declared.IsNative ? await NativeShapeCheck.DifferencesAsync(ctx.Config, declared, origin.Connection, login) : await Differences(login, origin, declared);
+        if (differences == null)
+        {
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the engine on `{origin.Connection}` could not describe `{copy.From}`, so its columns were not checked.") with { SeverityOverride = Severity.Warning });
+            return none;
+        }
+        if (differences.Count == 0) return none;
+        if (builtModel && differences is [{ } only] && only == "the table does not exist there")
+        {
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: `{copy.From}` is not built on `{origin.Connection}` yet, so it was not checked against its declaration (plan and apply it there first).") with { SeverityOverride = Severity.Warning });
+            return none;
+        }
+        var text = $"{copy.Name}: `{copy.From}` on `{origin.Connection}` differs from its declaration: {string.Join("; ", differences)}.";
+        if (copy.OnMismatch == CopySlice.Skip)
+        {
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), text + " The origin is left out of this apply (`on_mismatch: skip`).") with { SeverityOverride = Severity.Warning });
+            return new Result(findings, true);
+        }
+        findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), text));
+        return none;
     }
 
     private static async Task<List<string>> Differences(LoginSettings login, CopyOrigin origin, SourceDescriptor declared)

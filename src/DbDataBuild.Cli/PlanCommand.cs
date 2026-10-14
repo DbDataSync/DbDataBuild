@@ -21,7 +21,7 @@ internal static class PlanCommand
     public const string EphemeralPlansDir = ".dbdatabuild/plans";
     private const int MaxRounds = 12;
 
-    public static int Plan(CommandSpec spec, string root, string? targetArg, string[] models, FileInfo? answersFile, bool acceptInferred, DirectoryInfo? outDir, string[] ops, string[] backfillArgs, string[] fullRefreshArgs, string[] paramArgs,
+    public static int Plan(CommandSpec spec, string root, string? targetArg, string[] models, FileInfo? answersFile, bool acceptInferred, DirectoryInfo? outDir, string[] ops, string[] backfillArgs, string[] paramArgs,
         TextWriter output, TextWriter error, TextReader input, bool interactive, Func<string, string?> env, Action<string>? written = null, bool hintApply = true, IReadOnlyList<InputPin>? pins = null)
     {
         // ---- answers file first: a bad file is a usage problem and must not need a database ----
@@ -45,7 +45,7 @@ internal static class PlanCommand
         foreach (var (model, op) in backfillOps)
             if (!operations.TryAdd(model, op) && operations[model] != op) { error.WriteLine($"`{model}` is given two different operations (--op {operations[model]}, --backfill {op})."); return CliApp.ExitUsage; }
 
-        var (session, exit) = PlanningSession.Prepare(spec, root, targetArg, models, output, error, env, operations, backfillOps.Keys.ToHashSet(StringComparer.Ordinal), fullRefreshArgs.ToHashSet(StringComparer.Ordinal), pins);
+        var (session, exit) = PlanningSession.Prepare(spec, root, targetArg, models, output, error, env, operations, backfillOps.Keys.ToHashSet(StringComparer.Ordinal), pins);
         if (session == null) return exit;
         // ---- ask, plan again, until nothing is open ----
         IPrompter? prompter = interactive ? new ConsolePrompter(input, output) : null;

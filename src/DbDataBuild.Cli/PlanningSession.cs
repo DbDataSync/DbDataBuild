@@ -97,7 +97,7 @@ internal sealed class PlanningSession
 
     /// <summary>Returns the session, or null and the exit code after printing why not.</summary>
     public static (PlanningSession? Session, int Exit) Prepare(CommandSpec spec, string root, string? targetArg, string[] models, TextWriter output, TextWriter error, Func<string, string?> env,
-        IReadOnlyDictionary<string, string>? operations = null, IReadOnlySet<string>? backfills = null, IReadOnlySet<string>? fullRefresh = null, IReadOnlyList<InputPin>? pins = null)
+        IReadOnlyDictionary<string, string>? operations = null, IReadOnlySet<string>? backfills = null, IReadOnlyList<InputPin>? pins = null)
     {
         var ctx = ProjectContext.Load(root);
         var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
@@ -113,16 +113,8 @@ internal sealed class PlanningSession
 
         var selected = ctx.Select(models, error);
         if (selected == null) return (null, CliApp.ExitUsage);
-        foreach (var named in (operations ?? new Dictionary<string, string>()).Keys.Concat(backfills ?? new HashSet<string>()).Concat(fullRefresh ?? new HashSet<string>()))
+        foreach (var named in (operations ?? new Dictionary<string, string>()).Keys.Concat(backfills ?? new HashSet<string>()))
             if (!ctx.Project.Sources.Any(m => m.Definition.Name == named)) { error.WriteLine($"`{named}` is not a model of this project."); return (null, CliApp.ExitUsage); }
-        foreach (var named in (fullRefresh ?? new HashSet<string>()).Order(StringComparer.Ordinal))
-        {
-            var def = ctx.Project.Sources.First(m => m.Definition.Name == named).Definition;
-            if (def is { IsCopy: true, Watermark: not null }) continue;                                   // read from the start instead of from the newest value held
-            if (def.KindType is ModelKinds.IncrementalByUniqueKey or ModelKinds.IncrementalByTimeRange)
-            { error.WriteLine($"`{named}` is an incremental model: it is rebuilt from the start with a backfill (`--backfill {named}=<operation>`, an operation of its definition), not with `--full-refresh`."); return (null, CliApp.ExitUsage); }
-            output.WriteLine($"note: {named} is rebuilt in full by every load, so `--full-refresh` changes nothing for it.");
-        }
         // each model's query as this connection reads it (a name given by a parameter may be another on another connection)
         var mine = selected.Where(m => ctx.TargetsOf(m.Source.Definition).Contains(target)).Select(m => m with { Sql = m.Source.ReadQuery(root, ctx.Config, target) }).ToList();
         foreach (var skipped in selected.Except(mine)) output.WriteLine($"note: {skipped.Source.Definition.Name} does not declare target `{target}` and is not planned.");
@@ -137,10 +129,7 @@ internal sealed class PlanningSession
         var graph = new ModelGraph(ctx.Project.Models, ctx.Project.AllDescriptors);
         findings.AddRange(new DefineEngine(graph, ctx.Config, ctx.Linter).Check(defineTargets));
 
-        // each origin of a copy against its declaration (version skew between the systems of one application); `on_mismatch: skip` leaves an origin out of the plan
-        var copyDefinitions = mine.Select(m => m.Source.Definition).Where(d => d.IsCopy && !d.LocalCopy).ToList();
-        var originCheck = copyDefinitions.Count == 0 ? new CopyOriginCheck.Result([], new HashSet<(string, string)>()) : CopyOriginCheck.Run(ctx, copyDefinitions, target, env);
-        findings.AddRange(originCheck.Findings);
+        // an origin of a copy is checked against its declaration (DDB-230) by the apply, just before that origin's own transfer
         findings.AddRange(NativeShapeCheck.Run(ctx, mine.SelectMany(m => ctx.BaseTablesOf(m.Source, m.Sql)), target, env));
 
         var renderedOps = new List<RenderedOperation>();
@@ -196,7 +185,7 @@ internal sealed class PlanningSession
             var bases = m.Source.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Source, m.Sql));
             // views are transpiled from the lowered query too (errors were reported in the preflight, so a failed lowering here is not reachable)
             var body = ctx.Lowering.Enabled && ctx.Lowering.Lower(m.Source, m.Sql, m.Source.QueryParameterList(root, ctx.Config)).Model is { } lowered ? lowered.Sql : m.Sql;
-            return new PlannedModel(m.Source.Definition, body, m.Source.QueryFile, hash, bases, HookLoader.Load(m.Source, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Source.Definition, target).Where(o => !originCheck.Skipped.Contains((m.Source.Definition.Name, o.Connection))).ToList(), Merge(m.Source.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
+            return new PlannedModel(m.Source.Definition, body, m.Source.QueryFile, hash, bases, HookLoader.Load(m.Source, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Source.Definition, target).ToList(), Merge(m.Source.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
         }).ToList();
 
         // where the records about this connection are kept: itself, another connection (its read login is needed), or nowhere (a warning, unless that was chosen)
@@ -276,7 +265,9 @@ internal sealed class PlanningSession
                 }
                 // an incremental copy reads each origin from the newest value the destination holds for it (less its lookback); nothing there yet reads everything
                 var marks = new Dictionary<string, string?>();
-                foreach (var copy in planned.Where(p => p.Definition.IsCopy && p.Definition.Watermark != null && snap.Live.ContainsKey(p.Definition.Name) && fullRefresh?.Contains(p.Definition.Name) != true))
+                // the load chosen for a copy decides it: a `full_replace` load (`--op model=full`) reads every origin in full
+                bool ReadsAll(ModelDefinition def) => LoadPlan.For(def, target).FirstOrDefault(o => operations != null && operations.TryGetValue(def.Name, out var chosen) ? o.Name == chosen : o.IsDefault)?.ReadsAll == true;
+                foreach (var copy in planned.Where(p => p.Definition.IsCopy && p.Definition.Watermark != null && snap.Live.ContainsKey(p.Definition.Name) && !ReadsAll(p.Definition)))
                     foreach (var origin in copy.OriginList)
                     {
                         var def = copy.Definition;

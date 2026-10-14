@@ -145,7 +145,7 @@ public partial class CopyConformanceTests
     }
 
     [SkippableFact]
-    public async Task A_missing_origin_login_is_refused_before_anything_runs_and_a_value_that_cannot_be_held_stops_the_copy()
+    public async Task A_missing_origin_login_stops_the_apply_at_that_origins_transfer_and_a_value_that_cannot_be_held_stops_the_copy()
     {
         var pair = await SetUp("postgres", "sqlserver");
         await using var fromEngine = pair.Origin;
@@ -158,12 +158,12 @@ public partial class CopyConformanceTests
             Ok(plan, "plan");
             var planFile = Path.Combine(pair.Dir, Regex.Match(plan.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);
 
-            // no login for the origin: nothing is executed
+            // no login for the origin: the apply stops at the transfer from it (the steps before it, the DDL of the destination, have run)
             var o = new StringWriter(); var e = new StringWriter();
             var exit = CliApp.Run(["connection", "deploy", "--apply-plan", planFile, "--project", pair.Dir], o, e, environment: v => v == LoginSettings.VariableName("sqlserver", Login.Read) || v == LoginSettings.VariableName("sqlserver", Login.Write) ? toEngine.ConnectionString : null);
             Assert.NotEqual(0, exit);
             Assert.Contains("DBDATABUILD_POSTGRES_READ", e.ToString() + o.ToString());
-            Assert.Empty(await toEngine.RowsAsync("SELECT 1 FROM information_schema.tables WHERE table_schema = 'dst'"));
+            Assert.Empty(await toEngine.RowsAsync("SELECT 1 FROM dst.items"));                                  // and nothing was copied
 
             // a decimal wider than the declared type cannot be held: the transfer stops, the destination table is not loaded
             await fromEngine.ExecAsync("DELETE FROM src.items; INSERT INTO src.items (id, big) VALUES (1, 1)");
@@ -254,24 +254,47 @@ public partial class CopyConformanceTests
             Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(again.Out)), "second apply");
             Assert.Equal(["1|018|11.00", "2|017|20.00", "3|018|33.00", "4|017|40.00", "9|999|90.00"], await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));
 
-            // version skew: store 18 lost a column. The plan names the origin and stops, and says nothing else about the others
+            // version skew: store 18 lost a column. The plan is made (an origin is checked when its own transfer's turn comes, not before), and the apply stops at that origin: it names the origin and says nothing
+            // about the other, whose rows were loaded before it (each origin is its own unit)
             await store18.ExecAsync("ALTER TABLE pos.orders DROP COLUMN total");
+            await store17.ExecAsync("INSERT INTO pos.orders VALUES (6, 60.00)");
+            // a plan's id comes from its content, and an applied plan is applied once: each variant below gets an index of its own, so that its plan is not the plan of an earlier apply
+            string Variant(string onMismatch, params string[] indexes) => "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  on_mismatch: " + onMismatch + "\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\nindexes:\n" + string.Concat(indexes.Select(i => $"  - {{name: ix_orders_{i}, columns: [{i}]}}\n"));
+            Write("models/warehouse/orders.yml", Variant("fail", "order_id"));
+            Ok(Cli("project", "compile"), "render --write");
             var skew = Cli("connection", "deploy", "sqlserver", "--write-plan");
-            Assert.NotEqual(0, skew.Exit);
-            Assert.Contains("DDB-230", skew.Err);
-            Assert.Contains("`pos.orders` on `store_18` differs from its declaration: column `total` is gone", skew.Err);
-            Assert.DoesNotContain("store_17` differs", skew.Err);
+            Ok(skew, "plan with a drifted origin");
+            var skewApply = Cli("connection", "deploy", "--apply-plan", PlanOf(skew.Out));
+            Assert.NotEqual(0, skewApply.Exit);
+            Assert.True(skewApply.Err.Contains("DDB-230"), skewApply.Err + skewApply.Out);
+            Assert.Contains("`pos.orders` on `store_18` differs from its declaration: column `total` is gone", skewApply.Err);
+            Assert.DoesNotContain("store_17` differs", skewApply.Err);
+            Assert.Equal(["1|018|11.00", "2|017|20.00", "3|018|33.00", "4|017|40.00", "6|017|60.00", "9|999|90.00"], await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));   // store 17 loaded before store 18 was reached
 
             // with on_mismatch: skip the other origin still loads, and the skipped one's rows stay as they were
-            Write("models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  type: copy\n  from: pos.orders\n  on_mismatch: skip\n  slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
+            Write("models/warehouse/orders.yml", Variant("skip", "order_id", "store_id"));
             Ok(Cli("project", "compile"), "render --write");
             await store17.ExecAsync("INSERT INTO pos.orders VALUES (5, 50.00)");
             var skipped = Cli("connection", "deploy", "sqlserver", "--write-plan");
-            Ok(skipped, "plan with a skipped origin");
-            Assert.Contains("left out of the plan", skipped.Err);
-            Assert.Single(Regex.Matches(File.ReadAllText(PlanOf(skipped.Out)), "type: transfer"));
-            Ok(Cli("connection", "deploy", "--apply-plan", PlanOf(skipped.Out)), "apply with a skipped origin");
-            Assert.Equal(["1|018|11.00", "2|017|20.00", "3|018|33.00", "4|017|40.00", "5|017|50.00", "9|999|90.00"], await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));
+            Ok(skipped, "plan with a drifted origin that may be skipped");
+            Assert.Equal(2, Regex.Matches(File.ReadAllText(PlanOf(skipped.Out)), "type: transfer").Count);       // both origins are in the plan: the choice is made when the origin's turn comes
+            var skippedApply = Cli("connection", "deploy", "--apply-plan", PlanOf(skipped.Out));
+            Ok(skippedApply, "apply with a skipped origin");
+            Assert.Contains("left out of this apply", skippedApply.Err);
+            Assert.Contains("skipped", skippedApply.Out);
+            Assert.Equal(["1|018|11.00", "2|017|20.00", "3|018|33.00", "4|017|40.00", "5|017|50.00", "6|017|60.00", "9|999|90.00"], await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));
+
+            // an origin that cannot be reached does not hold back the one before it: store 17 loads, the apply stops at store 18 (no read login)
+            await store17.ExecAsync("INSERT INTO pos.orders VALUES (7, 70.00)");
+            Write("models/warehouse/orders.yml", Variant("skip", "order_id", "store_id", "total"));
+            Ok(Cli("project", "compile"), "render --write");
+            var down = Cli("connection", "deploy", "sqlserver", "--write-plan");
+            Ok(down, "plan before an origin goes away");
+            var o = new StringWriter(); var e = new StringWriter();
+            var downExit = CliApp.Run(["connection", "deploy", "--apply-plan", PlanOf(down.Out), "--project", dir], o, e, environment: v => v == "DBDATABUILD_STORE_18_READ" ? null : Env(v));
+            Assert.NotEqual(0, downExit);
+            Assert.Contains("store_18", o.ToString() + e.ToString());
+            Assert.Contains("7|017|70.00", await warehouse.RowsAsync("SELECT CAST(order_id AS VARCHAR(10)) + '|' + store_id + '|' + CAST(total AS VARCHAR(20)) FROM warehouse.orders"));
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }
@@ -288,7 +311,7 @@ public partial class CopyConformanceTests
         {
             pair.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\n" + Sensitive(destination));
             pair.Write("models/src/events.yml", $"name: src.events\nkind: {{type: mapped}}\nconnections=: [{origin}]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT, nullable: false}}\n  - {{name: note, type: \"VARCHAR(40)\"}}\n  - {{name: updated_at, type: TIMESTAMP, nullable: false}}\n");
-            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  type: copy\n  from: src.events\n  unique_key: [id]\n  watermark: {column: updated_at, lookback: 1 hour}\n");
+            pair.Write("models/dst/events.yml", "name: dst.events\nkind:\n  type: copy\n  from: src.events\n  unique_key: [id]\n  watermark: {column: updated_at, lookback: 1 hour}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
             await from.ExecAsync(origin == "postgres" ? "CREATE SCHEMA src" : "EXEC('CREATE SCHEMA src')");
             var q = from.QuoteIdent;
             await from.ExecAsync($"CREATE TABLE src.events ({q("id")} BIGINT NOT NULL, {q("note")} {from.ColumnType("VARCHAR(40)")}, {q("updated_at")} {from.ColumnType("TIMESTAMP")} NOT NULL)");
@@ -320,14 +343,16 @@ public partial class CopyConformanceTests
             Assert.Contains("value: \"2024-01-01 11:00:00", second);                                          // the newest row held (12:00) less the lookback (1 hour)
             Assert.Equal(["1|one", "2|two", "3|three, edited", "4|four"], await Dest());                     // read: 2 (11:00 is at the bound), 3, 4. Not read: 1
 
-            // a full refresh reads the origin from the start: row 1, whose updated_at never moved, comes through now
-            var refreshed = pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "dst.events");
-            Ok(refreshed, "full-refresh plan");
+            // the copy's `full` load reads the origin from the start and replaces everything: row 1, whose updated_at never moved, comes through now, and row 2, deleted at the origin, goes
+            await from.ExecAsync("DELETE FROM src.events WHERE id = 2");
+            var refreshed = pair.Cli("connection", "deploy", destination, "--write-plan", "--op", "dst.events=full");
+            Ok(refreshed, "full load plan");
             var refreshFile = Path.Combine(pair.Dir, Regex.Match(refreshed.Out, @"plan:\s+(\S+\.plan\.yml)").Groups[1].Value);
             Assert.DoesNotContain("@watermark", File.ReadAllText(refreshFile));
-            Ok(pair.Cli("connection", "deploy", "--apply-plan", refreshFile), "full-refresh apply");
-            Assert.Equal(["1|one, edited", "2|two", "3|three, edited", "4|four"], await Dest());
-            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "no.such_model").Exit);    // not a model of the project
+            Ok(pair.Cli("connection", "deploy", "--apply-plan", refreshFile), "full load apply");
+            Assert.Equal(["1|one, edited", "3|three, edited", "4|four"], await Dest());
+            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--op", "no.such_model=full").Exit);    // not a model of the project
+            Assert.NotEqual(0, pair.Cli("connection", "deploy", destination, "--write-plan", "--full-refresh", "dst.events").Exit);  // the flag is gone: a person picks the load
 
             // `report` says which origin copied well last
             var report = pair.Cli("connection", "monitor", destination);
@@ -387,7 +412,9 @@ public partial class CopyConformanceTests
             // the model is not built on its connection yet: the copy is planned, with a note that the origin was not checked
             var first = Cli("connection", "deploy", "wh", "--write-plan");
             Ok(first, "first plan");
-            Assert.Contains("is not built on `origin` yet", first.Err + first.Out);
+            var firstApply = Cli("connection", "deploy", "--apply-plan", PlanOf(first.Out));
+            Assert.Contains("is not built on `origin` yet", firstApply.Err + firstApply.Out);                   // the origin is looked at when its own transfer's turn comes
+            Assert.NotEqual(0, firstApply.Exit);                                                                  // and there is no table to read yet
 
             var build = Cli("connection", "deploy", "origin", "--write-plan");
             Ok(build, "plan of the origin");
@@ -402,9 +429,11 @@ public partial class CopyConformanceTests
             // the table on the origin is changed outside the tool: the copy is stopped before it reads a table that no longer has what the model declares
             await server.ExecAsync("ALTER TABLE marts.fct DROP COLUMN name");
             var third = Cli("connection", "deploy", "wh", "--write-plan");
-            Assert.NotEqual(0, third.Exit);
-            Assert.Contains("DDB-230", third.Err + third.Out);
-            Assert.Contains("column `name` is gone", third.Err + third.Out);
+            Ok(third, "plan against a changed origin");
+            var thirdApply = Cli("connection", "deploy", "--apply-plan", PlanOf(third.Out));
+            Assert.NotEqual(0, thirdApply.Exit);
+            Assert.Contains("DDB-230", thirdApply.Err + thirdApply.Out);
+            Assert.Contains("column `name` is gone", thirdApply.Err + thirdApply.Out);
         }
         finally
         {
