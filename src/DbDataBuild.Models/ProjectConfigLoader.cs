@@ -21,7 +21,8 @@ public static class ProjectConfigLoader
                 $"`{ProductInfo.ConfigFile}` was not found under {projectRoot}. Built-in defaults apply."));
             return ProjectConfig.Default;
         }
-        return Load(File.ReadAllText(path), ProductInfo.ConfigFile, diags) ?? ProjectConfig.Default;
+        var loaded = Load(File.ReadAllText(path), ProductInfo.ConfigFile, diags) ?? ProjectConfig.Default;
+        return DialectLockFile.ApplyFromProject(projectRoot, loaded, diags);      // the dialects `project update` committed for Flight SQL connections that name none
     }
 
     public static ProjectConfig? Load(string text, string file, List<Diagnostic> diags)

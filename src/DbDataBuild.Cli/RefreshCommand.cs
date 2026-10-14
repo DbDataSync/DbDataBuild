@@ -631,14 +631,14 @@ internal static class RefreshCommand
 /// How a refresh reaches the origins of its copies: each by its connection name, on its read login from the environment (`DBDATABUILD_&lt;ORIGIN&gt;_READ`), through <see cref="ReadSession"/> only. A failure is described by its
 /// type and error number, never by the driver's message.
 /// </summary>
-internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> Env, SessionLimits? Limits = null)
+internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> Env, SessionLimits? Limits = null, SessionOpener? Open = null)
 {
     public async Task<ReadSession> OpenAsync(string name, CancellationToken ct)
     {
         if (!Config.Connections.TryGetValue(name, out var connection)) throw new InvalidOperationException($"no connection {name}");
         var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, Env);
         if (login == null) throw new GateRefusedException(missing!);
-        return await (Limits ?? SessionLimits.None).OpenAsync(name, () => ReadSession.OpenAsync(login, ct), ct);
+        return await (Limits ?? SessionLimits.None).OpenAsync(name, () => (Open ?? ReadSession.OpenAsync)(login, ct), ct);
     }
 
     /// <summary>Null when the origin answers on its read login; otherwise what is wrong, in words that quote nothing a driver said.</summary>
@@ -649,6 +649,14 @@ internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> 
         {
             await using var session = await OpenAsync(name, ct);
             await session.QueryFirstRowsAsync(Config.DialectOf(name).Ping, 1, 30, ct);
+            // a Flight SQL server whose dialect was committed (`project update`) is asked again: the committed read text is right only for that dialect, and it is never changed silently (DDB-460)
+            if (Config.Connections[name] is { Kind.DialectIsDiscoverable: true, DialectLock: { } committed })
+            {
+                var facts = await session.ServerFactsAsync(ct) ?? ServerFacts.Nothing;
+                var differences = DialectLockComparison.Differences(committed, DialectDiscovery.Choose(facts, Config.Dialects), facts);
+                if (differences.Count > 0)
+                    return $"the server now reports a different dialect than the one committed in {ProductInfo.DialectLockFile} ({string.Join("; ", differences)}). The committed reads were written for the old one ({DiagnosticCatalog.OriginDialectChanged.Code}); run `{ProductInfo.Cli} project update` and review the change.";
+            }
             return null;
         }
         catch (GateRefusedException ex) { return ex.Diagnostic.Found; }

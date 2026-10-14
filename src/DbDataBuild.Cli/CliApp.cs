@@ -293,6 +293,17 @@ public static class CliApp
                     cmd.Arguments.Add(impTarget); cmd.Arguments.Add(impTables); cmd.Options.Add(impProject); cmd.Options.Add(impWrite); cmd.Options.Add(impCheck);
                     cmd.SetAction(pr => { var (impConn, impRest) = SplitConnection(pr.GetValue(impProject)!.FullName, pr.GetValue(impTarget), pr.GetValue(impTables) ?? []); return Reported(pr, spec, (o, e) => ImportSourcesCommand.Run(spec, pr.GetValue(impProject)!.FullName, impConn, impRest, pr.GetValue(impWrite), pr.GetValue(impCheck), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
+                case "project update":
+                    var updSelectors = new Argument<string[]>("selectors") { Description = "What to update (default: every model, mapped model and connection): names, `schema.*` patterns, paths, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:<selector>`", Arity = ArgumentArity.ZeroOrMore };
+                    GuardOptionLike(updSelectors, spec.Name);
+                    var updProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
+                    var updOffline = new Option<bool>("--offline") { Description = "Read no connection: update only the definitions of the models from their queries (no dialect is asked and no mapped model is compared with its table)" };
+                    var updCheck = new Option<bool>("--check") { Description = "CI: write nothing, show what would change (per model, mapped model and connection) and fail if anything would" };
+                    var updAnswers = new Option<FileInfo?>("--answers") { Description = "Answers file for the questions of the model definitions (see schemas/answers.schema.json)" };
+                    var updAccept = new Option<bool>("--accept-inferred") { Description = "Accept inferred proposals marked high certainty when updating the definitions of models" };
+                    cmd.Arguments.Add(updSelectors); cmd.Options.Add(updProject); cmd.Options.Add(updOffline); cmd.Options.Add(updCheck); cmd.Options.Add(updAnswers); cmd.Options.Add(updAccept);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => ProjectUpdateCommand.Run(spec, pr.GetValue(updProject)!.FullName, pr.GetValue(updSelectors) ?? [], pr.GetValue(updOffline), pr.GetValue(updCheck), pr.GetValue(updAnswers), pr.GetValue(updAccept), o, e, environment ?? Environment.GetEnvironmentVariable)));
+                    break;
                 case "project tests list":
                     var tlistProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var tlistTag = new Option<string[]>("--tag") { Description = "List only tests with this tag (repeat for several: any of them)", AllowMultipleArgumentsPerToken = false, DefaultValueFactory = _ => [] };

@@ -267,7 +267,7 @@ internal sealed class ProjectContext
             var (files, problem) = GitInfo.ChangedFiles(Root, core[8..]);
             if (files == null) { error.WriteLine(problem); return null; }
             var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (files.Contains(ProductInfo.ConfigFile)) changed.UnionWith(all.Select(s => s.Definition.Name));                    // the project settings reach every model
+            if (files.Contains(ProductInfo.ConfigFile) || files.Contains(ProductInfo.DialectLockFile)) changed.UnionWith(all.Select(s => s.Definition.Name));                    // the project settings reach every model
             foreach (var s in all.Where(s => files.Contains(s.QueryFile) || files.Contains(s.DefinitionFile))) changed.Add(s.Definition.Name);
             foreach (var d in Project.FileDescriptors.Where(d => files.Contains(d.File.Length > 0 ? d.File : ModelSourcePath(d.Name)))) changed.UnionWith(Graph.ReadBy(d.Name));      // a changed source changes what reads it
             changed.UnionWith(ChangedThroughOtherFiles(files, all));

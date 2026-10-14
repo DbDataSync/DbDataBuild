@@ -42,6 +42,12 @@ internal sealed class CommandReport
 
     public static CommandReport Create(bool json, string command, TextWriter output, TextWriter error) => new(json, command, output, error);
 
+    /// <summary>For a command that runs another and reports its result as part of its own (`project update` runs the model update): what the run put in `data`, its diagnostics and its text. Meaningful for a report made in JSON mode.</summary>
+    internal IReadOnlyDictionary<string, object?> Data => data;
+    internal IReadOnlyList<Diagnostic> Diagnostics => diagnostics;
+    internal IReadOnlyList<string> MessageLines { get { Output.Flush(); return ((CapturingWriter)Output).Lines; } }
+    internal IReadOnlyList<string> ErrorLines { get { Error.Flush(); return ((CapturingWriter)Error).Lines; } }
+
     internal void AddDiagnostic(Diagnostic d) => diagnostics.Add(d);
     internal void Set(string key, object? value) => data[key] = value;
     internal void AddNext(IEnumerable<string> commands) => next.AddRange(commands);

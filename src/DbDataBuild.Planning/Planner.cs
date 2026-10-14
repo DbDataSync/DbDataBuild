@@ -652,7 +652,10 @@ public static class Planner
             read = positional;
             if (bound.Count > 0) order = bound;
         }
-        var spec = new TransferSpec(origin.Connection, read, $"{stagingSchema}.{stagingTable}", def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), slice, watermark, nativeParameters, isCommand, order);
+        // a Flight SQL origin's read depends on the dialect the connection has (its keyword, or the one committed by `project update`): the plan carries its name and the hash of its profile
+        var flight = config.Connections.TryGetValue(origin.Connection, out var originConnection) && originConnection.Engine == "flightsql";
+        var spec = new TransferSpec(origin.Connection, read, $"{stagingSchema}.{stagingTable}", def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), slice, watermark, nativeParameters, isCommand, order,
+            flight ? originDdl.Name : null, flight ? DialectDiscovery.Hash(originDdl) : null);
         return (create, spec);
     }
 

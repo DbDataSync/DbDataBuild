@@ -41,7 +41,10 @@ public class ReadOriginsTests
     {
         var (kind, error, _) = ConnectionKeywords.Parse(ConnectionKeywords.Words(engine), new HashSet<string> { "backtick_sql" });
         Assert.Null(error);
-        Assert.Equal(new ConnectionKind(Enum.Parse<ConnectionAccess>(access), driver, dialect), kind);
+        Assert.Equal(new ConnectionKind(Enum.Parse<ConnectionAccess>(access), driver, dialect) with { }, kind! with { DialectDeclared = true });
+        // odbc and flightsql with no dialect keyword leave the dialect undeclared: ansi, or (Flight SQL) what `project update` committed
+        var named = ConnectionKeywords.Words(engine).Any(w => w != "readonly" && w != driver);
+        Assert.Equal(named || driver is not ("odbc" or "flightsql"), kind!.DialectDeclared);
     }
 
     public static TheoryData<string, string> Refused => new()

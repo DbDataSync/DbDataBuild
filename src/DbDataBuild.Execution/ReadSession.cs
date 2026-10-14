@@ -19,6 +19,12 @@ public sealed class ReadSession : IAsyncDisposable
     /// <summary>What the source says about itself without a query of ours (an ODBC driver's name and the server's version); null when it says nothing.</summary>
     public string? ServerDescription => source.ServerDescription;
 
+    /// <summary>
+    /// What a Flight SQL server says about itself (`GetSqlInfo`: its name and version, how it quotes and cases identifiers, whether it is read-only), for the dialect `project update` commits and a refresh compares. Null for any
+    /// other source, and for a server that does not implement the call; an empty <see cref="ServerFacts"/> for one that answers with nothing the tool reads.
+    /// </summary>
+    public Task<ServerFacts?> ServerFactsAsync(CancellationToken ct = default) => source is IServerFacts facts ? facts.ServerFactsAsync(ct) : Task.FromResult<ServerFacts?>(null);
+
     /// <summary>What the catalog readers could not read from this origin, in words (the indexes a source has no way to say, the keys a driver does not offer); the command that asked says each once.</summary>
     public List<string> CatalogNotes { get; } = [];
 

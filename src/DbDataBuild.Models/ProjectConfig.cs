@@ -57,6 +57,9 @@ public sealed record ConnectionConfig(string Name, string Engine, int? Version =
     /// <summary>The project's own dialect profile (`dialects:`) that this connection's `engine` names; null when the dialect is a built-in.</summary>
     public DialectProfile? Profile { get; init; }
 
+    /// <summary>The dialect `project update` found on the server and committed (`dialects.lock.yml`) for a Flight SQL connection with no dialect keyword; its profile is <see cref="Profile"/>. Null when nothing is committed.</summary>
+    public DialectLockEntry? DialectLock { get; init; }
+
     /// <summary>The connection is only read: no write login, never a destination, a tracking connection or a target of a deploy.</summary>
     public bool ReadOnly => Kind.ReadOnly;
 
