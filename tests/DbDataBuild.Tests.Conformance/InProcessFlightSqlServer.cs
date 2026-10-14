@@ -53,6 +53,9 @@ public sealed class InProcessFlightSqlServer : IAsyncDisposable
         public List<string> Handshakes { get; } = [];
         public List<string> Actions { get; } = [];
         public string? RejectedToken { get; set; }
+
+        /// <summary>What the server says to GetSqlInfo, by the protocol's id (a string, a bool or a number); null: the call is not offered (the default, like the other metadata calls).</summary>
+        public Dictionary<uint, object>? SqlInfo { get; set; }
         public bool RequireAuth { get; set; } = true;
         public int OpenPrepared;
         public int MostConcurrent;
@@ -69,6 +72,8 @@ public sealed class InProcessFlightSqlServer : IAsyncDisposable
     public IReadOnlyList<ParameterLog> Bound { get { lock (state.Gate) return state.Bound.ToList(); } }
     public IReadOnlyList<string> Actions { get { lock (state.Gate) return state.Actions.ToList(); } }
     public IReadOnlyList<string> Handshakes { get { lock (state.Gate) return state.Handshakes.ToList(); } }
+    /// <summary>Says what the server answers to GetSqlInfo (null: it does not implement the call). Ids: 0 name, 1 version, 3 read-only, 503 identifier case, 504 identifier quote, 505 quoted identifier case.</summary>
+    public void SayAboutItself(Dictionary<uint, object>? facts) => state.SqlInfo = facts;
     public int OpenPrepared => state.OpenPrepared;
     public int MostConcurrent => state.MostConcurrent;
     public void ClearLog() { lock (state.Gate) { state.Texts.Clear(); state.Bound.Clear(); state.Handshakes.Clear(); } }
@@ -337,13 +342,56 @@ internal sealed class DuckFlightSqlServer(InProcessFlightSqlServer.ServerState s
     protected override Task<FlightInfo> GetDbSchemaFlightInfo(CommandGetDbSchemas command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetDbSchemas");
     protected override Task<FlightInfo> GetTablesFlightInfo(CommandGetTables command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetTables");
     protected override Task<FlightInfo> GetTableTypesFlightInfo(CommandGetTableTypes command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetTableTypes");
-    protected override Task<FlightInfo> GetSqlFlightInfo(CommandGetSqlInfo command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetSqlInfo");
+    // GetSqlInfo is answered when a test gave the server something to say (InProcessFlightSqlServer.SqlInfo); the base class has the protocol's schema
+    protected override Task<FlightInfo> GetSqlFlightInfo(CommandGetSqlInfo command, FlightDescriptor flightDescriptor, ServerCallContext context)
+    {
+        Authorize(context);
+        if (state.SqlInfo == null) throw Unimplemented("GetSqlInfo");
+        return Task.FromResult(new FlightInfo(SqlInfoReply, flightDescriptor, [new FlightEndpoint(new FlightTicket(Packed(command)), [])], -1, -1));
+    }
     protected override Task<FlightInfo> GetPrimaryKeysFlightInfo(CommandGetPrimaryKeys command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetPrimaryKeys");
     protected override Task<FlightInfo> GetExportedKeysFlightInfo(CommandGetExportedKeys command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetExportedKeys");
     protected override Task<FlightInfo> GetImportedKeysFlightInfo(CommandGetImportedKeys command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetImportedKeys");
     protected override Task<FlightInfo> GetCrossReferenceFlightInfo(CommandGetCrossReference command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetCrossReference");
     protected override Task<FlightInfo> GetXdbcTypeFlightInfo(CommandGetXdbcTypeInfo command, FlightDescriptor flightDescriptor, ServerCallContext context) => throw Unimplemented("GetXdbcTypeInfo");
-    protected override Task DoGetSqlInfo(CommandGetSqlInfo command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context) => throw Unimplemented("GetSqlInfo");
+    protected override async Task DoGetSqlInfo(CommandGetSqlInfo command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context)
+    {
+        await DoGetSqlInfo2(command, responseStream, context);
+    }
+
+    // the protocol's reply: a uint32 id and a dense union of the value types
+    private static readonly Schema SqlInfoReply = new([
+        new Apache.Arrow.Field("info_name", UInt32Type.Default, false),
+        new Apache.Arrow.Field("value", new UnionType([
+            new Apache.Arrow.Field("string_value", StringType.Default, false), new Apache.Arrow.Field("bool_value", BooleanType.Default, false), new Apache.Arrow.Field("bigint_value", Int64Type.Default, false),
+            new Apache.Arrow.Field("int32_bitmask", Int32Type.Default, false), new Apache.Arrow.Field("string_list", new ListType(new Apache.Arrow.Field("item", StringType.Default, true)), false),
+            new Apache.Arrow.Field("int32_to_int32_list_map", new MapType(Int32Type.Default, new ListType(new Apache.Arrow.Field("item", Int32Type.Default, true)), false), false)], [0, 1, 2, 3, 4, 5], UnionMode.Dense), false),
+    ], null);
+
+    private async Task DoGetSqlInfo2(CommandGetSqlInfo command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context)
+    {
+        if (state.SqlInfo is not { } facts) throw Unimplemented("GetSqlInfo");
+        lock (state.Gate) state.Actions.Add("sqlinfo");
+        var asked = command.Info.Count == 0 ? facts.Keys.Order().ToList() : command.Info.Where(facts.ContainsKey).ToList();
+        var names = new UInt32Array.Builder();
+        var typeIds = new ArrowBuffer.Builder<byte>();
+        var offsets = new ArrowBuffer.Builder<int>();
+        var strings = new StringArray.Builder(); var bools = new BooleanArray.Builder(); var longs = new Int64Array.Builder();
+        foreach (var id in asked)
+        {
+            names.Append(id);
+            switch (facts[id])
+            {
+                case string s: typeIds.Append(0); offsets.Append(strings.Length); strings.Append(s); break;
+                case bool b: typeIds.Append(1); offsets.Append(bools.Length); bools.Append(b); break;
+                default: typeIds.Append(2); offsets.Append(longs.Length); longs.Append(Convert.ToInt64(facts[id])); break;
+            }
+        }
+        var union = (UnionType)SqlInfoReply.GetFieldByName("value").DataType;
+        IArrowArray[] children = [strings.Build(), bools.Build(), longs.Build(), new Int32Array.Builder().Build(), new ListArray.Builder(StringType.Default).Build(), new MapArray.Builder((MapType)union.Fields[5].DataType).Build()];
+        await responseStream.SetupStream(SqlInfoReply);
+        await responseStream.WriteAsync(new RecordBatch(SqlInfoReply, [names.Build(), new DenseUnionArray(union, asked.Count, children, typeIds.Build(), offsets.Build(), 0, 0)], asked.Count));
+    }
     protected override Task DoGetCatalog(CommandGetCatalogs command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context) => throw Unimplemented("GetCatalogs");
     protected override Task DoGetTableType(CommandGetTableTypes command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context) => throw Unimplemented("GetTableTypes");
     protected override Task DoGetTables(CommandGetTables command, FlightServerRecordBatchStreamWriter responseStream, ServerCallContext context) => throw Unimplemented("GetTables");

@@ -93,7 +93,7 @@ public class DefineCommandTests
         var dir = Project();
         Model(dir, "marts.fct_orders", OrdersSql);
         Assert.Equal(CliApp.ExitUsage, Define(dir, "--check", "models/nope.sql").Exit);
-        Assert.Equal(CliApp.ExitUsage, Define(dir, "--check", "models/staging/orders.yml").Exit);
+        Assert.NotEqual(CliApp.ExitUsage, Define(dir, "--check", "models/staging/orders.yml").Exit);      // a mapped model is the connections' part now: compared with its table, or said to be skipped
         Assert.Equal(CliApp.ExitUsage, Define(dir, "--check", "dbdatabuild.yml").Exit);
     }
 
@@ -357,7 +357,7 @@ public class DefineCommandTests
     public void Define_is_declared_repo_files_only_and_never_references_a_database_driver()
     {
         var spec = CommandSpecs.All.Single(c => c.Name == "project model update");
-        Assert.Equal(EffectClass.RepoFilesOnly, spec.Effect);
+        Assert.Equal(EffectClass.TargetReadOnly, spec.Effect);        // it reads the connections of the mapped models unless --offline
         Assert.True(spec.Implemented);
 
         var assemblies = new[] { typeof(CliApp), typeof(DbDataBuild.Define.DefineEngine), typeof(DbDataBuild.Models.ProjectValidator), typeof(DbDataBuild.Sql.Polyglot),
@@ -372,7 +372,7 @@ public class DefineCommandTests
     {
         var (exit, help, _) = Run(null, false, "project", "model", "update", "--help");
         Assert.Equal(0, exit);
-        Assert.Contains("Repo files only", help);
+        Assert.Contains("Target read-only", help);
         Assert.Contains("--check", help);
         Assert.Contains("--accept-inferred", help);
     }

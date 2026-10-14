@@ -15,8 +15,8 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class ImportSourcesCommand
 {
-    private sealed record Row(string Name, string Kind, string? File, string Status, IReadOnlyList<SourceChange> Changes, ImportedObject? Live, SourceDescriptor? Descriptor, string? NewText, string? OldText, string? ExpectedHash);
-    private sealed record Skipped(string Object, string Reason);
+    internal sealed record Row(string Name, string Kind, string? File, string Status, IReadOnlyList<SourceChange> Changes, ImportedObject? Live, SourceDescriptor? Descriptor, string? NewText, string? OldText, string? ExpectedHash);
+    internal sealed record Skipped(string Object, string Reason);
 
     public static int Run(CommandSpec spec, string root, string? targetArg, string[] patterns, bool write, bool check, TextWriter output, TextWriter error, Func<string, string?> env)
     {
@@ -57,56 +57,8 @@ internal static class ImportSourcesCommand
             return CliApp.ExitFindings;
         }
 
-        var rows = new List<Row>();
-        var catalogNotes = new List<string>();
-        var skipped = new List<Skipped>();
-        var diags = new List<Diagnostic>();
-        try
-        {
-            Task.Run(async () =>
-            {
-                await using var read = await ReadSession.OpenAsync(login!);
-                var allSchemas = await SourceCatalogReader.SchemasAsync(read, engine);
-                var schemas = allSchemas.Where(s => wanted.Any(w => w.SchemaName.IsMatch(s))).ToList();
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var schema in schemas)
-                {
-                    if (string.Equals(schema, ctx.Config.TrackingSchemaName, StringComparison.OrdinalIgnoreCase)) { skipped.Add(new(schema, "the tracking schema name holds the tool's own tables")); continue; }
-                    var shapes = await CatalogReader.ReadObjectsAsync(read, engine, schema);
-                    var keys = await SourceCatalogReader.PrimaryKeysAsync(read, engine, schema);
-                    var foreignKeys = await SourceCatalogReader.ForeignKeysAsync(read, engine, schema);
-                    // the engines' shapes carry their indexes already; an origin's come from its own catalog where it has one (duckdb_indexes(), ODBC's SQLStatistics) and are said to be missing where it has none
-                    var indexes = await SourceCatalogReader.IndexesAsync(read, engine, schema);
-                    foreach (var (qualified, shape0) in shapes.OrderBy(k => k.Key, StringComparer.Ordinal))
-                    {
-                        var shape = indexes != null && indexes.TryGetValue(shape0.Name, out var found) ? shape0 with { Physical = shape0.Physical.Concat(found).ToList() } : shape0;
-                        if (!wanted.Any(w => w.SchemaName.IsMatch(shape.SchemaName) && w.Table.IsMatch(shape.Name))) continue;
-                        seen.Add(qualified);
-                        if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a model, not a source")); continue; }
-                        var live = SourceImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout, login!.Dialect);
-                        // a table the project already has a mapped model for is written where that model's file is, whatever the layout says
-                        if (committed.TryGetValue(qualified, out var existing) && existing.File.Length > 0) live = live with { File = existing.File };
-                        if (live.File == null)
-                        {
-                            diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(qualified, 0, 0), $"`{qualified}` has a dot, slash or backslash in its schema name or table name, so it cannot be a path under models/."));
-                            skipped.Add(new(qualified, "its name cannot be a file name"));
-                            continue;
-                        }
-                        rows.Add(Compare(root, target, live, committed.GetValueOrDefault(qualified), diags));
-                    }
-                }
-                catalogNotes.AddRange(read.CatalogNotes);
-                // descriptors the project has for tables the target does not show (in the schema names searched)
-                foreach (var d in committed.Values.Where(d => wanted.Any(w => { var (s, t) = Split(d.Name)!.Value; return w.SchemaName.IsMatch(s) && w.Table.IsMatch(t); })))
-                {
-                    var (s, _) = Split(d.Name)!.Value;
-                    if (seen.Contains(d.Name) || models.Contains(d.Name)) continue;
-                    var file = d.File.Length > 0 ? d.File : SourceDescriptorWriter.PathFor(s, d.Name[(s.Length + 1)..], ctx.Config.Layout);
-                    diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(file ?? d.Name, 0, 0), $"`{d.Name}` has a mapped model, but {target} shows no table or view of that name.", Fix: "Delete the descriptor or restore the table. The tool never deletes it for you."));
-                    rows.Add(new Row(d.Name, "unknown", file, "stale", [], null, d, null, null, null));
-                }
-            }).GetAwaiter().GetResult();
-        }
+        List<Row> rows; List<Skipped> skipped; List<Diagnostic> diags; List<string> catalogNotes;
+        try { (rows, skipped, diags, catalogNotes) = GatherAsync(ctx, root, connection, login!, wanted, null).GetAwaiter().GetResult(); }
         catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); return CliApp.ExitFindings; }
         catch (CatalogUnavailableException ex) { error.WriteLine(ex.Message); return CliApp.ExitFindings; }
 
@@ -177,6 +129,63 @@ internal static class ImportSourcesCommand
         return failed ? CliApp.ExitFindings : CliApp.ExitOk;
     }
 
+    /// <summary>
+    /// Reads the tables the patterns match on one connection and compares each with the mapped model the project has (or would write): the part of `project import` that `project update` and `project model update`
+    /// share. Nothing is written. A model of the project is skipped, a name that cannot be a file is said, and a mapped model whose table is not there is `stale`.
+    /// </summary>
+    internal static async Task<(List<Row> Rows, List<Skipped> Skipped, List<Diagnostic> Diags, List<string> Notes)> GatherAsync(ProjectContext ctx, string root, ConnectionConfig connection, LoginSettings login,
+        List<(Regex SchemaName, Regex Table, string? LiteralSchema)> wanted, SessionOpener? open)
+    {
+        var target = connection.Name; var engine = connection.Engine;
+        var committed = ctx.Project.Descriptors.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
+        var models = ctx.Project.Models.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<Row>();
+        var catalogNotes = new List<string>();
+        var skipped = new List<Skipped>();
+        var diags = new List<Diagnostic>();
+        await using var read = await (open ?? ReadSession.OpenAsync)(login, default);
+        var allSchemas = await SourceCatalogReader.SchemasAsync(read, engine);
+        var schemas = allSchemas.Where(s => wanted.Any(w => w.SchemaName.IsMatch(s))).ToList();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var schema in schemas)
+        {
+            if (string.Equals(schema, ctx.Config.TrackingSchemaName, StringComparison.OrdinalIgnoreCase)) { skipped.Add(new(schema, "the tracking schema name holds the tool's own tables")); continue; }
+            var shapes = await CatalogReader.ReadObjectsAsync(read, engine, schema);
+            var keys = await SourceCatalogReader.PrimaryKeysAsync(read, engine, schema);
+            var foreignKeys = await SourceCatalogReader.ForeignKeysAsync(read, engine, schema);
+            // the engines' shapes carry their indexes already; an origin's come from its own catalog where it has one (duckdb_indexes(), ODBC's SQLStatistics) and are said to be missing where it has none
+            var indexes = await SourceCatalogReader.IndexesAsync(read, engine, schema);
+            foreach (var (qualified, shape0) in shapes.OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                var shape = indexes != null && indexes.TryGetValue(shape0.Name, out var found) ? shape0 with { Physical = shape0.Physical.Concat(found).ToList() } : shape0;
+                if (!wanted.Any(w => w.SchemaName.IsMatch(shape.SchemaName) && w.Table.IsMatch(shape.Name))) continue;
+                seen.Add(qualified);
+                if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a model, not a source")); continue; }
+                var live = SourceImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout, login.Dialect);
+                // a table the project already has a mapped model for is written where that model's file is, whatever the layout says
+                if (committed.TryGetValue(qualified, out var existing) && existing.File.Length > 0) live = live with { File = existing.File };
+                if (live.File == null)
+                {
+                    diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(qualified, 0, 0), $"`{qualified}` has a dot, slash or backslash in its schema name or table name, so it cannot be a path under models/."));
+                    skipped.Add(new(qualified, "its name cannot be a file name"));
+                    continue;
+                }
+                rows.Add(Compare(root, target, live, committed.GetValueOrDefault(qualified), diags));
+            }
+        }
+        catalogNotes.AddRange(read.CatalogNotes);
+        // descriptors the project has for tables the target does not show (in the schema names searched)
+        foreach (var d in committed.Values.Where(d => wanted.Any(w => { var (s, t) = Split(d.Name)!.Value; return w.SchemaName.IsMatch(s) && w.Table.IsMatch(t); })))
+        {
+            var (s, _) = Split(d.Name)!.Value;
+            if (seen.Contains(d.Name) || models.Contains(d.Name)) continue;
+            var file = d.File.Length > 0 ? d.File : SourceDescriptorWriter.PathFor(s, d.Name[(s.Length + 1)..], ctx.Config.Layout);
+            diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(file ?? d.Name, 0, 0), $"`{d.Name}` has a mapped model, but {target} shows no table or view of that name.", Fix: "Delete the descriptor or restore the table. The tool never deletes it for you."));
+            rows.Add(new Row(d.Name, "unknown", file, "stale", [], null, d, null, null, null));
+        }
+        return (rows, skipped, diags, catalogNotes);
+    }
+
     private static Row Compare(string root, string connection, ImportedObject live, SourceDescriptor? committed, List<Diagnostic> diags)
     {
         var path = Path.Combine(root, live.File!);
@@ -203,12 +212,12 @@ internal static class ImportSourcesCommand
         return new Row(live.QualifiedName, kind, live.File, status, changes, live, descriptor, status is "new" or "changed" ? SourceDescriptorWriter.Yaml(descriptor) : null, oldText, hash);
     }
 
-    private static (string SchemaName, string Table)? Split(string name)
+    internal static (string SchemaName, string Table)? Split(string name)
     {
         var i = name.IndexOf('.');
         return i <= 0 || i == name.Length - 1 ? null : (name[..i], name[(i + 1)..]);
     }
 
-    private static Regex Glob(string pattern) =>
+    internal static Regex Glob(string pattern) =>
         new("^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 }

@@ -48,6 +48,12 @@ internal sealed class CommandReport
     internal IReadOnlyList<string> MessageLines { get { Output.Flush(); return ((CapturingWriter)Output).Lines; } }
     internal IReadOnlyList<string> ErrorLines { get { Error.Flush(); return ((CapturingWriter)Error).Lines; } }
 
+    /// <summary>Adds to a list a command has already put in `data` (or starts it): the files two steps of one command wrote.</summary>
+    internal void Append(string key, IEnumerable<string> items)
+    {
+        if (data.TryGetValue(key, out var existing) && existing is List<string> list) list.AddRange(items); else data[key] = items.ToList();
+    }
+
     internal void AddDiagnostic(Diagnostic d) => diagnostics.Add(d);
     internal void Set(string key, object? value) => data[key] = value;
     internal void AddNext(IEnumerable<string> commands) => next.AddRange(commands);
@@ -137,6 +143,12 @@ internal static class ReportExtensions
     {
         if (w is CommandReport.CapturingWriter c) c.Owner.AddDiagnostic(d);
         else w.Write(DiagnosticFormatter.Format(d));
+    }
+
+    /// <summary>Adds items to a list in the JSON document's `data` that another step may have started. Ignored in text mode.</summary>
+    public static void PayloadAppend(this TextWriter w, string key, IEnumerable<string> items)
+    {
+        if (w is CommandReport.CapturingWriter c) c.Owner.Append(key, items);
     }
 
     /// <summary>Adds a named part to the JSON document's `data`. Ignored in text mode.</summary>

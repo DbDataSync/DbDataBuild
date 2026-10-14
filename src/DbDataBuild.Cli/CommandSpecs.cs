@@ -65,7 +65,7 @@ public static class CommandSpecs
     [
         new("project create", EffectClass.RepoFilesOnly, "List the project templates built in, or create a ready-to-run project from one", true, "", "P⇒P"),
         new("project model create", EffectClass.RepoFilesOnly, "Create a model to start from: a definition and a placeholder query that runs, in the project's layout (a view, a full table, or an incremental one)", true, "", "P⇒P"),
-        new("project model update", EffectClass.RepoFilesOnly, "Generate or update model definition files", true, "", "P⇒P"),
+        new("project model update", EffectClass.TargetReadOnly, "Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing", true, "", "C→P"),
         new("project compile", EffectClass.RepoFilesOnly, "Validate the project and write what is compiled from it (rendered/): the lowered queries and the load scripts per connection", true, "", "P⇒P"),
         new("project tests run", EffectClass.OfflineOnly, "Run the project's tests: metadata rules (DuckDB SQL over the metadata views) in tests/metadata/ and model tests (given rows, expected rows) in tests/models/", true, "", "P→"),
         new("project tests list", EffectClass.OfflineOnly, "List the project's tests with their kind, severity and tags (nothing is run)", true, "", "P→"),
