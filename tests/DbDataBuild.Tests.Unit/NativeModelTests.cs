@@ -162,9 +162,12 @@ public class NativeModelTests
         var source = metadata["sources"]!.AsArray().Single()!;
         Assert.Equal("src.a", (string?)source["name"]);
         Assert.Equal("models/src/a.yml", (string?)source["file"]);
-        Assert.Equal("select", (string?)source["native"]!["access"]);
-        Assert.Equal(["marts.stock"], source["native"]!["reads"]!.AsArray().Select(r => (string?)r));
-        Assert.Matches("^[0-9a-f]{64}$", (string?)source["native"]!["text_hash"]);
+        Assert.Equal("native", (string?)source["kind"]);
+        Assert.Equal("dbdatabuild.source/2", (string?)source["schema"]);
+        Assert.Null(source["native"]);
+        Assert.Equal("select", (string?)source["kind_settings"]!["access"]);
+        Assert.Equal(["marts.stock"], source["kind_settings"]!["reads"]!.AsArray().Select(r => (string?)r));
+        Assert.Matches("^[0-9a-f]{64}$", (string?)source["kind_settings"]!["text_hash"]);
         Assert.Contains(metadata["models"]!.AsArray(), m => (string?)m!["name"] == "marts.top");
 
         var hash = (string?)source["definition_hash"];

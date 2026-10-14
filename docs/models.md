@@ -62,6 +62,8 @@ The kind names are closed: `view`, `full`, `incremental_by_unique_key`, `increme
 
 `view`, `full` and `mapped` take no settings. Settings that belong to the model rather than to its kind are outside `kind`: `columns`, `grain`, `indexes`, `connections`, `loads`, `refresh`, `hooks`, `renames`, `title`, `description`, `tags`, `properties`. A native model also has `reads`, `parameters` and `track_definition` outside `kind`.
 
+**In the metadata** all seven are the same sort of thing: each has a document whose `kind` is the model kind as a plain string and whose settings (`kind_settings`) sit beside it, and the stored table `metadata_current` has the model kind in `model_kind` for every one of them (`view`, `full`, `incremental_by_unique_key`, `incremental_by_time_range`, `copy`, `mapped`, `native`). The documents of the first five are `dbdatabuild.model/2`; those of `mapped` and `native` are `dbdatabuild.source/2` (a document without a query or loads), and their subject kind in `metadata_current.kind` is `source`. In the dependency rows (`metadata_dependency.depends_on_kind`, the view `metadata_upstream.upstream_kind`) a thing a query reads is `model` (the first five), `mapped` or `native`. A rule that said `upstream_kind = 'source'` now says `'mapped'`.
+
 ## The seven in more detail
 
 ### `view`

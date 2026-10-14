@@ -19,7 +19,7 @@ internal static class MetadataBuilder
 {
     public const string ModelSchema = "dbdatabuild.model/2";
     public const string ProjectSchema = "dbdatabuild.project/1";
-    public const string SourceSchema = "dbdatabuild.source/1";
+    public const string SourceSchema = "dbdatabuild.source/2";
 
     private static readonly JsonSerializerOptions Compact = new(CommandReport.Json) { WriteIndented = false };
 
@@ -57,7 +57,8 @@ internal static class MetadataBuilder
                 name = d.Name,
                 file = SourceFile(d),
                 definition_hash = DefinitionHash(d),
-                native = NativeJson(d),
+                kind = d.Kind,
+                native = d.Native == null ? null : KindSettings(d),
             }).ToList(),
             models = ctx.Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).Select(s => new
             {
@@ -85,17 +86,17 @@ internal static class MetadataBuilder
         _ => new { },
     };
 
-    /// <summary>The kind of a table name in the project: model, native, source (a mapped model) or unknown.</summary>
+    /// <summary>The kind of a table name in the project: model (view, full, incremental or copy), native, mapped or unknown.</summary>
     private static Func<string, string> KindLookup(ProjectContext ctx)
     {
         var models = ctx.Project.Sources.Select(m => m.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var natives = ctx.Project.NativeModels.Select(n => n.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var sources = ctx.Project.AllDescriptors.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? "source" : "unknown";
+        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? SourceDescriptorLoader.MappedKind : "unknown";
     }
 
     /// <summary>
-    /// What a model's query reads, with the kind of each (model, native, source, unknown) and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the query could not be
+    /// What a model's query reads, with the kind of each (model, native, mapped, unknown) and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the query could not be
     /// read and calls no macro, so the document says nothing rather than something wrong.
     /// </summary>
     public static List<(string Name, string Kind)>? UpstreamOf(ProjectContext ctx, ModelSource source, string sql, bool analysed, Func<string, string>? kindOf = null)
@@ -183,8 +184,8 @@ internal static class MetadataBuilder
     /// <summary>A native model's text is part of what it is, so a change to it changes the hash.</summary>
     private static string DefinitionHash(SourceDescriptor d) => Hashing.ScriptHash(SourceDescriptorWriter.Yaml(d, withInfo: false) + (d.Native == null ? "" : "\n" + d.Native.Access + "\n" + d.Native.Text));
 
-    /// <summary>What makes a source native, or null for a mapped one: how it is run, where, the hash of its text (the text itself is in the file), and the tables it says it reads.</summary>
-    private static object? NativeJson(SourceDescriptor d) => d.Native == null ? null : new
+    /// <summary>The settings of a mapped or native model's kind, as a model's are: empty for a mapped model; for a native one how it is run, where, the hash of its text (the text itself is in the file), and the tables it says it reads.</summary>
+    public static object KindSettings(SourceDescriptor d) => d.Native == null ? new { } : new
     {
         access = d.Native.Access,
         connections = d.Connections ?? [],
@@ -199,7 +200,8 @@ internal static class MetadataBuilder
         title = d.Info.Title, description = d.Info.Description, tags = d.Info.TagsForDocument, properties = d.Info.PropertiesForDocument,
         file = SourceFile(d),
         definition_hash = DefinitionHash(d),
-        native = NativeJson(d),
+        kind = d.Kind,
+        kind_settings = KindSettings(d),
         grain = d.Grain,
         columns = d.Columns.Select(c => new { name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation }).ToList(),
         indexes = d.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),

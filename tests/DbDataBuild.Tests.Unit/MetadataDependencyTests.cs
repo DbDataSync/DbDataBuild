@@ -15,14 +15,14 @@ public class MetadataDependencyTests
     {
         var rows = MetadataDependencies.Closure(
         [
-            ("m.c", "m.b", "model"), ("m.c", "s.x", "source"), ("m.b", "m.a", "model"), ("m.a", "s.x", "source"), ("m.a", "n.f", "native"), ("n.f", "s.y", "source"),
+            ("m.c", "m.b", "model"), ("m.c", "s.x", "mapped"), ("m.b", "m.a", "model"), ("m.a", "s.x", "mapped"), ("m.a", "n.f", "native"), ("n.f", "s.y", "mapped"),
             ("m.d", "mac", "macro"), ("m.d", "ghost", "unknown"), ("m.cy", "m.cy2", "model"), ("m.cy2", "m.cy", "model"),
         ]);
         string Of(string subject) => string.Join(";", rows.Where(r => r.Subject == subject).Select(r => $"{r.DependsOn}|{r.DependsOnKind}|{r.Depth}"));
-        Assert.Equal("m.b|model|1;s.x|source|1;m.a|model|2;n.f|native|3;s.y|source|4", Of("m.c"));           // s.x is direct, so depth 1, not 3
+        Assert.Equal("m.b|model|1;s.x|mapped|1;m.a|model|2;n.f|native|3;s.y|mapped|4", Of("m.c"));           // s.x is direct, so depth 1, not 3
         Assert.Equal("ghost|unknown|1;mac|macro|1", Of("m.d"));
         Assert.Equal("m.cy2|model|1", Of("m.cy"));                                                            // a cycle ends where it started
-        Assert.Equal("s.y|source|1", Of("n.f"));
+        Assert.Equal("s.y|mapped|1", Of("n.f"));
     }
 
     private static string Project()
@@ -47,9 +47,9 @@ public class MetadataDependencyTests
         var rows = MetadataBuilder.Dependencies(ctx).Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
         Assert.Equal(
         [
-            "marts.v1>staging.ext|native|1", "marts.v1>staging.t|source|2",
-            "marts.v2>marts.v1|model|1", "marts.v2>staging.ext|native|2", "marts.v2>staging.t|source|1",
-            "staging.ext>staging.t|source|1",
+            "marts.v1>staging.ext|native|1", "marts.v1>staging.t|mapped|2",
+            "marts.v2>marts.v1|model|1", "marts.v2>staging.ext|native|2", "marts.v2>staging.t|mapped|1",
+            "staging.ext>staging.t|mapped|1",
         ], rows);
     }
 
@@ -59,7 +59,21 @@ public class MetadataDependencyTests
         var ctx = ProjectContext.Load(Project());
         var docs = MetadataPublisher.Collect(ctx, null, null);
         Assert.Equal("full", MetadataDependencies.ModelKindOf("model", docs.Single(d => d.Subject == "marts.v2").Json));
-        Assert.Null(MetadataDependencies.ModelKindOf("source", docs.First(d => d.Kind == "source").Json));
+        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("source", docs.Single(d => d.Subject == "staging.t").Json));
+        Assert.Equal("native", MetadataDependencies.ModelKindOf("source", docs.Single(d => d.Subject == "staging.ext").Json));
+        Assert.Contains("\"kind\":\"native\"", docs.Single(d => d.Subject == "staging.ext").Json);
+        using (var ext = System.Text.Json.JsonDocument.Parse(docs.Single(d => d.Subject == "staging.ext").Json))
+        {
+            Assert.Equal("dbdatabuild.source/2", ext.RootElement.GetProperty("schema").GetString());
+            Assert.False(ext.RootElement.TryGetProperty("native", out _));                                                           // the native model's settings are kind_settings, as a model's are
+            Assert.Equal("select", ext.RootElement.GetProperty("kind_settings").GetProperty("access").GetString());
+            Assert.Equal(["staging.t"], ext.RootElement.GetProperty("kind_settings").GetProperty("reads").EnumerateArray().Select(r => r.GetString()));
+        }
+        Assert.Contains("\"kind\":\"mapped\"", docs.Single(d => d.Subject == "staging.t").Json);
+        Assert.Contains("\"kind_settings\":{}", docs.Single(d => d.Subject == "staging.t").Json);
+        Assert.Equal("native", MetadataDependencies.ModelKindOf("source", "{\"schema\":\"dbdatabuild.source/1\",\"native\":{\"access\":\"select\"}}"));     // a document of the first version has no kind
+        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("source", "{\"schema\":\"dbdatabuild.source/1\"}"));
+        Assert.Null(MetadataDependencies.ModelKindOf("project", "{}"));
         Assert.Contains("\"kind\":\"view\"", docs.Single(d => d.Subject == "marts.v1").Json);
         Assert.Contains("\"kind_settings\":{}", docs.Single(d => d.Subject == "marts.v1").Json);
         var fromProject = MetadataBuilder.Dependencies(ctx).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
@@ -68,8 +82,12 @@ public class MetadataDependencyTests
         using var db = MetadataDatabase.Open(docs.Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
         var run = db.Run("SELECT m.model, m.kind FROM metadata_models m ORDER BY m.model", 10);
         Assert.Equal(["marts.v1|view", "marts.v2|full"], run.Rows.Select(r => $"{r["model"]}|{r["kind"]}"));
+        var kinds = db.Run("SELECT subject, model_kind FROM metadata_current WHERE model_kind IS NOT NULL ORDER BY subject", 10);
+        Assert.Equal(["marts.v1|view", "marts.v2|full", "staging.ext|native", "staging.t|mapped"], kinds.Rows.Select(r => $"{r["subject"]}|{r["model_kind"]}"));      // no model has a null kind
+        var sources = db.Run("SELECT source, kind, native_access, native_reads FROM metadata_sources ORDER BY source", 10);
+        Assert.Equal(["staging.ext|native|select", "staging.t|mapped|"], sources.Rows.Select(r => $"{r["source"]}|{r["kind"]}|{r["native_access"]}"));
         var up = db.Run("SELECT upstream, upstream_kind FROM metadata_upstream WHERE model = 'marts.v2' ORDER BY upstream", 10);
-        Assert.Equal(["marts.v1|model", "staging.t|source"], up.Rows.Select(r => $"{r["upstream"]}|{r["upstream_kind"]}"));
+        Assert.Equal(["marts.v1|model", "staging.t|mapped"], up.Rows.Select(r => $"{r["upstream"]}|{r["upstream_kind"]}"));
         var anc = db.Run("SELECT ancestor, depth FROM metadata_ancestors WHERE model = 'marts.v2' ORDER BY depth, ancestor", 10);
         Assert.Equal(["marts.v1|1", "staging.t|1", "staging.ext|2"], anc.Rows.Select(r => $"{r["ancestor"]}|{r["depth"]}"));
         Assert.Equal(1, db.Run("SELECT * FROM metadata_current WHERE model_kind = 'full'", 5).Count);

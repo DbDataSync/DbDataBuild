@@ -133,7 +133,7 @@ public class MacroTests
         var metadata = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!["models"]!.AsArray();
         var upstream = metadata.Single(m => (string?)m!["name"] == "marts.snap_totals")!["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["kind"]}");
         Assert.Contains("status_totals():macro", upstream);
-        Assert.Contains("src.orders_snap:source", upstream);
+        Assert.Contains("src.orders_snap:mapped", upstream);
     }
 
     [Fact]

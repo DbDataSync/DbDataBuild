@@ -390,7 +390,7 @@ async function modelsView(name, tab) {
 }
 
 function sourceDetail(s) {
-  return h("div", { class: "panel" }, h("h2", null, s.name, " ", badge("source", "")), h("pre", null, JSON.stringify(s, null, 2)));
+  return h("div", { class: "panel" }, h("h2", null, s.name, " ", badge(s.kind || "source", "")), h("pre", null, JSON.stringify(s, null, 2)));
 }
 
 async function modelDetail(root, m, tab) {

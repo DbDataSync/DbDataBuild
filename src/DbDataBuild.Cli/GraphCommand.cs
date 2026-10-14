@@ -41,7 +41,7 @@ internal static class GraphCommand
         {
             name = n, kind = KindOf(n), level = levels.GetValueOrDefault(n),
             file = byName.TryGetValue(n, out var m) ? m.QueryFile : natives.TryGetValue(n, out var nd) ? MetadataBuilder.SourceFile(nd) : macroNodes.TryGetValue(n, out var md) ? md.File : sources.TryGetValue(n, out var sd) ? MetadataBuilder.SourceFile(sd) : null,
-            model_kind = byName.TryGetValue(n, out var mk) ? mk.Definition.Kind : null,
+            model_kind = byName.TryGetValue(n, out var mk) ? mk.Definition.Kind : natives.TryGetValue(n, out var nk) ? nk.Kind : sources.TryGetValue(n, out var mp) ? mp.Kind : null,
             connections = byName.TryGetValue(n, out var mt) ? ctx.TargetsOf(mt.Definition) : (IReadOnlyList<string>)[],
         }).ToList();
         var edges = chosen.Concat(direct.Where(n => natives.ContainsKey(n) || macroNodes.ContainsKey(n))).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal).SelectMany(n => graph.Reads(n).Select(r => (From: r, To: n))).ToList();

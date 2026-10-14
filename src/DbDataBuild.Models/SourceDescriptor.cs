@@ -18,6 +18,9 @@ public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinitio
     /// <summary>True for a **native** model: its rows are computed by a query the engine runs (a table function, an engine-native select), not read from a table. Bound by queries like any table, from its declared columns.</summary>
     public bool IsNative => Native != null;
 
+    /// <summary>The model kind of this descriptor, the word the metadata documents and tables carry: `mapped` or `native`.</summary>
+    public string Kind => IsNative ? NativeQuery.Kind : SourceDescriptorLoader.MappedKind;
+
     /// <summary>The definition file this descriptor was read from (project-relative; empty for one the tool generates). A model's name is not its path, so the file is kept.</summary>
     public string File { get; init; } = "";
 

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace DbDataBuild.Core;
 
-/// <summary>One row of the tracking table `metadata_dependency` (and of the in-memory table of the same name): <paramref name="Subject"/> depends on <paramref name="DependsOn"/>, a thing of kind <paramref name="DependsOnKind"/> (model, source, native, macro or unknown), <paramref name="Depth"/> steps away: 1 is a direct edge, more is the transitive closure.</summary>
+/// <summary>One row of the tracking table `metadata_dependency` (and of the in-memory table of the same name): <paramref name="Subject"/> depends on <paramref name="DependsOn"/>, a thing of kind <paramref name="DependsOnKind"/> (model, mapped, native, macro or unknown), <paramref name="Depth"/> steps away: 1 is a direct edge, more is the transitive closure.</summary>
 public sealed record DependencyRow(string Subject, string DependsOn, string DependsOnKind, int Depth);
 
 /// <summary>
@@ -53,10 +53,7 @@ public static class MetadataDependencies
         var list = documents.ToList();
         var kinds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (kind, subject, json) in list.Where(d => d.Kind is "model" or "source"))
-        {
-            using var doc = JsonDocument.Parse(json);
-            kinds[subject] = kind == "model" ? "model" : doc.RootElement.TryGetProperty("native", out var n) && n.ValueKind == JsonValueKind.Object ? "native" : "source";
-        }
+            kinds[subject] = kind == "model" ? "model" : ModelKindOf(kind, json) ?? "mapped";
         var direct = new List<(string, string, string)>();
         foreach (var (kind, subject, json) in list)
         {
@@ -65,18 +62,23 @@ public static class MetadataDependencies
             if (kind == "model" && root.TryGetProperty("upstream", out var upstream) && upstream.ValueKind == JsonValueKind.Array)
                 foreach (var u in upstream.EnumerateArray())
                     direct.Add((subject, u.GetProperty("name").GetString()!, u.GetProperty("kind").GetString()!));
-            else if (kind == "source" && root.TryGetProperty("native", out var native) && native.ValueKind == JsonValueKind.Object && native.TryGetProperty("reads", out var reads) && reads.ValueKind == JsonValueKind.Array)
+            else if (kind == "source" && root.TryGetProperty("kind_settings", out var settings) && settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty("reads", out var reads) && reads.ValueKind == JsonValueKind.Array)
                 foreach (var r in reads.EnumerateArray().Select(r => r.GetString()!))
                     direct.Add((subject, r, kinds.GetValueOrDefault(r, "unknown")));
         }
         return Closure(direct);
     }
 
-    /// <summary>The model kind of a model document (the `model_kind` column of the stored documents), or null for any other kind of document.</summary>
+    /// <summary>
+    /// The model kind of a model or source document (the `model_kind` column of the stored documents): `view`, `full`, ... for a model document, `mapped` or `native` for a source document; null for any other kind of document. A source
+    /// document of the first version (no `kind`) is told by its `native` object.
+    /// </summary>
     public static string? ModelKindOf(string documentKind, string json)
     {
-        if (documentKind != "model") return null;
+        if (documentKind is not ("model" or "source")) return null;
         using var doc = JsonDocument.Parse(json);
-        return doc.RootElement.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() : null;
+        var root = doc.RootElement;
+        if (root.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String) return k.GetString();
+        return documentKind == "source" ? root.TryGetProperty("native", out var n) && n.ValueKind == JsonValueKind.Object ? "native" : "mapped" : null;
     }
 }

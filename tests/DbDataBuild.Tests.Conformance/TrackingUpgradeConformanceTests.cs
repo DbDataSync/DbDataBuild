@@ -302,9 +302,9 @@ public class TrackingUpgradeConformanceTests
             // a publish writes the kind beside each model document and the dependencies as rows, direct and through others
             var published = Cli("connection", "publish", name);
             Assert.True(published.Exit == 0, published.Out + published.Err);
-            Assert.Equal(["marts.v2|view", "staging.v1|view"], (await engine.RowsAsync($"SELECT {Q("subject")} + '|' + {Q("model_kind")} FROM {Q(schema)}.{Q("metadata_current")} WHERE {Q("model_kind")} IS NOT NULL ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "))));
+            Assert.Equal(["marts.v2|view", "src.t|mapped", "staging.v1|view"], (await engine.RowsAsync($"SELECT {Q("subject")} + '|' + {Q("model_kind")} FROM {Q(schema)}.{Q("metadata_current")} WHERE {Q("model_kind")} IS NOT NULL ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "))));
             var rows = await engine.RowsAsync($"SELECT {Q("subject")} + '>' + {Q("depends_on")} + '|' + {Q("depends_on_kind")} + '|' + CAST({Q("depth")} AS VARCHAR(5)) FROM {Q(schema)}.{Q("metadata_dependency")} ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "));
-            Assert.Equal(["marts.v2>src.t|source|2", "marts.v2>staging.v1|model|1", "staging.v1>src.t|source|1"], rows);
+            Assert.Equal(["marts.v2>src.t|mapped|2", "marts.v2>staging.v1|model|1", "staging.v1>src.t|mapped|1"], rows);
             var again = Cli("connection", "publish", name);
             Assert.Contains("dependencies of 0 model(s) written", again.Out);                                   // nothing changed, nothing is written
         }

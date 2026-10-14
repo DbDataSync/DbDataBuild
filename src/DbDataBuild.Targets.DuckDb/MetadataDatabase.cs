@@ -43,9 +43,9 @@ SELECT m.subject AS model, m.model_kind AS kind, m.document->'kind_settings' AS 
 FROM metadata_current m WHERE m.kind = 'model';
 
 CREATE VIEW metadata_sources AS
-SELECT m.subject AS source, CAST(m.document->'grain' AS VARCHAR[]) AS grain, m.document->>'file' AS file, m.document->>'definition_hash' AS definition_hash,
+SELECT m.subject AS source, m.model_kind AS kind, CAST(m.document->'grain' AS VARCHAR[]) AS grain, m.document->>'file' AS file, m.document->>'definition_hash' AS definition_hash,
   CAST(m.document->'consumers' AS VARCHAR[]) AS consumers, json_array_length(m.document->'columns') AS column_count,
-  m.document->'native'->>'access' AS native_access, CAST(m.document->'native'->'reads' AS VARCHAR[]) AS native_reads,
+  m.document->'kind_settings' AS kind_settings, m.document->'kind_settings'->>'access' AS native_access, CAST(m.document->'kind_settings'->'reads' AS VARCHAR[]) AS native_reads,
   m.document->>'title' AS title, m.document->>'description' AS description, CAST(m.document->'tags' AS VARCHAR[]) AS tags
 FROM metadata_current m WHERE m.kind = 'source';
 

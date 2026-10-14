@@ -114,7 +114,7 @@ public class ProjectTestsTests
         Assert.Equal(new[] { "staging.orders|order_id|BIGINT|False|source", "marts.fct_orders|order_id|BIGINT|False|model" }.Order(), Rows("SELECT model, column_name, logical_type, nullable, kind FROM metadata_columns WHERE column_name = 'order_id'").Order());
         Assert.Equal(["marts.fct_orders|incremental_by_unique_key|[order_id]|[order_id]|[sqlserver]|3"], Rows("SELECT model, kind, unique_key, grain, connections, column_count FROM metadata_models"));
         Assert.Equal(["staging.orders|[order_id]|[marts.fct_orders]|3"], Rows("SELECT source, grain, consumers, column_count FROM metadata_sources"));
-        Assert.Equal(["marts.fct_orders|staging.orders|source"], Rows("SELECT model, upstream, upstream_kind FROM metadata_upstream"));
+        Assert.Equal(["marts.fct_orders|staging.orders|mapped"], Rows("SELECT model, upstream, upstream_kind FROM metadata_upstream"));
         Assert.Equal(["staging.orders|IX_orders_amount|[amount]|False|[note]"], Rows("SELECT source, index_name, columns, is_unique, include FROM metadata_source_indexes"));
         Assert.Equal(["staging.orders|FK_orders_self|[order_id]|staging.orders|[order_id]"], Rows("SELECT source, foreign_key_name, columns, referenced_table, referenced_columns FROM metadata_source_foreign_keys"));
         Assert.Equal(["marts.fct_orders|note2|expression|staging.orders|note"], Rows("SELECT model, column_name, transform, upstream_table, upstream_column FROM metadata_lineage WHERE column_name = 'note2'"));

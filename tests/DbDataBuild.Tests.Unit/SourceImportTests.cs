@@ -270,14 +270,16 @@ public class SourceImportTests
 
         var source = doc["data"]!["sources"]!.AsArray().Single()!;
         Assert.True(Valid(source), source.ToJsonString());
-        Assert.Equal("dbdatabuild.source/1", (string?)source["schema"]);
+        Assert.Equal("dbdatabuild.source/2", (string?)source["schema"]);
+        Assert.Equal("mapped", (string?)source["kind"]);
+        Assert.Empty(source["kind_settings"]!.AsObject());
         Assert.Equal("staging.orders", (string?)source["name"]);
         Assert.Equal("models/staging/orders.yml", (string?)source["file"]);
         Assert.Equal(["marts.fct_orders"], source["consumers"]!.AsArray().Select(x => (string)x!));
         Assert.Equal(["order_id"], source["grain"]!.AsArray().Select(x => (string)x!));
         Assert.Equal("staging.orders", (string?)doc["data"]!["project"]!["sources"]![0]!["name"]);
         var broken = JsonNode.Parse(source.ToJsonString())!;
-        broken["schema"] = "dbdatabuild.source/2";
+        broken["schema"] = "dbdatabuild.source/3";
         Assert.False(Valid(broken));
     }
 

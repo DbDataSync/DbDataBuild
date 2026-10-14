@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:dbdatabuild:schemas:metadata",
   "title": "DbDataBuild metadata documents",
-  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/1`), one per source table the project reads but does not build (`dbdatabuild.source/1`), and one per model (`dbdatabuild.model/2`: version 1 had `kind` as an object with a `type` inside; in version 2 `kind` is the model kind as a plain string and its settings are `kind_settings`). The same documents are printed by `validate` and `metadata` with `--format json`, and stored in the target's tracking tables (`publish-metadata`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
+  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/1`), one per source table the project reads but does not build (`dbdatabuild.source/2`), and one per model (`dbdatabuild.model/2`: version 1 had `kind` as an object with a `type` inside; in version 2 `kind` is the model kind as a plain string and its settings are `kind_settings`). The same documents are printed by `validate` and `metadata` with `--format json`, and stored in the target's tracking tables (`publish-metadata`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
   "oneOf": [
     {
       "$ref": "#/$defs/project"
@@ -252,6 +252,12 @@
               "definition_hash": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
+              },
+              "kind": {
+                "enum": [
+                  "mapped",
+                  "native"
+                ]
               },
               "native": {
                 "type": "object",
@@ -713,7 +719,7 @@
           "type": "string"
         },
         "kind": {
-          "description": "The model kind, as a plain string: the model kinds that have a model document. A mapped model and a native model have a source document, which has no kind. The settings of the kind are in `kind_settings`.",
+          "description": "The model kind, as a plain string: the model kinds that have a model document. A mapped model and a native model have a source document (`dbdatabuild.source/2`), whose `kind` is `mapped` or `native`. The settings of the kind are in `kind_settings`.",
           "enum": [
             "view",
             "full",
@@ -801,7 +807,7 @@
               "kind": {
                 "enum": [
                   "model",
-                  "source",
+                  "mapped",
                   "native",
                   "macro",
                   "unknown"
@@ -1038,7 +1044,7 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "dbdatabuild.source/1"
+          "const": "dbdatabuild.source/2"
         },
         "name": {
           "type": "string"
@@ -1049,6 +1055,42 @@
         "definition_hash": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "kind": {
+          "description": "The model kind, as a plain string, in the same words as a model document's `kind`: `mapped` (a table that exists and is not built) or `native` (a table the engine computes from its own text). The settings of the kind are in `kind_settings`.",
+          "enum": [
+            "mapped",
+            "native"
+          ]
+        },
+        "kind_settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "access": {
+              "enum": [
+                "select",
+                "command"
+              ]
+            },
+            "connections": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "text_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "reads": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The settings of the kind, as a model's `kind_settings`: an empty object for a mapped model; for a native model how it is run (`access`), where (`connections`), the hash of its text and the tables it says it reads."
         },
         "grain": {
           "type": "array",
@@ -1212,40 +1254,6 @@
           },
           "description": "Models whose query reads this table, across the whole project."
         },
-        "native": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "access": {
-              "enum": [
-                "select",
-                "command"
-              ]
-            },
-            "connections": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "text_hash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "reads": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "access",
-            "connections",
-            "text_hash",
-            "reads"
-          ]
-        },
         "title": {
           "type": "string"
         },
@@ -1280,7 +1288,9 @@
         "columns",
         "indexes",
         "foreign_keys",
-        "consumers"
+        "consumers",
+        "kind",
+        "kind_settings"
       ]
     }
   }

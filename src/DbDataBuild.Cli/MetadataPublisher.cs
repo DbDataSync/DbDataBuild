@@ -43,7 +43,7 @@ internal static class MetadataPublisher
         IReadOnlyDictionary<string, IReadOnlyList<string>>? sourceConsumers = null;
         foreach (var s in ctx.Project.Sources.Where(s => wanted == null || wanted.Contains(s.Definition.Name)).OrderBy(s => s.Definition.Name, StringComparer.Ordinal))
             docs.Add(Make("model", s.Definition.Name, MetadataBuilder.Model(ctx, s, s.ReadQuery(ctx.Root, ctx.Config))));
-        foreach (var d in ctx.Project.Descriptors.OrderBy(d => d.Name, StringComparer.Ordinal))
+        foreach (var d in ctx.Project.FileDescriptors.OrderBy(d => d.Name, StringComparer.Ordinal))      // mapped and native models alike (a native model had no stored document until entry 165)
         {
             // computed once for the whole project, so a source's document is the same whichever models are published
             sourceConsumers ??= MetadataBuilder.Consumers(ctx);

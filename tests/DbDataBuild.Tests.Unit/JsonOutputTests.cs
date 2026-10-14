@@ -101,7 +101,7 @@ public class JsonOutputTests
         Assert.Equal("decimal(14, 2)", amount["native"]!["sqlserver"]!["type"]!.GetValue<string>());
         Assert.Null(amount["native"]!["postgres"]);                         // only the model's own targets are described
         Assert.Equal("staging.orders", model["upstream"]![0]!["name"]!.GetValue<string>());
-        Assert.Equal("source", model["upstream"]![0]!["kind"]!.GetValue<string>());
+        Assert.Equal("mapped", model["upstream"]![0]!["kind"]!.GetValue<string>());
         Assert.Equal("ix_amount", model["indexes"]![0]!["name"]!.GetValue<string>());
         Assert.Matches("^[0-9a-f]{64}$", model["expected_shape_hash"]!["sqlserver"]!.GetValue<string>());
         Assert.Equal("delete_insert_by_key", model["loads"]![0]!["strategy"]!.GetValue<string>());
