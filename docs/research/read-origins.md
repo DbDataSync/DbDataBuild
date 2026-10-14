@@ -1,6 +1,6 @@
 # Read-only origins: ODBC, Arrow Flight SQL, DuckDB and configurable dialects
 
-Status: steps 1 to 4 are built (entries 157 to 160; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Step 5 is not (Flight SQL's metadata calls were done in step 4). Written from the code as of entry 156.
+Status: steps 1 to 6 are built (entries 157 to 162; DESIGN.md 9.4.2 and 9.4.3 are the as-built text, OPEN-ITEMS section V what is left). Written from the code as of entry 156.
 
 ## 1. The goal
 
@@ -175,7 +175,11 @@ What was built is what section 4 says, with these facts the build settled:
 
 Pushing a model's query down to an origin (the origin runs a DuckDB-dialect query lowered for it): out of scope, as "no DuckDB in the middle" and native queries already decided. Writing to any of these. A catalog of every ODBC driver's quirks: a profile per system is the user's.
 
-## 10. Step 6, planned and not built: the dialect from the server
+## 10a. As built, step 6 (the dialect from the server, entry 162)
+
+Built as section 10 proposed, with the owner's decisions of 2026-10-14: the command is `project update` (not `connection inspect --adopt-dialect`), the file is `dialects.lock.yml`, and the proxy was read for the ids it sends. The facts the tool reads are the standard ids 0, 1, 3, 503, 504 and 505; the proxy sends them per data source but no dialect name, so the **product name** picks the dialect (a table of fragments in `DialectDiscovery`, or a name from `dialects:` that the product spells), and a product the tool does not know is `ansi` with the reported quote character (a dialect name the tool does not know is `ansi` with the facts, not an error: the person adds a profile named after the product, or names the dialect in `engine`). Plans and `loads.yml` carry `dialect` and `dialect_hash`; the refresh's and the deploy's origin check compare the hash and fail the origin (DDB-460). DESIGN.md 9.4.3 has the details.
+
+## 10. Step 6 as it was planned (kept for the reasoning; built, see 10a)
 
 Today `engine: readonly flightsql` with no dialect keyword is `ansi`, and a person names the dialect of the system behind a proxy by hand. The proxy can report enough for the tool to choose.
 
