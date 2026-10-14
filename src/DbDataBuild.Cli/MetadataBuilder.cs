@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DbDataBuild.Core;
+using DbDataBuild.Planning;
 using DbDataBuild.Define;
 using DbDataBuild.Models;
 using DbDataBuild.Sql.Analysis;
@@ -109,7 +110,8 @@ internal static class MetadataBuilder
 
     /// <summary>
     /// The dependency rows of the whole project (DESIGN.md 12, `metadata_dependency`): each model with what its query reads, each native model with what it says it reads, and the transitive closure of both. Computed from the
-    /// project and not from the documents, so publishing some of the models still gives each of them its whole ancestry.
+    /// project and not from the documents, so publishing some of the models still gives each of them its whole ancestry. `project compile` calls this too and keeps, in each `loads.yml`, the rows between the models that
+    /// file loads (<see cref="LoadDependencies"/>): there is no second computation, so what a refresh orders by and what is published cannot differ.
     /// </summary>
     public static IReadOnlyList<DependencyRow> Dependencies(ProjectContext ctx)
     {
@@ -117,14 +119,25 @@ internal static class MetadataBuilder
         var direct = new List<(string, string, string)>();
         foreach (var m in ctx.Project.Sources)
         {
-            var sql = m.ReadQuery(ctx.Root, ctx.Config);
-            var analysed = AnalyzeAgainstUpstream(ctx, m.Definition.Name, ctx.AnalysisSql(m, sql)).Facts != null;
-            foreach (var (name, kind) in UpstreamOf(ctx, m, sql, analysed, kindOf) ?? []) direct.Add((m.Definition.Name, name, kind));
+            // a model that names something by a parameter reads other tables on connections that give other names: every variant of its query counts (as in the dependency graph selectors and a refresh use)
+            foreach (var sql in ctx.QueryVariants(m))
+            {
+                var analysed = AnalyzeAgainstUpstream(ctx, m.Definition.Name, ctx.AnalysisSql(m, sql)).Facts != null;
+                foreach (var (name, kind) in UpstreamOf(ctx, m, sql, analysed, kindOf) ?? []) direct.Add((m.Definition.Name, name, kind));
+            }
         }
         foreach (var n in ctx.Project.NativeModels)
             foreach (var read in n.Native?.Reads ?? []) direct.Add((n.Name, read, kindOf(read)));
         return MetadataDependencies.Closure(direct);
     }
+
+    /// <summary>
+    /// The rows of <see cref="Dependencies"/> that run between two models a loads file loads, with the model kind of each side: the dependency graph `loads.yml` carries. Same order as the rows (subject, then depth, then name).
+    /// </summary>
+    /// <param name="loaded">The models of the loads file, with the model kind of each.</param>
+    public static IReadOnlyList<LoadDependency> LoadDependencies(IReadOnlyList<DependencyRow> rows, IReadOnlyDictionary<string, string> loaded) =>
+        rows.Where(r => loaded.ContainsKey(r.Subject) && loaded.ContainsKey(r.DependsOn))
+            .Select(r => new LoadDependency(r.Subject, loaded[r.Subject], r.DependsOn, loaded[r.DependsOn], r.Depth)).ToList();
 
     private static object HookJson(HookDefinition h) => h.IsReference
         ? new { use = h.Use }

@@ -104,6 +104,36 @@ public partial class ApplyConformanceTests
             Assert.Equal(2, run.Cli("connection", "refresh", name, "par", "--parallel", "0").Exit);
             Assert.Equal(2, run.Cli("connection", "refresh", name, "par", "--parallel", "65").Exit);
 
+            // the scheduler reads the graph from loads.yml, not from the project: with every model file gone after compile the run still goes 3 at a time, with the same result
+            var modelsDir = Path.Combine(run.Dir, "models"); var parked = modelsDir + ".parked";
+            Directory.Move(modelsDir, parked);
+            try
+            {
+                var noProject = run.Cli("connection", "refresh", name, "par", "--parallel", "3", "--format", "json");
+                Ok(noProject, "parallel 3 without the project");
+                var noProjectDoc = JsonNode.Parse(noProject.Out)!["data"]!;
+                Assert.Equal(3, (int)noProjectDoc["parallel_effective"]!);
+                Assert.Equal(Shape(oneDoc), Shape(noProjectDoc));
+            }
+            finally { Directory.Move(parked, modelsDir); }
+            // a loads file compiled before the graph was carried: one load at a time, and the output says so
+            var loadsPath = Path.Combine(run.Dir, "rendered", name, "loads.yml");
+            var withGraph = File.ReadAllText(loadsPath);
+            var loadsFile = DbDataBuild.Planning.LoadsDocument.Parse(withGraph, loadsPath, []);
+            Assert.NotNull(loadsFile?.Dependencies);
+            File.WriteAllText(loadsPath, DbDataBuild.Planning.LoadsDocument.Serialize(loadsFile! with { Dependencies = null }));
+            try
+            {
+                var oldFile = run.Cli("connection", "refresh", name, "par", "--parallel", "3", "--format", "json");
+                Ok(oldFile, "parallel 3 with a loads file that has no graph");
+                var oldDoc = JsonNode.Parse(oldFile.Out)!["data"]!;
+                Assert.Equal(3, (int)oldDoc["parallel"]!);
+                Assert.Equal(1, (int)oldDoc["parallel_effective"]!);
+                Assert.Contains("the loads file has no dependency graph", oldDoc["warnings"]!.ToJsonString());
+                Assert.Equal(Shape(oneDoc), Shape(oldDoc));
+            }
+            finally { File.WriteAllText(loadsPath, withGraph); }
+
             // max_parallel on the connection caps the destination: asked for 3, the loads go one at a time
             run.Write("dbdatabuild.yml", File.ReadAllText(Path.Combine(run.Dir, "dbdatabuild.yml")) + $"connections:\n  {name}: {{ max_parallel: 1 }}\n");
             clock.Restart();

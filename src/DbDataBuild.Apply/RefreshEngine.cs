@@ -55,7 +55,7 @@ public sealed record PreparedLoad(IReadOnlyList<PlanStep> Steps, string InputsJs
 /// <summary>Makes a load ready: resolves its inputs against the connection (read-only) at the moment its turn comes, so a load sees what the loads before it wrote.</summary>
 public delegate Task<PreparedLoad> PrepareLoad(RefreshUnit unit, ReadSession read, CancellationToken ct);
 
-/// <summary>The loads of a refresh in dependency order, how to make each ready, and the models downstream of a model (loaded only when something fails or is skipped, since the compiled files do not carry the project graph).</summary>
+/// <summary>The loads of a refresh in dependency order, how to make each ready, and the models downstream of a model (from the dependency graph in `loads.yml`; a file compiled before the graph was carried reads the project, only when something fails or is skipped).</summary>
 public sealed record RefreshExecution(IReadOnlyList<RefreshUnit> Units, PrepareLoad Prepare, Func<string, IReadOnlySet<string>> DownstreamOf);
 
 /// <summary>A load of a refresh and how it ended. <see cref="Note"/> is set on a load that ran although something upstream of it was skipped because it was busy.</summary>
@@ -148,7 +148,7 @@ internal static class RefreshEngine
             return new LoadOutcome(unit, status, null, null, detail, null);
         }
 
-        // what a load waits for. One at a time: the load before it. Together: the loads that it reads (the project graph, read when this is asked), and an earlier load of the same model, since a model's loads
+        // what a load waits for. One at a time: the load before it. Together: the loads that it reads (the graph in `loads.yml`), and an earlier load of the same model, since a model's loads
         // exclude each other through its lock
         IReadOnlyList<int> Dependencies(int i)
         {
