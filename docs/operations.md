@@ -12,7 +12,7 @@ For the people who run `dbdatabuild` against a real database: what it needs, wha
 
 ## 2. Connections and logins
 
-A **connection** is a named database endpoint: an engine (`sqlserver`, `postgres`, `fabric`; or, for a system the tool only reads, `readonly duckdb`, `readonly odbc`) and optionally its version, declared under `connections:` in `dbdatabuild.yml`. A connection named after an engine (`sqlserver`) exists without being declared. Two servers of one engine are two connections (`warehouse_new`, `warehouse_old`), each with its own login and its own version, so each gets the rewrites its engine version needs.
+A **connection** is a named database endpoint: an engine (`sqlserver`, `postgres`, `fabric`; or, for a system the tool only reads, `readonly duckdb`, `readonly odbc`, `readonly flightsql`) and optionally its version, declared under `connections:` in `dbdatabuild.yml`. A connection named after an engine (`sqlserver`) exists without being declared. Two servers of one engine are two connections (`warehouse_new`, `warehouse_old`), each with its own login and its own version, so each gets the rewrites its engine version needs.
 
 Connection strings come from environment variables, never from files in the repository, one pair per connection (the name in capitals):
 
@@ -29,6 +29,24 @@ Connection strings come from environment variables, never from files in the repo
 * **macOS.** `brew install unixodbc`, then the vendor's driver (`brew install psqlodbc`); `odbcinst -j` shows the files. The tool loads the manager's library (`libodbc.2.dylib`); if it is not found, put the directory Homebrew installed it in on `DYLD_LIBRARY_PATH`. (Not tried on macOS.)
 * **Windows.** The driver manager is part of Windows. Install the vendor's driver (for 64-bit tool, the 64-bit driver; "ODBC Data Sources (64-bit)" lists them) and use its name in `Driver={...}` or a DSN defined there.
 * The driver decides the rest: transactions and snapshots (a copy reads what the origin gives a SELECT; nothing is held across the tables of a run), the types it reports, and its own options. The account's rights are the real guarantee that nothing is written.
+
+**Flight SQL setup.** `engine: readonly flightsql [dialect]` reads an Arrow Flight SQL server (the owner's query proxy, Dremio, a DuckDB or SQLite Flight SQL server, ...). The tool ships its client; nothing else is installed. The read login `DBDATABUILD_<NAME>_READ` is a URI with options separated by `;`, written like an ODBC connection string (a value in braces `{...}` may hold `;` and `=`, `}}` is a `}`):
+
+```
+grpc+tls://proxy.example.com:31337;token=eyJ...                       # a bearer token
+grpc+tls://proxy.example.com:31337;user=reader;password={p;w}         # user and password: the server's basic handshake trades them for a bearer token
+grpc://127.0.0.1:31337                                                # no credentials, no TLS
+grpc+tls://proxy.example.com:31337;token_env=PROXY_TOKEN              # the token is in this environment variable
+grpc+tls://proxy.example.com:31337;token_command={az account get-access-token --resource api://proxy --query accessToken -o tsv}
+```
+
+* Schemes: `grpc` and `grpc+tcp` (no TLS), `grpc+tls`. The port is required. No path, query or user in the URI.
+* At most one way to sign in: `token`, `token_env`, `token_command`, or `user` with `password`. None means the server is called without credentials. Other options: `tls_skip_verify=true` (no certificate check; TLS only), `ca_file=/path/ca.pem` (trust this authority instead of the machine's; the certificate must carry the host name used in the URI), `header.<name>=<value>` (a header sent with every call, for a proxy that routes on one).
+* **Entra ID / OIDC.** The tool does not run an interactive login or an OIDC flow. Get the token outside the tool and give it to the tool one of three ways: `token=` (a token you obtained), `token_env=` (the name of an environment variable that holds it), or `token_command=` (a program the tool runs each time it connects, which must print the token alone and exit 0; it is started directly, not through a shell, with a 60 second limit; on Windows name an executable, or `cmd /c ...` for a `.cmd`). `az account get-access-token ... -o tsv` and `kubectl`/`gcloud` style commands fit. A token that expires during a long copy is not renewed until the next connection.
+* The dialect is `ansi` unless one is named: positional `?` parameters, `"` quoting, `SELECT 1` as the ping. A proxy whose SQL differs gets a profile under `dialects:` (`engine: readonly flightsql proxy_sql`). A statement with parameters is **prepared** and its values are bound as typed Arrow values in the order the plan gives (a placeholder used twice is passed twice). A server that binds every parameter as text (voltrondata/sqlflite does) cannot compare a typed column with a bound watermark: cast in a native query (`CAST(${project.since} AS DATE)`).
+* The catalog (`project import`, the structure check of a copy, `connection inspect`) is read with the server's Flight SQL metadata calls first (schemas, tables with their Arrow schemas, primary keys, imported keys), then through `information_schema` as the dialect says; with `catalog: none`, or on a server that offers neither, the tool says so plainly and the tables are declared by hand. An Arrow schema may mark every column nullable, so the structure check of a Flight SQL origin does not hold a declared NOT NULL against it.
+* The command timeout is the call's gRPC deadline (30 seconds by default for catalog and resolver queries; a copy's read has none). Only endpoints on the same connection are read (a server that redirects to other hosts is not followed). `max_parallel` limits sessions as for any origin.
+* Nothing of the value is printed: the header shows `host:port` and the kind of sign-in, a failure is named by gRPC status (`the Flight SQL server could not be reached`, `refused the credentials`, `the TLS handshake ... failed`, `did not answer in time`) and never repeats the server's text. A copy whose origin fails ends `failed: origin`.
 
 There is no fallback from one login to the other, or from one connection to another: a missing variable is an error that names it. Every command prints which variable and which user it used (never the password). Use two separate accounts; the read account should not be able to write at all.
 

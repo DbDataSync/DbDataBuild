@@ -1,6 +1,6 @@
 # Read-only origins: ODBC, Arrow Flight SQL, DuckDB and configurable dialects
 
-Status: steps 1 to 3 are built (entries 157, 158 and 159; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Steps 4 and 5 are not. Written from the code as of entry 156.
+Status: steps 1 to 4 are built (entries 157 to 160; DESIGN.md 9.4.2 is the as-built text, OPEN-ITEMS section V what is left). Step 5 is not (Flight SQL's metadata calls were done in step 4). Written from the code as of entry 156.
 
 ## 1. The goal
 
@@ -152,6 +152,13 @@ What was built is what section 4 says, with these facts the build settled:
 * **Missing prerequisites**: `DriverFailure` (Execution) names a missing driver manager (`DllNotFoundException`) and a missing or unloadable driver (SQLSTATE `IM002`, `IM003`, unixODBC's `01000` "Can't open lib", `IM004`, `IM010`, `IM012`, `IM014`) in a sentence of ours; any other failure is the exception type and the SQLSTATE. It is used by `connection inspect`, the check of the origin before a copy's transfer and a refresh (so the copy ends `failed: origin`), a session that cannot be opened and the resolvers.
 * **psqlodbc hands a boolean over as text** unless `BoolsAsChar=0` is in the connection string; the copy reads `t`/`f` (and `true`/`false`, `1`/`0`, `y`/`n`) as well, so the default driver setting works.
 * **Tested against** PostgreSQL 17 through psqlodbc 16 and unixODBC 2.3.12 into SQL Server and PostgreSQL. No second driver and no Windows or macOS driver manager was tried.
+
+## 8b. As built, step 4 (the Flight SQL origin, entry 160)
+
+* **Client**: `Apache.Arrow.Flight.Sql` 23.0.0. Evaluated: the ADBC Flight SQL driver (`Apache.Arrow.Adbc.Drivers.FlightSql` 0.21.0) is a managed wrapper over `Apache.Arrow.Flight` (22.1) with the ADBC layer on top; it adds nothing the tool needs (the tool has its own row reader) and trails the Flight packages. Both are managed, so the single-file self-contained publish is unaffected. Its prepared-statement class and its metadata and timeout members have faults (see DESIGN.md 9.4.2), so the protocol messages are used directly where it matters.
+* **Login**: a URI with options (`grpc+tls://host:port;token=...`, `;user=..;password=..`, `token_env`, `token_command`, `ca_file`, `tls_skip_verify`, `header.<name>`), documented in operations.md ("Flight SQL setup").
+* **Entra ID / OIDC**: no flow is built. A token obtained outside the tool is used through `token`, `token_env` or `token_command`; the rest is in OPEN-ITEMS V.
+* **Tested against** voltrondata/sqlflite (C++ Flight SQL server, DuckDB, plain and TLS, JWT after the basic handshake) and an in-process server (DuckDB, typed parameters, no metadata calls). sqlflite binds every parameter as text.
 
 ## 9. Not covered
 
