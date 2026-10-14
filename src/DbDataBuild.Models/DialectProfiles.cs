@@ -92,20 +92,16 @@ public static class DialectProfiles
         ["binary large object"] = "BLOB", ["blob"] = "BLOB", ["uuid"] = "UUID",
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
-    private static readonly IReadOnlyDictionary<string, string> None = new Dictionary<string, string>();
-
-    // sqlserver, postgres and fabric read their own catalogs with their own code (CatalogReader); their types are the ones SourceTypes knows, so `Types` is empty for them
-    public static readonly DialectProfile SqlServer = new("sqlserver", "[", "]", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Top, None);
-    public static readonly DialectProfile Fabric = SqlServer with { Name = "fabric" };
-    public static readonly DialectProfile Postgres = new("postgres", "\"", "\"", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Lower, LimitStyle.Limit, None);
-    public static readonly DialectProfile DuckDb = new("duckdb", "\"", "\"", ParameterStyle.Positional, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Limit, None);
-    public static readonly DialectProfile Ansi = new("ansi", "\"", "\"", ParameterStyle.Positional, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Fetch, AnsiTypes);
-
-    // The names an engine's own types go by when a catalog is read through a driver (ODBC's TYPE_NAME, Flight SQL's information_schema): on top of the standard ones, for a built-in engine dialect used with `odbc` or `flightsql`.
+    // The names an engine's own types go by when its catalog is read through a driver of its own (ODBC's TYPE_NAME, a Flight SQL server's information_schema): on top of the standard ones, for a built-in engine dialect used
+    // with `odbc` or `flightsql` (`readonly flightsql postgres`) and for a project's profile that extends one. The three engines and DuckDB read their own catalogs with their own code and do not use these.
     private static readonly IReadOnlyDictionary<string, string> SqlServerExtraTypes = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["tinyint"] = "SMALLINT", ["bit"] = "BOOLEAN", ["nvarchar"] = "VARCHAR", ["nchar"] = "VARCHAR", ["ntext"] = "VARCHAR", ["datetime"] = "TIMESTAMP", ["datetime2"] = "TIMESTAMP", ["smalldatetime"] = "TIMESTAMP",
         ["datetimeoffset"] = "TIMESTAMP WITH TIME ZONE", ["uniqueidentifier"] = "UUID", ["varbinary"] = "BLOB", ["binary"] = "BLOB", ["image"] = "BLOB",
+    };
+    private static readonly IReadOnlyDictionary<string, string> DuckDbExtraTypes = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["double"] = "DOUBLE", ["float"] = "FLOAT", ["tinyint"] = "SMALLINT", ["timestamptz"] = "TIMESTAMP WITH TIME ZONE", ["timestamp_s"] = "TIMESTAMP", ["timestamp_ms"] = "TIMESTAMP",
     };
     private static readonly IReadOnlyDictionary<string, string> PostgresExtraTypes = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -113,20 +109,23 @@ public static class DialectProfiles
         ["bytea"] = "BLOB", ["timetz"] = "TIME", ["time with time zone"] = "TIME",
     };
 
+    private static IReadOnlyDictionary<string, string> OnTopOfAnsi(IReadOnlyDictionary<string, string> own) =>
+        AnsiTypes.Concat(own).GroupBy(kv => kv.Key).ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.Ordinal).ToFrozenDictionary(StringComparer.Ordinal);
+
+    // sqlserver, postgres and fabric read their own catalogs with their own code (CatalogReader), whose types are the ones SourceTypes knows; `Types` is for a driver of another kind that names one of these dialects
+    public static readonly DialectProfile SqlServer = new("sqlserver", "[", "]", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Top, OnTopOfAnsi(SqlServerExtraTypes));
+    public static readonly DialectProfile Fabric = SqlServer with { Name = "fabric" };
+    public static readonly DialectProfile Postgres = new("postgres", "\"", "\"", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Lower, LimitStyle.Limit, OnTopOfAnsi(PostgresExtraTypes));
+    public static readonly DialectProfile DuckDb = new("duckdb", "\"", "\"", ParameterStyle.Positional, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Limit, OnTopOfAnsi(DuckDbExtraTypes));
+    public static readonly DialectProfile Ansi = new("ansi", "\"", "\"", ParameterStyle.Positional, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Fetch, AnsiTypes);
+
     /// <summary>
-    /// The profile a connection of this driver really uses. `odbc` and `flightsql` bind their parameters by position and read their catalog by standard names, so a built-in engine dialect used with one of them
-    /// (`readonly flightsql postgres`: the system behind a proxy is PostgreSQL) keeps its quoting, limit style, case and ping but takes `?` for parameters and the standard type names plus its own; a project's profile
-    /// that says `named_at` is read the same way, because nothing on those drivers could bind it. Any other driver's profile is as written.
+    /// The profile a connection of this driver really uses. `odbc` and `flightsql` bind their parameters by position, so a built-in engine dialect used with one of them (`readonly flightsql postgres`: the system behind
+    /// a proxy is PostgreSQL) keeps its quoting, limit style, case and ping but takes `?` for parameters; a project's profile that extends one and says `named_at` is read the same way, because nothing on those drivers could
+    /// bind it. Any other driver's profile is as written.
     /// </summary>
-    public static DialectProfile ForDriver(string driver, DialectProfile profile)
-    {
-        if (driver is not ("odbc" or "flightsql")) return profile;
-        var types = profile.Types;
-        if (profile.Name is "postgres" or "sqlserver" or "fabric" && profile.Types.Count == 0)
-            types = AnsiTypes.Concat(profile.Name == "postgres" ? PostgresExtraTypes : SqlServerExtraTypes).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
-        var parameters = profile.Parameters == ParameterStyle.NamedAt ? ParameterStyle.Positional : profile.Parameters;
-        return parameters == profile.Parameters && ReferenceEquals(types, profile.Types) ? profile : profile with { Parameters = parameters, Types = types };
-    }
+    public static DialectProfile ForDriver(string driver, DialectProfile profile) =>
+        driver is "odbc" or "flightsql" && profile.Parameters == ParameterStyle.NamedAt ? profile with { Parameters = ParameterStyle.Positional } : profile;
 
     public static readonly IReadOnlyDictionary<string, DialectProfile> BuiltIn = new Dictionary<string, DialectProfile>(StringComparer.Ordinal)
     {

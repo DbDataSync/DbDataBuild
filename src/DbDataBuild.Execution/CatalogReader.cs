@@ -148,6 +148,22 @@ WHERE t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW')";
         { throw CatalogUnavailableException.FlightSqlWithoutCatalog(read.Dialect.Name); }
     }
 
+    /// <summary>
+    /// One table or view of an origin by the name a declaration spells it. The name is first looked up as written; if there is no such object and the origin is an ODBC or Flight SQL one, as the dialect's
+    /// `identifier_case` says an unquoted name becomes (<see cref="Models.DialectProfile.Fold"/>). <c>StoredAs</c> is the catalog's own spelling (`SRC.ITEMS`) when only the folded name was there, else null; a null
+    /// shape means no such object under either spelling.
+    /// </summary>
+    public static async Task<(ObjectShape? Shape, string? StoredAs)> FindAsync(ReadSession read, string target, string schema, string name, CancellationToken ct = default)
+    {
+        var exact = await ReadObjectsAsync(read, target, schema, ct);
+        if (exact.TryGetValue($"{schema}.{name}", out var found)) return (found, null);
+        if (target is not ("odbc" or "flightsql")) return (null, null);
+        var (foldedSchema, foldedName) = (read.Dialect.Fold(schema), read.Dialect.Fold(name));
+        if (foldedSchema == schema && foldedName == name) return (null, null);
+        var folded = await ReadObjectsAsync(read, target, foldedSchema, ct);
+        return folded.TryGetValue($"{foldedSchema}.{foldedName}", out var stored) ? (stored, $"{foldedSchema}.{foldedName}") : (null, null);
+    }
+
     // `catalog: odbc`: the tables and columns the driver's own catalog functions (SQLTables, SQLColumns) report, for a system with no information_schema
     private static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadOdbcObjectsAsync(ReadSession read, string schema, string? objectName, CancellationToken ct)
     {

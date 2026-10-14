@@ -354,6 +354,51 @@ public class OriginCatalogTests
         Assert.Equal("Orders", DialectProfiles.Ansi.Fold("Orders"));
     }
 
+    /// <summary>A catalog that matches a schema name the way Oracle does: exactly, and it stores unquoted names in upper case.</summary>
+    private sealed class UpperCaseCatalog : IRowSource
+    {
+        public List<string> Asked { get; } = [];
+        public Task<IRowReader> ExecuteAsync(string sql, IReadOnlyList<GateParameter> parameters, int? timeoutSeconds, bool streaming, CancellationToken ct)
+        {
+            Asked.Add((string)parameters[0].Value!);
+            IReadOnlyList<IReadOnlyList<object?>> rows = Equals(parameters[0].Value, "SRC") ? [new object?[] { "ITEMS", "BASE TABLE", 1, "ID", "bigint", null, 64, 0, "NO" }] : [];
+            return Task.FromResult<IRowReader>(new Reader(rows));
+        }
+        public Task<IRowReader> ExecuteCommandAsync(string text, IReadOnlyList<GateParameter> parameters, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct) => Task.FromResult<IReadOnlyList<ColumnShape>?>(null);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private sealed class Reader(IReadOnlyList<IReadOnlyList<object?>> rows) : IRowReader
+        {
+            private int at = -1;
+            public IReadOnlyList<string> Names => Enumerable.Range(0, 9).Select(i => "c" + i).ToList();
+            public Task<bool> ReadAsync(CancellationToken ct) => Task.FromResult(++at < rows.Count);
+            public ValueTask<object?> ValueAsync(int column, CancellationToken ct) => ValueTask.FromResult(rows[at][column]);
+            public void Cancel() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task A_declared_name_is_looked_up_as_written_and_then_as_the_dialect_folds_an_unquoted_one()
+    {
+        var upper = DialectProfiles.Build("shouting", DialectProfiles.Ansi, "ansi", null, null, null, null, "upper", null, null).Profile!;
+        var source = new UpperCaseCatalog();
+        await using var session = ReadSession.ForTesting(source, "odbc", upper);
+        var (shape, storedAs) = await CatalogReader.FindAsync(session, "odbc", "src", "items");
+        Assert.Equal("SRC.ITEMS", storedAs);
+        Assert.Equal("ITEMS", shape!.Name);
+        Assert.Equal(["src", "SRC"], source.Asked);                                         // as written first: a quoted mixed-case name keeps working
+
+        var (same, none) = await CatalogReader.FindAsync(session, "odbc", "SRC", "ITEMS");
+        Assert.Null(none);                                                                  // spelled as stored: no remark
+        Assert.NotNull(same);
+
+        // a dialect that preserves case does not look twice
+        await using var plain = ReadSession.ForTesting(new UpperCaseCatalog(), "odbc");
+        Assert.Null((await CatalogReader.FindAsync(plain, "odbc", "src", "items")).Shape);
+    }
+
     [Fact]
     public void The_gate_names_the_native_odbc_catalog_file_and_it_executes_no_statement()
     {
