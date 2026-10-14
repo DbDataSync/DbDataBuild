@@ -29,7 +29,7 @@ internal static class DiffCommand
         else right = (againstSchema ?? left.SchemaName, left.Name);
 
         var ctx = ProjectContext.Load(root);
-        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
+        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error, readOnlyOk: true);
         if (connection == null) return CliApp.ExitUsage;
         var target = connection.Name; var engine = connection.Engine;
         var otherConnection = connection;
@@ -54,8 +54,8 @@ internal static class DiffCommand
             else { error.WriteLine($"{qualified} has no grain or unique key in the project, so there is nothing to match rows on. Give the columns with --key a,b."); return CliApp.ExitUsage; }
         }
 
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
-        var (otherLogin, otherMissing) = across ? LoginSettings.FromEnvironment(otherConnection.Name, otherConnection.Engine, Login.Read, env) : (login, null);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
+        var (otherLogin, otherMissing) = across ? LoginSettings.FromEnvironment(otherConnection, Login.Read, env) : (login, null);
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}{(across ? $" against {otherConnection.Name}" : "")}  |  login: {login?.Describe() ?? "none"}{(across ? $", {otherLogin?.Describe() ?? "none"}" : "")}  |  values: {(showValues ? "shown (requested)" : "not read")}");
         if (missing != null) { error.Diag(missing); return CliApp.ExitFindings; }
         if (otherMissing != null) { error.Diag(otherMissing); return CliApp.ExitFindings; }

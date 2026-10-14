@@ -6,7 +6,7 @@ namespace DbDataBuild.Models;
 /// <summary>Loads <c>dbdatabuild.yml</c> with the strict YAML rules. Keys that are absent take the built-in default; nothing is inferred.</summary>
 public static class ProjectConfigLoader
 {
-    private static readonly string[] TopKeys = ["defaults", "parameters", "connections", "tracking", "string_semantics", "policy", "hook_groups", "metadata", "lowering", "lint", "rewrites", "model_layout", "tests", "plans", "refresh", "retention", "timezone", .. YamlFieldReader.InfoKeys];
+    private static readonly string[] TopKeys = ["defaults", "parameters", "connections", "tracking", "string_semantics", "policy", "hook_groups", "dialects", "metadata", "lowering", "lint", "rewrites", "model_layout", "tests", "plans", "refresh", "retention", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] SemanticsKeys = ["case", "accent", "trailing_space", "collations"];
     private static readonly string[] ConnectionKeys = ["engine", "version", "parameters", "tracking", "allow_native_commands", "max_parallel", "string_semantics", "plans", "refresh", "timezone", .. YamlFieldReader.InfoKeys];
     private static readonly string[] CollationEngines = ["duckdb", "sqlserver", "fabric", "postgres"];
@@ -37,6 +37,22 @@ public static class ProjectConfigLoader
     {
         private readonly Dictionary<string, int> lines = [];
 
+        /// <summary>The connections whose `engine` says `readonly`, found before the connections are read in full (a tracking setting may name a connection declared further down).</summary>
+        private IReadOnlySet<string> readOnlyConnections = new HashSet<string>();
+
+        private static HashSet<string> ReadOnlyNames(YamlMapping top)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            if (top.Get("connections") is not YamlMapping all) return names;
+            foreach (var e in all.Entries)
+            {
+                if (e.Value is not YamlMapping m || m.Get("engine") is not { } en) continue;
+                var words = en is YamlScalar s ? ConnectionKeywords.Words(s.Value) : en is YamlSequence q ? q.Items.OfType<YamlScalar>().SelectMany(i => ConnectionKeywords.Words(i.Value)).ToList() : [];
+                if (words.Contains(ConnectionKeywords.ReadOnlyKeyword)) names.Add(e.Key.Value);
+            }
+            return names;
+        }
+
         public ProjectConfig? Read(YamlNode root)
         {
             if (root is not YamlMapping top)
@@ -46,14 +62,98 @@ public static class ProjectConfigLoader
             }
             CheckKeys(top, TopKeys, "the configuration");
             var d = ProjectConfig.Default;
+            readOnlyConnections = ReadOnlyNames(top);
 
-            var connections = ReadConnections(top);
+            var dialects = ReadDialects(top);
+            var connections = ReadConnections(top, dialects);
             var (declared, defaults) = ReadDefaults(top, connections.Keys.ToHashSet(StringComparer.Ordinal));
             IReadOnlyList<string> targets = declared ?? d.DefaultConnections;
             var tracking = ReadTracking(top, connections.Keys.ToHashSet(StringComparer.Ordinal)) ?? d.Tracking;
             var semantics = ReadSemantics(top, d.StringSemantics);
             var policy = ReadPolicy(top, d.Policy);
-            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), RefreshPlans = ReadRefreshPlans(top), Timezone = ReadTimezone(top, "`timezone`"), DeclaredInfo = ReadInfo(top) };
+            return new ProjectConfig(targets, connections, tracking, semantics, policy, lines, ReadHookGroups(top, connections.Keys.ToHashSet(StringComparer.Ordinal)), ReadMetadata(top), ReadLowering(top), ReadLint(top, "indexes"), ReadLint(top, "slices"), ReadRewrites(top)) { Defaults = defaults, Parameters = ReadParameters(top, "`parameters`") ?? new Dictionary<string, ParameterValue>(), Layout = ReadLayout(top), TestGateTags = ReadTestGate(top), Lifecycle = ReadLifecycle(top), RefreshPlans = ReadRefreshPlans(top), Timezone = ReadTimezone(top, "`timezone`"), DeclaredInfo = ReadInfo(top), Dialects = dialects };
+        }
+
+        // ---- dialects ----
+
+        private static readonly string[] DialectKeys = ["extends", "quote", "parameters", "ping", "catalog", "identifier_case", "limit", "types"];
+
+        /// <summary>
+        /// `dialects:` maps names to profiles (docs/research/read-origins.md section 5): what an origin needs to know about the SQL it takes. A profile starts from what it `extends` (a built-in or another profile of the
+        /// project; `ansi` when it says nothing) and changes the fields it names. A name may not be a keyword of `engine`, so the classes cannot collide.
+        /// </summary>
+        private Dictionary<string, DialectProfile> ReadDialects(YamlMapping top)
+        {
+            var result = new Dictionary<string, DialectProfile>(StringComparer.Ordinal);
+            if (top.Get("dialects") is not { } node) return result;
+            if (node is not YamlMapping all) { Add(DiagnosticCatalog.DialectProfileInvalid, node, "`dialects` must map dialect names to profiles."); return result; }
+            var declared = all.Entries.GroupBy(e => e.Key.Value, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            var resolving = new HashSet<string>(StringComparer.Ordinal);
+            var failed = new HashSet<string>(StringComparer.Ordinal);
+
+            DialectProfile? Resolve(string name)
+            {
+                if (result.TryGetValue(name, out var done)) return done;
+                if (failed.Contains(name)) return null;
+                if (!declared.TryGetValue(name, out var entry)) return DialectProfiles.BuiltIn.GetValueOrDefault(name);
+                if (!resolving.Add(name)) { Add(DiagnosticCatalog.DialectProfileInvalid, entry.Key, $"The dialect `{name}` extends itself, directly or through others."); failed.Add(name); return null; }
+                try
+                {
+                    var profile = Build(entry);
+                    if (profile != null) result[name] = profile; else failed.Add(name);
+                    return profile;
+                }
+                finally { resolving.Remove(name); }
+            }
+
+            DialectProfile? Build(YamlEntry entry)
+            {
+                var name = entry.Key.Value;
+                var where = $"`dialects.{name}`";
+                if (ConnectionKeywords.Reserved.Contains(name)) { Add(DiagnosticCatalog.DialectProfileInvalid, entry.Key, $"{where}: `{name}` is a keyword of `engine` and cannot name a dialect.", $"Reserved: {string.Join(", ", ConnectionKeywords.Reserved)}."); return null; }
+                if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^[a-z][a-z0-9_]*$")) { Add(DiagnosticCatalog.DialectProfileInvalid, entry.Key, $"{where}: `{name}` is not a valid dialect name.", "Lower-case letters, digits and underscores, starting with a letter."); return null; }
+                if (entry.Value is not YamlMapping settings) { Add(DiagnosticCatalog.DialectProfileInvalid, entry.Value, $"{where} must be a mapping (for example `{{ extends: ansi, quote: '`' }}`)."); return null; }
+                CheckKeys(settings, DialectKeys, where);
+                string? Text(string key)
+                {
+                    if (settings.Get(key) is not { } n) return null;
+                    if (n is YamlScalar { Value.Length: > 0 } sc) return sc.Value;
+                    Add(DiagnosticCatalog.DialectProfileInvalid, n, $"{where}.{key} must be a non-empty string.");
+                    return null;
+                }
+                var extends = Text("extends");
+                var baseProfile = DialectProfiles.Ansi;
+                if (extends != null)
+                {
+                    var b = Resolve(extends);
+                    if (b == null)
+                    {
+                        if (!declared.ContainsKey(extends)) Add(DiagnosticCatalog.DialectProfileInvalid, settings.Get("extends")!, $"{where}.extends is `{extends}`, which is not a dialect.", $"Built in: {string.Join(", ", DialectProfiles.BuiltIn.Keys.Order(StringComparer.Ordinal))}; or another entry of `dialects:`.");
+                        return null;
+                    }
+                    baseProfile = b;
+                }
+                Dictionary<string, string>? types = null;
+                if (settings.Get("types") is { } tn)
+                {
+                    if (tn is not YamlMapping tm) Add(DiagnosticCatalog.DialectProfileInvalid, tn, $"{where}.types must map the catalog's type names to logical types (`int8: BIGINT`).");
+                    else
+                    {
+                        types = [];
+                        foreach (var te in tm.Entries)
+                        {
+                            if (te.Value is YamlScalar { Value.Length: > 0 } tv) types[te.Key.Value] = tv.Value;
+                            else Add(DiagnosticCatalog.DialectProfileInvalid, te.Value, $"{where}.types.{te.Key.Value} must be a logical type name.");
+                        }
+                    }
+                }
+                var (profile, problems) = DialectProfiles.Build(name, baseProfile, extends, Text("quote"), Text("parameters"), Text("ping"), Text("catalog"), Text("identifier_case"), Text("limit"), types);
+                foreach (var problem in problems) Add(DiagnosticCatalog.DialectProfileInvalid, entry.Key, $"{where}: {problem}");
+                return profile;
+            }
+
+            foreach (var e in all.Entries) Resolve(e.Key.Value);
+            return result;
         }
 
         // ---- plans, refresh, retention ----
@@ -314,7 +414,7 @@ public static class ProjectConfigLoader
         /// `connections:` maps names to `{ engine, version }`. A connection named after an engine needs no entry (and may only be declared with that engine, to set its version); any other name needs `engine`.
         /// Names become the environment variables of the logins (`DBDATABUILD_&lt;NAME&gt;_READ`), so they are letters, digits and underscores, and two names that differ only in case would share one.
         /// </summary>
-        private Dictionary<string, ConnectionConfig> ReadConnections(YamlMapping top)
+        private Dictionary<string, ConnectionConfig> ReadConnections(YamlMapping top, IReadOnlyDictionary<string, DialectProfile> dialects)
         {
             var result = new Dictionary<string, ConnectionConfig>(ConnectionConfig.Implicit, StringComparer.Ordinal);
             if (top.Get("connections") is not { } node) return result;
@@ -333,16 +433,22 @@ public static class ProjectConfigLoader
                 CheckKeys(settings, ConnectionKeys, $"`connections.{name}`");
                 var isEngineName = TargetNames.All.Contains(name);
                 string? engine = isEngineName ? name : null;
+                ConnectionKind? kind = null;
                 if (settings.Get("engine") is { } en)
                 {
-                    if (en is YamlScalar es && TargetNames.All.Contains(es.Value))
+                    var words = en is YamlScalar { Value.Length: > 0 } es ? ConnectionKeywords.Words(es.Value)
+                        : en is YamlSequence { Items.Count: > 0 } seq && seq.Items.All(i => i is YamlScalar { Value.Length: > 0 }) ? seq.Items.Cast<YamlScalar>().SelectMany(i => ConnectionKeywords.Words(i.Value)).ToList() : null;
+                    if (words == null) Add(DiagnosticCatalog.InvalidValue, en, "`engine` is a list of keywords: a string such as `readonly postgres`, or a YAML list.", EngineChoices(dialects));
+                    else
                     {
-                        if (isEngineName && es.Value != name) Add(DiagnosticCatalog.InvalidValue, en, $"The connection `{name}` is named after an engine, so its engine is `{name}`, not `{es.Value}`.", "Give the connection another name.");
-                        else engine = es.Value;
+                        var (parsed, problem, fix) = ConnectionKeywords.Parse(words, dialects.Keys.ToHashSet(StringComparer.Ordinal));
+                        if (parsed == null) Add(DiagnosticCatalog.InvalidValue, en, problem!, fix);
+                        else if (!ConnectionKeywords.IsBuilt(parsed.Driver)) Add(DiagnosticCatalog.InvalidValue, en, $"The driver `{parsed.Driver}` is listed but not built yet in this release.", $"Built: {string.Join(", ", ConnectionKeywords.Drivers.Where(ConnectionKeywords.IsBuilt))}.");
+                        else if (isEngineName && parsed.Driver != name) Add(DiagnosticCatalog.InvalidValue, en, $"The connection `{name}` is named after an engine, so its driver is `{name}`, not `{parsed.Driver}`.", "Give the connection another name.");
+                        else { engine = parsed.Driver; kind = parsed; }
                     }
-                    else Add(DiagnosticCatalog.InvalidValue, en, "`engine` is not one the tool knows.", $"One of: {string.Join(", ", TargetNames.All)}.");
                 }
-                else if (!isEngineName) Add(DiagnosticCatalog.MissingKey, e.Key, $"The connection `{name}` needs an `engine`.", $"One of: {string.Join(", ", TargetNames.All)}.");
+                else if (!isEngineName) Add(DiagnosticCatalog.MissingKey, e.Key, $"The connection `{name}` needs an `engine`.", EngineChoices(dialects));
                 int? version = null;
                 if (settings.Get("version") is { } v)
                 {
@@ -356,6 +462,7 @@ public static class ProjectConfigLoader
                 {
                     if (ac is YamlScalar { Value: "true" or "false" } acs) allowCommands = acs.Value == "true";
                     else Add(DiagnosticCatalog.InvalidValue, ac, "`allow_native_commands` is `true` or `false` (lowercase).");
+                    if (allowCommands && kind is { IsBuildTarget: false }) { Add(DiagnosticCatalog.InvalidValue, ac, $"`allow_native_commands` is for SQL Server and PostgreSQL connections; `{kind.Describe()}` is read with SELECTs only."); allowCommands = false; }
                 }
                 int? maxParallel = null;
                 if (settings.Get("max_parallel") is { } mp)
@@ -363,10 +470,13 @@ public static class ProjectConfigLoader
                     if (mp is YamlScalar mps && int.TryParse(mps.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap is >= 1 and <= 64) maxParallel = cap;
                     else Add(DiagnosticCatalog.InvalidValue, mp, $"`connections.{name}.max_parallel` must be a whole number from 1 to 64.");
                 }
-                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel };
+                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel, DeclaredKind = kind };
             }
             return result;
         }
+
+        private static string EngineChoices(IReadOnlyDictionary<string, DialectProfile> dialects) =>
+            $"Keywords of `engine`, in any order. Access: readonly. Driver: {string.Join(", ", ConnectionKeywords.Drivers)}. Dialect: {string.Join(", ", ConnectionKeywords.BuiltInDialects.Concat(dialects.Keys.Order(StringComparer.Ordinal)))}.";
 
         private static readonly System.Text.RegularExpressions.Regex Identifier = new("^[A-Za-z_][A-Za-z0-9_]*$");
 
@@ -386,7 +496,9 @@ public static class ProjectConfigLoader
             string? connection = null, schema = null;
             if (map.Get("connection") is { } c)
             {
-                if (c is YamlScalar { Value.Length: > 0 } cs && connections.Contains(cs.Value)) connection = cs.Value;
+                if (c is YamlScalar { Value.Length: > 0 } rs && readOnlyConnections.Contains(rs.Value))
+                    Add(DiagnosticCatalog.ReadOnlyConnectionNotWritable, c, $"{where}.connection is `{rs.Value}`, which is `readonly`: the tool never writes there, and tracking tables are written.", fix: "Name a connection that is not readonly, or use `tracking: none`.");
+                else if (c is YamlScalar { Value.Length: > 0 } cs && connections.Contains(cs.Value)) connection = cs.Value;
                 else Add(DiagnosticCatalog.InvalidValue, c, $"{where}.connection is not a connection of this project.", $"One of: {string.Join(", ", connections.Order(StringComparer.Ordinal))}.");
             }
             if (map.Get("schema") is { } s)

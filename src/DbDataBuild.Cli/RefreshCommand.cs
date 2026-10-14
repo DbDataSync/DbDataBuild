@@ -195,7 +195,7 @@ internal static class RefreshCommand
         var check = checkArg != null ? Enum.Parse<RefreshCheck>(checkArg, ignoreCase: true) : plan?.Settings.Check is { } pc && Enum.TryParse<RefreshCheck>(pc, ignoreCase: true, out var planCheck) ? planCheck : settings.Check;
         var onFail = onFailArg != null ? Enum.Parse<OnFail>(onFailArg, ignoreCase: true) : plan?.Settings.OnFail is { } pf && Enum.TryParse<OnFail>(pf, ignoreCase: true, out var planOnFail) ? planOnFail : settings.OnFail;
         output.WriteLine(Header(planName) + $"  |  check: {LifecycleSettings.Name(check)}");
-        var (read, readMissing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        var (read, readMissing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
         if (readMissing != null) { error.Diag(readMissing); output.WriteLine("Nothing was executed."); return CliApp.ExitFindings; }
         var tracking = config.TrackingOf(connection.Name);
         LoginSettings? trackingRead = null;
@@ -554,7 +554,7 @@ internal static class RefreshCommand
                 var o = copy.Origins[at];
                 var spec = s.Transfer!;
                 if (copy.Watermark is { } mark && bounds.GetValueOrDefault(o.Connection) is { } bound && o.ReadWithWatermark != null)
-                    spec = spec with { ReadText = o.ReadWithWatermark, Watermark = new PlanWatermark(mark.Column, mark.Type, bound) };
+                    spec = spec with { ReadText = o.ReadWithWatermark, Watermark = new PlanWatermark(mark.Column, mark.Type, bound), ParameterOrder = o.ParameterOrder };
                 prepared.Add(s with { Transfer = spec });
             }
             else if (s.Type == StepType.Load) prepared.Add(s with { Parameters = outcomes[at].Parameters!, ResolverResult = outcomes[at].ResolverResult });
@@ -636,7 +636,7 @@ internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> 
     public async Task<ReadSession> OpenAsync(string name, CancellationToken ct)
     {
         if (!Config.Connections.TryGetValue(name, out var connection)) throw new InvalidOperationException($"no connection {name}");
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, Env);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, Env);
         if (login == null) throw new GateRefusedException(missing!);
         return await (Limits ?? SessionLimits.None).OpenAsync(name, () => ReadSession.OpenAsync(login, ct), ct);
     }

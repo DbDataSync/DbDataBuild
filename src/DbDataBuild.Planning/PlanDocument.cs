@@ -99,6 +99,11 @@ public static class PlanDocument
                 sb.Append("      staging: ").AppendLineLf(Q(t.Staging));
                 sb.Append("      read: ").AppendLineLf(Q(t.ReadText));
                 if (t.Command) sb.AppendLineLf("      command: true");
+                if (t.ParameterOrder is { Count: > 0 })
+                {
+                    sb.AppendLineLf("      parameter_order:");
+                    foreach (var name in t.ParameterOrder) sb.Append("        - ").AppendLineLf(Q(name));
+                }
                 if (t.Parameters is { Count: > 0 })
                 {
                     sb.AppendLineLf("      parameters:");
@@ -239,7 +244,7 @@ public static class PlanDocument
                 TransferSpec? transfer = null;
                 if (m.Get("transfer") is YamlMapping tm)
                 {
-                    Keys(tm, ["origin", "staging", "read", "columns", "slice", "watermark", "parameters", "command"], "a transfer");
+                    Keys(tm, ["origin", "staging", "read", "columns", "slice", "watermark", "parameters", "command", "parameter_order"], "a transfer");
                     var columns = new List<PlanColumn>();
                     foreach (var cn in (tm.Get("columns") as YamlSequence)?.Items ?? [])
                         if (cn is YamlMapping cm) { Keys(cm, ["name", "type"], "a transfer column"); columns.Add(new(Req(cm, "name"), Req(cm, "type"))); }
@@ -252,7 +257,8 @@ public static class PlanDocument
                     foreach (var pn in (tm.Get("parameters") as YamlSequence)?.Items ?? [])
                         if (pn is YamlMapping pm) { Keys(pm, ["name", "type", "value"], "a transfer parameter"); tparams.Add(new(Req(pm, "name"), Req(pm, "type"), "parameter", S(pm, "value"))); }
                         else Bad(pn, "Each transfer parameter must be a mapping.");
-                    transfer = new TransferSpec(Req(tm, "origin"), Req(tm, "read"), Req(tm, "staging"), columns, slice, watermark, tparams.Count == 0 ? null : tparams, Bool(tm, "command"));
+                    transfer = new TransferSpec(Req(tm, "origin"), Req(tm, "read"), Req(tm, "staging"), columns, slice, watermark, tparams.Count == 0 ? null : tparams, Bool(tm, "command"),
+                        (tm.Get("parameter_order") as YamlSequence)?.Items.OfType<YamlScalar>().Select(x => x.Value).ToList() is { Count: > 0 } order ? order : null);
                 }
                 var plannedInputs = new List<PlannedInput>();
                 var inputReader = new CompiledYaml.Reader(file, diags);

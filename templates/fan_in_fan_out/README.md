@@ -49,15 +49,17 @@ string profile), `stores_rep`, `stores_east` and `stores_west` (PostgreSQL). Eve
 ```
 export DBDATABUILD_SQLSERVER_READ='Server=127.0.0.1,1433;User Id=...;Password=...;Database=stores_wh;TrustServerCertificate=true'   # and DBDATABUILD_SQLSERVER_WRITE
 export DBDATABUILD_POSTGRES_READ='Host=127.0.0.1;Username=...;Password=...;Database=stores_rep'                                      # and DBDATABUILD_POSTGRES_WRITE
-export DBDATABUILD_STORE_EAST_READ='Host=127.0.0.1;Username=...;Password=...;Database=stores_east'                                   # and DBDATABUILD_STORE_EAST_WRITE (seeding only)
-export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Database=stores_west'                                   # and DBDATABUILD_STORE_WEST_WRITE (seeding only)
+export DBDATABUILD_STORE_EAST_READ='Host=127.0.0.1;Username=...;Password=...;Database=stores_east'                                   # a `readonly` connection has no _WRITE login
+export DBDATABUILD_STORE_WEST_READ='Host=127.0.0.1;Username=...;Password=...;Database=stores_west'                                   # a `readonly` connection has no _WRITE login
 ```
 
-1. **Seed the two shops, each with its own seed** (the seeds generate one table, `pos.orders`; a different `--seed` gives different rows):
+1. **Seed the two shops, each with its own seed** (the seeds generate one table, `pos.orders`; a different `--seed` gives different rows). The shops are `readonly postgres` in `dbdatabuild.yml`: the tool never writes to a connection that says so, and `connection seed` refuses one (DDB-455), because real shop systems exist already. To make demo shops, say `engine: postgres` for the two lines while you seed, then put `readonly` back:
 
    ```
-   dbdatabuild connection seed store_east --seed 1 --apply     # pos.orders  60 row(s)
-   dbdatabuild connection seed store_west --seed 2 --apply     # pos.orders  60 row(s)
+   sed -i 's/engine: readonly postgres/engine: postgres/' dbdatabuild.yml
+   dbdatabuild connection seed store_east --seed 1 --apply     # pos.orders  60 row(s)   (needs DBDATABUILD_STORE_EAST_WRITE)
+   dbdatabuild connection seed store_west --seed 2 --apply     # pos.orders  60 row(s)   (needs DBDATABUILD_STORE_WEST_WRITE)
+   sed -i 's/engine: postgres, parameters/engine: readonly postgres, parameters/' dbdatabuild.yml
    ```
 
 2. **Inspect, then initialize the tracking tables once** (they live on the warehouse and hold the records of every connection):
@@ -121,7 +123,7 @@ document and, after `dbdatabuild connection publish sqlserver`, in the tracking 
 
 ## Notes
 
-- The shop systems are only read by the tool once they are seeded; their logins need `SELECT` on `pos.orders` (and, to seed them, rights to create a schema and a table).
+- The shop systems are `readonly`: the tool reads them (a copy, `connection inspect`, `compare`) and never writes. Their read logins need `SELECT` on `pos.orders`; seeding demo shops needs a write login for a moment, with `readonly` taken out (step 1).
 - `connection seed` writes every seeded source of the project to the connection it is given, so seed each shop on its own connection as above (only `pos.orders` has a seed).
 - The compile notes DDB-224 for `ux_orders_store_order`: the copy's load key is `store_id` alone (it replaces a shop's rows), which cannot be unique, so no index can make the engine enforce it; the unique index on `(store_id, order_id)` is the table's real key and leads with the load key so each load finds its rows.
 - The copy is incremental, which a deploy runs too (it reads from the newest value as well); rows deleted at a shop stay in the warehouse; a copy with no `watermark` would replace a shop's rows in full each run (DESIGN.md 6.5.2).

@@ -626,13 +626,14 @@ public static class Planner
         var (stagingSchema, stagingTable) = (CopyModels.StagingSchema(config), CopyModels.StagingTable(def.Name));
         // the staging table lives under the tracking schema name, which a connection that is not tracked itself (central tracking) may not have yet
         var create = destination.CreateSchema(stagingSchema) + "\n" + destination.DropTableIfExists(stagingSchema, stagingTable) + "\n" + destination.CreateTable(stagingSchema, stagingTable, destination.MapAll(def));
-        var originDdl = TargetRegistry.Get(origin.Engine).CreateDdl(config.ForConnection(origin.Connection));
+        // the origin's own dialect: how it quotes a name and writes a parameter (an origin is not a target, nothing is rendered for it)
+        var originDdl = config.Connections.ContainsKey(origin.Connection) ? config.DialectOf(origin.Connection) : DialectProfiles.OfEngine(origin.Engine) ?? DialectProfiles.Ansi;
         var (originSchema, originName) = DdlGenerator.Split(origin.Table);
         // a column the copy adds (its slice, when the origin has none) is not read: the value is written into every row
         // a native origin is read as its own text (a derived table, with its parameters bound): the engine computes the rows
         var isCommand = origin.Native is { Access: NativeQuery.Command };
-        var from = origin.Native != null ? $"({origin.Native.Text}) AS {originDdl.QuoteIdentifier(originName)}" : originDdl.Qualified(originSchema, originName);
-        var read = $"SELECT {string.Join(", ", def.Columns.Where(x => !(def.SliceColumnAdded && string.Equals(x.Name, def.Slice!.Column, StringComparison.OrdinalIgnoreCase))).Select(x => originDdl.QuoteIdentifier(x.Name)))} FROM {from}";
+        var from = origin.Native != null ? $"({origin.Native.Text}) AS {originDdl.Quote(originName)}" : originDdl.Qualified(originSchema, originName);
+        var read = $"SELECT {string.Join(", ", def.Columns.Where(x => !(def.SliceColumnAdded && string.Equals(x.Name, def.Slice!.Column, StringComparison.OrdinalIgnoreCase))).Select(x => originDdl.Quote(x.Name)))} FROM {from}";
         if (isCommand) read = origin.Native!.Text;      // a command is run as written: it cannot be wrapped in a SELECT
         var nativeParameters = origin.Native == null ? null : origin.Native.Parameters.Select(p => new PlanParameter(p.Placeholder, origin.NativeValues![p.Key].Type, "parameter", origin.NativeValues[p.Key].Value)).ToList();
         var slice = def.Slice != null && origin.SliceValue != null ? new PlanSlice(def.Slice.Column, origin.SliceValue, def.SliceColumnAdded) : null;
@@ -640,10 +641,18 @@ public static class Planner
         if (def.Watermark != null && origin.WatermarkValue != null)
         {
             // an incremental copy reads only the rows at or after the bound (the value is bound by the driver, never written into the text); a command passes `@watermark` to the call itself
-            if (!isCommand) read += $" WHERE {originDdl.QuoteIdentifier(def.Watermark.Column)} >= @watermark";
+            if (!isCommand) read += $" WHERE {originDdl.Quote(def.Watermark.Column)} >= @watermark";
             watermark = new PlanWatermark(def.Watermark.Column, def.Columns.First(x => string.Equals(x.Name, def.Watermark.Column, StringComparison.OrdinalIgnoreCase)).Type, origin.WatermarkValue);
         }
-        var spec = new TransferSpec(origin.Connection, read, $"{stagingSchema}.{stagingTable}", def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), slice, watermark, nativeParameters, isCommand);
+        // an origin that takes its parameters by position (`?`, `$1`) gets the placeholders rewritten, and the plan says in which order the values are bound
+        IReadOnlyList<string>? order = null;
+        if (!isCommand && originDdl.Parameters != ParameterStyle.NamedAt)
+        {
+            var (positional, bound) = ParameterPlaceholders.Rewrite(read, (nativeParameters ?? []).Select(x => x.Name).Append("watermark").ToList(), originDdl);
+            read = positional;
+            if (bound.Count > 0) order = bound;
+        }
+        var spec = new TransferSpec(origin.Connection, read, $"{stagingSchema}.{stagingTable}", def.Columns.Select(x => new PlanColumn(x.Name, x.Type)).ToList(), slice, watermark, nativeParameters, isCommand, order);
         return (create, spec);
     }
 

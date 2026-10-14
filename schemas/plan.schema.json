@@ -289,6 +289,15 @@
                 "type": "string",
                 "minLength": 1
               },
+              "parameter_order": {
+                "description": "For an origin whose dialect takes parameters by position (`?`, `$1`): the names of the values in the order they are bound. A name that the text uses twice for `?` appears twice. Absent when the read binds by name.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "columns": {
                 "type": "array",
                 "minItems": 1,

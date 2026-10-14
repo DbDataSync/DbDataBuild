@@ -1,4 +1,5 @@
-# Four connections in three roles (docs/concepts.md): two shop systems that are only read (store_east, store_west),
+# Four connections in three roles (docs/concepts.md): two shop systems that are only read (store_east, store_west: `readonly`, so the tool
+# never reads a write login for them and refuses to build on them),
 # a warehouse the models are built on (sqlserver) and a reporting database (postgres). A connection is a name; its logins are
 # DBDATABUILD_<NAME>_READ and DBDATABUILD_<NAME>_WRITE (for store_east: DBDATABUILD_STORE_EAST_READ).
 title: Two shops
@@ -14,8 +15,8 @@ connections:
     properties: {role: serve}
     string_semantics: { trailing_space: significant }
   # what differs between the systems goes in parameters; a copy reads them as ${origin.store_id}
-  store_east: { engine: postgres, parameters: { store_id: E01 }, title: East shop, tags: [source], properties: {role: origin, region: east} }
-  store_west: { engine: postgres, parameters: { store_id: W01 }, title: West shop, tags: [source], properties: {role: origin, region: west} }
+  store_east: { engine: readonly postgres, parameters: { store_id: E01 }, title: East shop, tags: [source], properties: {role: origin, region: east} }
+  store_west: { engine: readonly postgres, parameters: { store_id: W01 }, title: West shop, tags: [source], properties: {role: origin, region: west} }
 # models are built on the warehouse unless they say otherwise
 defaults: {connections: [sqlserver]}
 # the records of everything the tool builds, on every connection, are kept on the warehouse (central tracking)

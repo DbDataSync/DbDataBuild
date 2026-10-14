@@ -444,6 +444,17 @@ public static class DiagnosticCatalog
         $"Run `{ProductInfo.Cli} connection refresh` without a plan to list the plans, or `{ProductInfo.Cli} project compile` if a model's `refresh:` was changed.",
         "A plan exists when some model's `refresh:` names it, or when a model with a default load says nothing (the plan `default`). The name given is none of the plans compiled for this connection.");
 
+    // 455 and 456: read-only origins (docs/research/read-origins.md)
+    public static readonly DiagnosticDescriptor ReadOnlyConnectionNotWritable = E("455", "A readonly connection cannot be written, built on or tracked on",
+        "a `readonly` connection as the origin of a copy, of a mapped model or of a native query, as a `source` resolver's connection, and as the subject of `connection inspect`, `compare`, `monitor` and `project import`",
+        "Use the connection only as an origin, give the model or the tracking a connection that is not `readonly`, or take `readonly` out of the connection's `engine` if the tool should write there (it will then need a `_WRITE` login).",
+        "`readonly` in a connection's `engine` is a promise the tool keeps in layers: no `_WRITE` login is ever read for the connection, and it is refused as `tracking.connection`, as a connection of a model (the destination of a build or a copy), and as the connection of `connection deploy`, `refresh`, `seed`, `publish` and `init`. The account's own rights on the system remain the real guarantee.");
+
+    public static readonly DiagnosticDescriptor DialectProfileInvalid = E("456", "A dialect profile is not valid",
+        "a `dialects:` entry with a lower-case name that is not a keyword of `engine`, optionally `extends` a built-in (ansi, duckdb, sqlserver, postgres, fabric) or another profile, and the fields `quote`, `parameters` (named_at, positional, numbered), `ping` (one SELECT), `catalog` (information_schema, none), `identifier_case` (preserve, upper, lower), `limit` (limit, top, fetch) and `types`",
+        "Correct the entry the message names. A name that collides with a keyword (readonly, odbc, postgres, ansi...) is renamed; a value outside the choices is one of them.",
+        "A dialect profile is data: what an origin needs to know about the SQL a system takes (how to quote a name, how a parameter is written, what to send to see it answers). Every field left out is the base's, `ansi` unless `extends` says otherwise. A profile that cannot be built is refused when the project is loaded, so a typo is not found when a copy runs.");
+
     // 6xx: project tests (`project tests run`)
     public static readonly DiagnosticDescriptor TestFailed = E("601", "A project test failed",
         "a test that returns no violations: a metadata rule (`tests/metadata/<name>.sql`) whose SELECT returns no rows",
@@ -494,7 +505,7 @@ public static class DiagnosticCatalog
         SqlParseFailure, NotASingleSelect, ConstructNeedsVersion, PairUnsupported, RenderedScriptInvalid, PlaceholderUndeclared, KeyColumnNullable, TypeNotMappable, IndexNotSupported, HookScriptInvalid, QueryNotLowerable,
         CollationCannotSatisfyProfile, CollationNotVerifiable, CollationNotConfigured,
         AnswerForUnknownQuestion, AnswerChoiceInvalid, AnswerValueMismatch, NoProposalToAccept, QuestionUnanswered,
-        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
+        DefinitionOutOfSync, RenderedFileOutOfDate, ObjectChangedOutsideTool, LoadDefinitionChanged, AdoptionDeclined, UpstreamBlocked, ModelUnplannable, PlanFileInvalid, StepNeedsAllowance, PlanIsStale, PlanAlreadyStarted, ApplyLockHeld, StepFailed, RefreshPlanMissing, RefreshCheckFailed, RefreshFileChanged, RefreshPlanUndeclared, RefreshMembershipDuplicate, RefreshMembershipInvalid, RefreshInputMissing, RefreshPlanUnknown, ReadOnlyConnectionNotWritable, DialectProfileInvalid, InputResolverInvalid, InputsDependOnEachOther, InputNotResolved, InputsMoved, StepResultDiffers, DirtyWorkingTree, HistoryInconsistent, DefinitionFileChanged, DefinitionNotEditable,
         TestFailed, TestCouldNotRun, TestNotASelect,
         LoginNotConfigured, GateRefused, StatementLogUnavailable, ReadStatementRefused, TrackingNotInitialized,
         InternalError,

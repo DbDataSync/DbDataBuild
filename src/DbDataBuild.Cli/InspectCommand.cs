@@ -21,17 +21,17 @@ internal static class InspectCommand
         var config = ProjectConfigLoader.LoadFromProject(root, diags);
         foreach (var d in diags.Where(d => d.Severity == Severity.Error)) error.Diag(d);
         if (diags.Any(d => d.Severity == Severity.Error)) return CliApp.ExitFindings;
-        var connection = CommandTargets.Resolve(config, targetArg, error);
+        var connection = CommandTargets.Resolve(config, targetArg, error, readOnlyOk: true);
         if (connection == null) return CliApp.ExitUsage;
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {connection.Name}");
-        output.WriteLine($"Connection {connection.Name}: engine {connection.Engine}, version {(connection.Version?.ToString() ?? "not set")}.");
+        output.WriteLine($"Connection {connection.Name}: engine {connection.Kind.Describe()}, version {(connection.Version?.ToString() ?? "not set")}.");
 
         var probes = new List<Probe>();
         var problems = 0;
         Probe? readProbe = null;
         foreach (var kind in new[] { Login.Read, Login.Write })
         {
-            var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, kind, env);
+            var (login, missing) = LoginSettings.FromEnvironment(connection, kind, env);
             var variable = LoginSettings.VariableName(connection.Name, kind);
             if (login == null) { probes.Add(new(kind.ToString().ToLowerInvariant(), variable, false, null, null, null, null, null)); continue; }
             Probe probe;
@@ -45,7 +45,8 @@ internal static class InspectCommand
         }
         foreach (var p in probes)
         {
-            if (!p.Set) output.WriteLine($"  {p.Kind + " login",-13} {p.Variable}: not set{(p.Kind == "write" ? " (only a deploy, a refresh and the commands that record need it)" : "")}");
+            if (!p.Set && p.Kind == "write" && connection.ReadOnly) output.WriteLine($"  {p.Kind + " login",-13} none: the connection is readonly, so no write login is read");
+            else if (!p.Set) output.WriteLine($"  {p.Kind + " login",-13} {p.Variable}: not set{(p.Kind == "write" ? " (only a deploy, a refresh and the commands that record need it)" : "")}");
             else if (p.Connects == true)
                 output.WriteLine($"  {p.Kind + " login",-13} {p.Variable}: {p.User ?? "default user"} connects; {p.Server}{(p.CanCreateInDatabase is { } c ? (c ? "; may create tables in the database" : "; may NOT create tables in the database") : "")}");
             else output.WriteLine($"  {p.Kind + " login",-13} {p.Variable}: {p.User ?? "default user"} does not connect ({p.Problem})");
@@ -92,7 +93,7 @@ internal static class InspectCommand
             {
                 var names = ProjectContext.Load(root).Project.Sources.Where(s => s.Definition.Targets?.Contains(connection.Name) ?? config.DefaultConnections.Contains(connection.Name))
                     .Select(s => DbDataBuild.Targets.Ddl.DdlGenerator.Split(s.Definition.Name).SchemaName).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-                var (readLogin, _) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+                var (readLogin, _) = LoginSettings.FromEnvironment(connection, Login.Read, env);
                 var existing = Task.Run(async () =>
                 {
                     await using var read = await ReadSession.OpenAsync(readLogin!);

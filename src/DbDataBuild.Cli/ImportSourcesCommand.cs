@@ -22,10 +22,10 @@ internal static class ImportSourcesCommand
     {
         if (write && check) { error.WriteLine("--check writes nothing, so it cannot be combined with --write."); return CliApp.ExitUsage; }
         var ctx = ProjectContext.Load(root);
-        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error);
+        var connection = CommandTargets.Resolve(ctx.Config, targetArg, error, readOnlyOk: true);
         if (connection == null) return CliApp.ExitUsage;
         var target = connection.Name; var engine = connection.Engine;
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
 
         var committed = ctx.Project.Descriptors.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
         var models = ctx.Project.Models.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);

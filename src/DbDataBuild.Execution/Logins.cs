@@ -1,5 +1,6 @@
 using System.Data.Common;
 using DbDataBuild.Core;
+using DbDataBuild.Models;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 
@@ -15,8 +16,14 @@ public sealed class LoginSettings
     /// <summary>The connection this login is for (its name: `warehouse`, or `sqlserver` for a connection named after its engine).</summary>
     public string Connection { get; }
 
-    /// <summary>The engine of that connection (sqlserver, fabric, postgres): what decides the driver and the SQL.</summary>
+    /// <summary>The driver of that connection (sqlserver, fabric, postgres, duckdb): what decides how it is opened and, for the three engines, the SQL.</summary>
     public string Engine { get; }
+
+    /// <summary>The connection is `readonly`: there is no write login for it (the overload that takes the connection refuses to make one).</summary>
+    public bool ReadOnly { get; private init; }
+
+    /// <summary>The SQL dialect of the connection: how a parameter is written and a name quoted when this login is read from as an origin.</summary>
+    public DialectProfile Dialect { get; private init; } = DialectProfiles.Ansi;
     public Login Login { get; }
     public string Variable { get; }
     internal string ConnectionString { get; }
@@ -24,6 +31,7 @@ public sealed class LoginSettings
     private LoginSettings(string connection, string engine, Login login, string variable, string connectionString)
     {
         Connection = connection; Engine = engine; Login = login; Variable = variable; ConnectionString = connectionString;
+        Dialect = DialectProfiles.OfEngine(engine) ?? DialectProfiles.Ansi;
     }
 
     /// <summary>`DBDATABUILD_SQLSERVER_READ`, `DBDATABUILD_WAREHOUSE_WRITE` and so on: the connection's name, in capitals.</summary>
@@ -41,6 +49,23 @@ public sealed class LoginSettings
                 $"The {login.ToString().ToLowerInvariant()} login for connection `{connection}` is not configured: environment variable `{variable}` is not set."));
         return (new LoginSettings(connection, engine, login, variable, value), null);
     }
+
+    /// <summary>
+    /// Reads the login of a connection of the project. A `readonly` connection has no write login: asking for one is DDB-455 and the environment is not looked at. <paramref name="dialect"/> is the profile of the
+    /// connection when it is a project's own (the three engines, DuckDB and `ansi` are known without it).
+    /// </summary>
+    public static (LoginSettings? Settings, Diagnostic? Error) FromEnvironment(ConnectionConfig connection, Login login, Func<string, string?>? env = null, DialectProfile? dialect = null)
+    {
+        if (connection.ReadOnly && login == Login.Write)
+            return (null, new Diagnostic(DiagnosticCatalog.ReadOnlyConnectionNotWritable, new($"connection:{connection.Name}", 0, 0),
+                $"The connection `{connection.Name}` is `readonly` ({connection.Kind.Describe()}): it has no write login and the tool never writes there."));
+        var (settings, error) = FromEnvironment(connection.Name, connection.Engine, login, env);
+        if (settings == null) return (null, error);
+        var kind = connection.Kind;
+        return (settings.With(kind.ReadOnly, dialect ?? DialectProfiles.BuiltIn.GetValueOrDefault(kind.Dialect) ?? DialectProfiles.Ansi), null);
+    }
+
+    private LoginSettings With(bool readOnly, DialectProfile dialect) => new(Connection, Engine, Login, Variable, ConnectionString) { ReadOnly = readOnly, Dialect = dialect };
 
     /// <summary>For a connection named after its engine (`sqlserver`, `postgres`, `fabric`), which needs no declaration.</summary>
     public static (LoginSettings? Settings, Diagnostic? Error) FromEnvironment(string connection, Login login, Func<string, string?>? env = null) =>
@@ -62,6 +87,9 @@ public sealed class LoginSettings
             catch (ArgumentException) { return null; }
         }
     }
+
+    /// <summary>Opens the read side of this login as a row source. Internal on purpose: the way to it is <see cref="ReadSession"/>.</summary>
+    internal async Task<IRowSource> OpenRowSourceAsync(CancellationToken ct) => new AdoRowSource(await OpenAsync(ct), Dialect.Parameters);
 
     /// <summary>Opens a connection of the right provider. Internal on purpose: the write side is reached only through <see cref="MutationGate"/>, the read side through <see cref="ReadSession"/>.</summary>
     internal async Task<DbConnection> OpenAsync(CancellationToken ct)

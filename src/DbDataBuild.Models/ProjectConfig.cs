@@ -49,6 +49,14 @@ public sealed record ConnectionConfig(string Name, string Engine, int? Version =
     /// <summary>The connection's own `timezone:` (an IANA name), which wins over the project's for the clock of its resolvers.</summary>
     public string? Timezone { get; init; }
 
+    /// <summary>What `engine` said, parsed once: access, driver and dialect. <see cref="Engine"/> is its driver (`sqlserver`, `postgres`, `fabric` for the engines the tool builds on; `duckdb`, `odbc`, `flightsql` for origins).</summary>
+    public ConnectionKind? DeclaredKind { get; init; }
+
+    public ConnectionKind Kind => DeclaredKind ?? ConnectionKind.OfEngine(Engine);
+
+    /// <summary>The connection is only read: no write login, never a destination, a tracking connection or a target of a deploy.</summary>
+    public bool ReadOnly => Kind.ReadOnly;
+
     /// <summary>How many sessions a refresh may have open at this connection at once (1 to 64); null is no limit. At an origin it counts the sessions that read rows for a copy, at the destination the loads that run together.</summary>
     public int? MaxParallel { get; init; }
 
@@ -193,6 +201,19 @@ public sealed record ProjectConfig(
         return Tracking.Connection is { } p && Connections.TryGetValue(p, out var pc) ? new(new TrackingTarget(p, pc.Engine, Tracking.SchemaName), true) : new(null, false);
     }
 
+    /// <summary>The project's own dialect profiles (`dialects:`), resolved against what they extend, by name.</summary>
+    public IReadOnlyDictionary<string, DialectProfile> Dialects { get; init; } = new Dictionary<string, DialectProfile>();
+
+    /// <summary>The SQL dialect an origin takes: the built-in or the project's profile that the connection's `engine` names. A connection the project does not have is read as the engine of that name.</summary>
+    public DialectProfile DialectOf(string connection)
+    {
+        var name = Connections.TryGetValue(connection, out var c) ? c.Kind.Dialect : connection;
+        return Dialects.TryGetValue(name, out var own) ? own : DbDataBuild.Models.DialectProfiles.BuiltIn.TryGetValue(name, out var builtIn) ? builtIn : DbDataBuild.Models.DialectProfiles.Ansi;
+    }
+
+    /// <summary>Whether a connection is only read. A connection the project does not have is not.</summary>
+    public bool IsReadOnly(string connection) => Connections.TryGetValue(connection, out var c) && c.ReadOnly;
+
     /// <summary>The engine of a connection, or null when the project has no such connection.</summary>
     public string? EngineOf(string connection) => Connections.TryGetValue(connection, out var c) ? c.Engine : null;
 
@@ -229,6 +250,6 @@ public sealed record ProjectConfig(
         string.Concat(Connections.Where(c => c.Value.Semantics != null).OrderBy(c => c.Key, StringComparer.Ordinal).Select(c => $" (on {c.Key}: {SemanticsOf(c.Key).Describe()})")) + "; " +
         $"target versions: {(TargetVersions.Count == 0 ? "not set" : string.Join(", ", TargetVersions.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key} {v.Value}")))}" +
         (Lifecycle == LifecycleSettings.Default ? "" : $"; {Lifecycle.Describe()}") +
-        (Connections.Any(c => !ConnectionConfig.Implicit.ContainsKey(c.Key) || c.Value.Engine != c.Key)
-            ? $"; connections: {string.Join(", ", Connections.Where(c => !ConnectionConfig.Implicit.ContainsKey(c.Key) || c.Value.Engine != c.Key).OrderBy(c => c.Key, StringComparer.Ordinal).Select(c => $"{c.Key} ({c.Value.Engine})"))}" : "");
+        (Connections.Any(c => !ConnectionConfig.Implicit.ContainsKey(c.Key) || c.Value.Engine != c.Key || c.Value.ReadOnly)
+            ? $"; connections: {string.Join(", ", Connections.Where(c => !ConnectionConfig.Implicit.ContainsKey(c.Key) || c.Value.Engine != c.Key || c.Value.ReadOnly).OrderBy(c => c.Key, StringComparer.Ordinal).Select(c => $"{c.Key} ({c.Value.Kind.Describe()})"))}" : "");
 }

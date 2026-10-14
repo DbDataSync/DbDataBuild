@@ -18,13 +18,13 @@ internal static class ReportCommand
     public static int Run(CommandSpec spec, string root, string? targetArg, int last, string? lane, string? eventId, bool attentionOnly, string? plan, TextWriter output, TextWriter error, Func<string, string?> env)
     {
         var config = ProjectConfigLoader.LoadFromProject(root, new List<Diagnostic>());
-        var connection = CommandTargets.Resolve(config, targetArg, error);
+        var connection = CommandTargets.Resolve(config, targetArg, error, readOnlyOk: true);
         if (connection == null) return CliApp.ExitUsage;
         var target = connection.Name; var engine = connection.Engine;
         if (last < 1) { error.WriteLine("--last must be at least 1."); return CliApp.ExitUsage; }
         if (eventId != null && (lane != null || attentionOnly)) { error.WriteLine("--event shows one event in detail; it does not go with --lane or --attention."); return CliApp.ExitUsage; }
         bool InLane(string planId) => lane == null || planId.StartsWith("ref-", StringComparison.Ordinal) == (lane == "refresh");
-        var (login, missing) = LoginSettings.FromEnvironment(connection.Name, connection.Engine, Login.Read, env);
+        var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
         var tracking = CommandTracking.Require(config, connection, env, needWrite: false, error, spec.Name);
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: {target}  |  login: {login?.Describe() ?? "none"}; records on {tracking?.Target.Connection ?? "none"}");
         if (missing != null) { error.Diag(missing); return CliApp.ExitFindings; }

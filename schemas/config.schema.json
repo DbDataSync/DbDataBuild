@@ -60,7 +60,7 @@
           "additionalProperties": false,
           "properties": {
             "engine": {
-              "const": "sqlserver"
+              "$ref": "#/$defs/engineKeywords"
             },
             "version": {
               "description": "The engine's major version, or the T-SQL level to generate for: 16 for SQL Server 2022 (and a 2025 server at compatibility level 160), 17 for 2025 at level 170. Lets the matrix linter resolve min_version rows.",
@@ -189,7 +189,7 @@
           "additionalProperties": false,
           "properties": {
             "engine": {
-              "const": "fabric"
+              "$ref": "#/$defs/engineKeywords"
             },
             "version": {
               "description": "The engine's major version, or the T-SQL level to generate for: 16 for SQL Server 2022 (and a 2025 server at compatibility level 160), 17 for 2025 at level 170. Lets the matrix linter resolve min_version rows.",
@@ -318,7 +318,7 @@
           "additionalProperties": false,
           "properties": {
             "engine": {
-              "const": "postgres"
+              "$ref": "#/$defs/engineKeywords"
             },
             "version": {
               "description": "The engine's major version, or the T-SQL level to generate for: 16 for SQL Server 2022 (and a 2025 server at compatibility level 160), 17 for 2025 at level 170. Lets the matrix linter resolve min_version rows.",
@@ -448,6 +448,91 @@
         }
       },
       "additionalProperties": false
+    },
+    "dialects": {
+      "description": "Dialect profiles for read-only origins: what the tool needs to know about the SQL a system takes (it reads from it, never builds on it). A profile starts from what it `extends` (a built-in: ansi, duckdb, sqlserver, postgres, fabric; or another profile here; ansi when it says nothing) and changes the fields it names. A name is lower case and may not be a keyword of `engine`. Used by a connection whose `engine` names it (`readonly odbc proxy_sql`).",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "extends": {
+            "description": "The dialect this one starts from.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "quote": {
+            "description": "The identifier quote: a double quote, a backtick, or `[ ]` (square brackets).",
+            "enum": [
+              "\"",
+              "`",
+              "[ ]",
+              "[]"
+            ]
+          },
+          "parameters": {
+            "description": "How a parameter is written: `@name`, a positional `?`, or numbered `$1`. The plan records the order in which positional values are bound.",
+            "enum": [
+              "named_at",
+              "positional",
+              "numbered"
+            ]
+          },
+          "ping": {
+            "description": "The one SELECT `connection inspect` sends to see that the connection answers.",
+            "type": "string",
+            "minLength": 1
+          },
+          "catalog": {
+            "description": "Where the tables and columns are read from: the standard `information_schema` views, or nowhere (declare the tables by hand).",
+            "enum": [
+              "information_schema",
+              "none"
+            ]
+          },
+          "identifier_case": {
+            "description": "What an unquoted name becomes in the system.",
+            "enum": [
+              "preserve",
+              "upper",
+              "lower"
+            ]
+          },
+          "limit": {
+            "description": "How a bounded read is written: `LIMIT n`, `SELECT TOP n`, `FETCH FIRST n ROWS ONLY`.",
+            "enum": [
+              "limit",
+              "top",
+              "fetch"
+            ]
+          },
+          "types": {
+            "description": "The catalog's type names (lower case) and the logical type each is read as, for `project import` and the structure check; they are added to those of the dialect it extends. A decimal and a varchar take their precision, scale and length from the catalog.",
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "BIGINT",
+                "INTEGER",
+                "SMALLINT",
+                "BOOLEAN",
+                "DECIMAL",
+                "DOUBLE",
+                "FLOAT",
+                "DATE",
+                "TIMESTAMP",
+                "TIME",
+                "TIMESTAMP WITH TIME ZONE",
+                "UUID",
+                "BLOB",
+                "VARCHAR"
+              ]
+            }
+          }
+        }
+      }
     },
     "tracking": {
       "description": "Where the records of what the tool built are kept (drift baselines, the DDL and run logs, acknowledgements, plan history, metadata), for every connection that is written; each record names the connection it is about, so one tracking connection can hold many. Default: nothing is tracked, with a warning on the commands that would have recorded something. `none` is the explicit choice: not tracked, no warning. A connection can say its own (`connections.<name>.tracking`).",
@@ -917,11 +1002,7 @@
       ],
       "properties": {
         "engine": {
-          "enum": [
-            "sqlserver",
-            "fabric",
-            "postgres"
-          ]
+          "$ref": "#/$defs/engineKeywords"
         },
         "version": {
           "description": "The engine's major version, or the T-SQL level to generate for: 16 for SQL Server 2022 (and a 2025 server at compatibility level 160), 17 for 2025 at level 170. Lets the matrix linter resolve min_version rows.",
@@ -1296,6 +1377,23 @@
           }
         }
       }
+    },
+    "engineKeywords": {
+      "description": "What kind of connection this is, as keywords in any order, separated by spaces or commas (or a YAML list). Access: `readonly` (the tool only reads it: never a destination, a tracking connection or a deploy target, and no _WRITE login is read; the default is read and write). Driver, exactly one: sqlserver, postgres, fabric, duckdb, odbc, flightsql (duckdb, odbc and flightsql need `readonly`). Dialect, at most one: ansi, duckdb, sqlserver, postgres, fabric or a name from `dialects:`; the engines the tool builds on and duckdb bring their own, odbc and flightsql default to ansi. Examples: `postgres`, `readonly postgres`, `readonly odbc ansi`, `readonly, flightsql, proxy_sql`.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*([ ,]+[a-z][a-z0-9_]*)*$"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      ]
     }
   }
 }
