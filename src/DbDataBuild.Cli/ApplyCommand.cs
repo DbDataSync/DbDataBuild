@@ -133,7 +133,7 @@ internal static class ApplyCommand
     /// <param name="Run">For a refresh: the plan it ran, the selection and the plan's members, which the event records.</param>
     /// <param name="Execution">For a refresh: its loads with the rules of each and how to make each ready (see <see cref="RefreshExecution"/>).</param>
     /// <param name="OnlyFailed">Whether the loads were chosen by `--only-failed` (the hints that follow say so).</param>
-    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null, int Parallel = 1, SessionLimits? Limits = null);
+    internal sealed record ApplyMode(bool Refresh = false, string? PlanHash = null, bool RecordShapes = true, bool Header = true, bool Summary = true, RefreshRunInfo? Run = null, RefreshExecution? Execution = null, bool OnlyFailed = false, IReadOnlyList<InputPin>? InputPins = null, Func<IReadOnlyList<MovedInput>, bool>? ApproveMoved = null, IReadOnlyList<string>? Origins = null, int Parallel = 1, SessionLimits? Limits = null, IReadOnlyList<string>? Warnings = null);
 
     /// <summary>` hourly` when the refresh ran a plan, so the next commands name it; nothing for a load named directly.</summary>
     private static string PlanArgument(ApplyMode mode) => mode.Run?.PlanName is { } name ? " " + name : "";
@@ -274,7 +274,7 @@ internal static class ApplyCommand
         {
             output.Payload("outcome", refreshed.Outcome);
             output.Payload("results", refreshed.Loads.Select(l => new { model = l.Unit.Model, member = l.Unit.Membership, load = l.Unit.Load, state = l.State, reason = l.Reason, status = l.Status, rows = l.Rows, duration_ms = l.DurationMs, detail = l.Detail, note = l.Note }).ToList());
-            output.Payload("warnings", refreshed.Warnings.ToList());
+            output.Payload("warnings", (mode.Warnings ?? []).Concat(refreshed.Warnings).ToList());
         }
         if (result.Moved is { Count: > 0 } movedInputs)
         {
@@ -299,7 +299,7 @@ internal static class ApplyCommand
             foreach (var group in summary.Loads.Where(l => l.State != "done").GroupBy(l => l.State))
                 output.WriteLine($"  {group.Key}: {string.Join("; ", group.Select(l => $"{l.Unit.Display}{(l.Reason != null ? $" ({l.Reason})" : "")}"))}");
             foreach (var note in summary.Loads.Where(l => l.Note != null)) output.WriteLine($"  {note.Unit.Display} ran: {note.Note}");
-            foreach (var w in summary.Warnings) output.WriteLine($"  warning: {w}");
+            foreach (var w in (mode.Warnings ?? []).Concat(summary.Warnings)) output.WriteLine($"  warning: {w}");
             if (summary.Loads.Any(l => l.Status == LoadStatus.FailedCheck))
                 output.Next("connection deploy", $"connection refresh {plan.Connection}{PlanArgument(mode)} --only-failed");
             else if (summary.Outcome != RefreshSummary.Completed)

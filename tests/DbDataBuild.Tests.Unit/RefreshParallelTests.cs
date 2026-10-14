@@ -313,6 +313,26 @@ public class RefreshParallelTests
         Assert.Equal(1, limits.MostInUse("shop"));
     }
 
+    // ---------------------------------------------------------------- an unreadable project graph
+
+    [Fact]
+    public void A_project_graph_that_cannot_be_read_makes_a_parallel_run_sequential_and_says_so()
+    {
+        var (graph, parallel, warning) = DbDataBuild.Cli.RefreshCommand.ReadGraphFor(8, () => throw new InvalidOperationException("no project"));
+        Assert.Null(graph);
+        Assert.Equal(1, parallel);
+        Assert.StartsWith("parallel: 1 (the project graph could not be read; loads run in plan order)", warning);
+        Assert.Contains("8 was asked for", warning);
+    }
+
+    [Fact]
+    public void A_readable_graph_keeps_the_asked_for_number_and_a_sequential_run_reads_nothing()
+    {
+        var graph = new DependencyGraph(["a", "b"], [], [("b", "a")]);
+        Assert.Equal((graph, 4, null), DbDataBuild.Cli.RefreshCommand.ReadGraphFor(4, () => graph));
+        Assert.Equal((null, 1, null), DbDataBuild.Cli.RefreshCommand.ReadGraphFor(1, () => throw new InvalidOperationException("must not be read")));
+    }
+
     // ---------------------------------------------------------------- the settings
 
     [Fact]

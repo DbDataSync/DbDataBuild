@@ -2212,6 +2212,12 @@
           "minimum": 1,
           "maximum": 64
         },
+        "parallel_effective": {
+          "description": "How many loads ran at once at most in the end: `parallel`, or 1 when it was above 1 and the project graph could not be read (the loads then run in plan order, and `warnings` says so).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
         "loads": {
           "description": "The loads of the plan that were selected, in the order they run, with the inputs each runs with.",
           "type": "array",
