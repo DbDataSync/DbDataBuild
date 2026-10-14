@@ -39,7 +39,14 @@ internal static class CopyOriginCheck
             findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the origin `{origin.Connection}` has the dialect `{login.Dialect.Name}` (`catalog: none`), so `{copy.From}` was not checked against its declaration; the transfer's own check of the columns it reads is the net.") with { SeverityOverride = Severity.Note });
             return none;
         }
-        var differences = declared.IsNative ? await NativeShapeCheck.DifferencesAsync(ctx.Config, declared, origin.Connection, login) : await Differences(login, origin, declared);
+        IReadOnlyList<string>? differences;
+        try { differences = declared.IsNative ? await NativeShapeCheck.DifferencesAsync(ctx.Config, declared, origin.Connection, login) : await Differences(login, origin, declared); }
+        catch (CatalogUnavailableException ex)
+        {
+            // a Flight SQL server with no catalog to read: said, not guessed
+            findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: `{copy.From}` was not checked against its declaration: {ex.Message}") with { SeverityOverride = Severity.Note });
+            return none;
+        }
         if (differences == null)
         {
             findings.Add(new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(copy.From ?? copy.Name, 0, 0), $"{copy.Name}: the engine on `{origin.Connection}` could not describe `{copy.From}`, so its columns were not checked.") with { SeverityOverride = Severity.Warning });
@@ -71,7 +78,8 @@ internal static class CopyOriginCheck
         var now = SourceImport.ToDescriptor(live, declared);
         // what a copy reads: a column that is gone, a type that changed, a column that can now be NULL where the declaration says it cannot; an added column is not read, so it is no difference
         return SourceImport.Compare(declared, now)
-            .Where(c => c.Kind is SourceChangeKind.ColumnRemoved or SourceChangeKind.TypeChanged || c is { Kind: SourceChangeKind.NullabilityChanged, Detail: "now nullable" })
+            // a Flight SQL server's Arrow schemas may mark every column nullable (the one tried does), so a declared NOT NULL cannot be held against them
+            .Where(c => c.Kind is SourceChangeKind.ColumnRemoved or SourceChangeKind.TypeChanged || (origin.Engine != "flightsql" && c is { Kind: SourceChangeKind.NullabilityChanged, Detail: "now nullable" }))
             .Select(c => c.Kind switch
             {
                 SourceChangeKind.ColumnRemoved => $"column `{c.Column}` is gone",

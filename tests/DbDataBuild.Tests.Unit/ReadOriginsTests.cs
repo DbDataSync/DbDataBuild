@@ -99,7 +99,7 @@ public class ReadOriginsTests
     [InlineData("connections:\n  x: { engine: readonly postgres, allow_native_commands: true }\n", null)]
     [InlineData("connections:\n  postgres: { engine: sqlserver }\n", "named after an engine")]
     [InlineData("connections:\n  x: { engine: readonly duckdb, allow_native_commands: true }\n", "SQL Server and PostgreSQL connections")]
-    [InlineData("connections:\n  x: { engine: readonly flightsql }\n", "not built yet")]
+    [InlineData("connections:\n  x: { engine: readonly flightsql }\n", null)]
     public void A_bad_engine_is_a_diagnostic_that_names_the_choices(string yaml, string? expected)
     {
         Load(yaml, out var diags);

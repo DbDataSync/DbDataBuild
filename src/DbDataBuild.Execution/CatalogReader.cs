@@ -5,9 +5,13 @@ using DbDataBuild.State;
 namespace DbDataBuild.Execution;
 
 /// <summary>A source whose dialect says `catalog: none` was asked for its tables and columns. The tool does not guess them: they are declared by hand.</summary>
-public sealed class CatalogUnavailableException(string dialect) : Exception($"The dialect `{dialect}` says `catalog: none`: this source's tables and columns are not read from a catalog, so declare them by hand.")
+public sealed class CatalogUnavailableException(string dialect, string? message = null) : Exception(message ?? $"The dialect `{dialect}` says `catalog: none`: this source's tables and columns are not read from a catalog, so declare them by hand.")
 {
     public string Dialect { get; } = dialect;
+
+    /// <summary>A Flight SQL server that answers neither the metadata calls nor `information_schema`: the dialect did not say `catalog: none`, the server has none to read.</summary>
+    public static CatalogUnavailableException FlightSqlWithoutCatalog(string dialect) => new(dialect,
+        "The Flight SQL server offers neither the metadata calls (GetTables and the rest) nor `information_schema`: this source's tables and columns are not read from a catalog, so declare them by hand (or say `catalog: none` in the dialect to skip the attempt).");
 }
 
 /// <summary>Reads the live shape of the objects under a schema name, through the read session (DESIGN.md 12.2: catalog hashing on every target).</summary>
@@ -81,7 +85,8 @@ WHERE t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW')";
     public static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadObjectsAsync(ReadSession read, string target, string schema, CancellationToken ct = default, string? objectName = null)
     {
         if (target == "duckdb") return await ReadDuckDbObjectsAsync(read, schema, objectName, ct);
-        if (target is "odbc" or "flightsql") return await ReadInformationSchemaObjectsAsync(read, schema, objectName, ct);
+        if (target == "flightsql") return await ReadFlightSqlObjectsAsync(read, schema, objectName, ct);
+        if (target == "odbc") return await ReadInformationSchemaObjectsAsync(read, schema, objectName, ct);
         var p = new[] { new GateParameter("schema", DbType.String, schema), new GateParameter("object", DbType.String, objectName ?? "") };
         var postgres = target == "postgres";
         var columnRows = await read.QueryAsync(postgres ? PostgresColumns : SqlServerColumns, p, ct);
@@ -121,6 +126,17 @@ WHERE t.table_schema = ? AND t.table_type IN ('BASE TABLE', 'VIEW')";
             o.Columns.Add(new((string)r[3]!, type, Int(r[5]), decimalType ? Int(r[6]) : null, decimalType ? Int(r[7]) : null, (string?)r[8] == "YES", null, null));
         }
         return objects.ToDictionary(kv => $"{schema}.{kv.Key}", kv => new ObjectShape(schema, kv.Key, kv.Value.Kind, kv.Value.Columns, []));
+    }
+
+    // A Flight SQL server: its metadata calls first (the Arrow schema of each table), then `information_schema` as the dialect says; a dialect that says `catalog: none` reads neither.
+    private static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadFlightSqlObjectsAsync(ReadSession read, string schema, string? objectName, CancellationToken ct)
+    {
+        if (read.Dialect.Catalog == Models.CatalogStyle.None) throw new CatalogUnavailableException(read.Dialect.Name);
+        if (read.Metadata is { } metadata && await metadata.TablesAsync(schema, objectName, ct) is { } tables)
+            return tables.ToDictionary(t => $"{schema}.{t.Name}", t => new ObjectShape(schema, t.Name, t.IsView ? ObjectKind.View : ObjectKind.Table, t.Columns, []));
+        try { return await ReadInformationSchemaObjectsAsync(read, schema, objectName, ct); }
+        catch (Exception ex) when (DriverFailure.Rpc(ex) is { } rpc && rpc.StatusCode is not (Grpc.Core.StatusCode.Unavailable or Grpc.Core.StatusCode.Unauthenticated or Grpc.Core.StatusCode.PermissionDenied or Grpc.Core.StatusCode.DeadlineExceeded or Grpc.Core.StatusCode.Cancelled))
+        { throw CatalogUnavailableException.FlightSqlWithoutCatalog(read.Dialect.Name); }
     }
 
     private static async Task<IReadOnlyDictionary<string, ObjectShape>> ReadInformationSchemaObjectsAsync(ReadSession read, string schema, string? objectName, CancellationToken ct)

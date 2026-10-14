@@ -19,6 +19,9 @@ public sealed class ReadSession : IAsyncDisposable
     /// <summary>What the source says about itself without a query of ours (an ODBC driver's name and the server's version); null when it says nothing.</summary>
     public string? ServerDescription => source.ServerDescription;
 
+    /// <summary>The metadata calls of a source that has a catalog apart from SQL (a Flight SQL server); null for the others.</summary>
+    internal IMetadataCatalog? Metadata => source as IMetadataCatalog;
+
     /// <summary>The engine of the connection this session reads (sqlserver, fabric, postgres, duckdb): what the catalog and tracking queries are written for.</summary>
     public string Engine { get; }
 

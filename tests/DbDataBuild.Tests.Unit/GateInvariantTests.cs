@@ -36,6 +36,21 @@ public class GateInvariantTests
     }
 
     [Fact]
+    public void A_flight_sql_statement_is_sent_only_by_the_flight_sql_row_source_and_only_the_execution_project_knows_the_client()
+    {
+        // the Flight SQL client is a driver like the ADO.NET ones: its statements (ExecuteAsync, PrepareAsync, the metadata calls) are reached only through ReadSession
+        var client = new Regex(@"\b(FlightSqlClient|PreparedStatement|FlightClient|GrpcChannel)\b|Apache\.Arrow\.Flight");
+        var offenders = SourceFiles().Where(f => client.IsMatch(File.ReadAllText(f)))
+            .Where(f => Rel(f) is not ("DbDataBuild.Execution/FlightSqlRowSource.cs")).Select(Rel).ToList();
+        Assert.True(offenders.Count == 0, "The Flight SQL client may be used only by FlightSqlRowSource.cs, which only ReadSession reaches. Found it in: " + string.Join(", ", offenders));
+        var projects = Directory.EnumerateFiles(Path.Combine(Root(), "src"), "*.csproj", SearchOption.AllDirectories)
+            .Where(p => Regex.IsMatch(File.ReadAllText(p), @"PackageReference Include=""Apache\.Arrow")).Select(Rel).ToList();
+        Assert.Equal(["DbDataBuild.Execution/DbDataBuild.Execution.csproj"], projects);
+        var opener = File.ReadAllText(Path.Combine(Root(), "src/DbDataBuild.Execution/FlightSqlRowSource.cs"));
+        Assert.Contains("internal sealed class FlightSqlRowSource", opener);                         // not public: no way to a Flight SQL connection but ReadSession
+    }
+
+    [Fact]
     public void Only_the_execution_project_references_a_target_database_driver()
     {
         var driver = new Regex(@"^\s*using\s+(Microsoft\.Data\.SqlClient|System\.Data\.SqlClient|Npgsql|Microsoft\.Data\.SqlClient\.Server)\b|\b(Microsoft\.Data\.SqlClient|Npgsql)\.", RegexMultiline);

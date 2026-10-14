@@ -38,7 +38,7 @@ internal static class InspectCommand
             try { probe = Task.Run(() => ProbeAsync(login, connection.Engine)).GetAwaiter().GetResult(); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                probe = new(kind.ToString().ToLowerInvariant(), variable, true, login.User, false, null, DriverFailure.Describe(ex), null);
+                probe = new(kind.ToString().ToLowerInvariant(), variable, true, login.User, false, null, (login.Target is { } where ? where + ": " : "") + DriverFailure.Describe(ex), null);
             }
             probes.Add(probe);
             if (kind == Login.Read) readProbe = probe;
@@ -98,13 +98,15 @@ internal static class InspectCommand
                 var existing = Task.Run(async () =>
                 {
                     await using var read = await ReadSession.OpenAsync(readLogin!);
+                    // a Flight SQL server answers with its metadata calls when it has them (then `information_schema`)
+                    if (connection.Engine == "flightsql") return (await SourceCatalogReader.SchemasAsync(read, "flightsql")).ToHashSet(StringComparer.Ordinal);
                     var rows = await read.QueryAsync(connection.Engine is "postgres" or "duckdb" or "odbc" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
                     return rows.Select(r => (string)r[0]!).ToHashSet(StringComparer.Ordinal);
                 }).GetAwaiter().GetResult();
                 schemas.AddRange(names.Select(n => (n, (bool?)existing.Contains(n))));
                 output.WriteLine($"  {"schema names",-13} {(schemas.Count == 0 ? "no model declares this connection" : string.Join(", ", schemas.Select(s => $"{s.Name} ({(s.Exists == true ? "exists" : "missing: a deploy creates it")})")))}");
             }
-            catch (CatalogUnavailableException) { output.WriteLine($"  {"schema names",-13} not read: the dialect says `catalog: none`, so the tool does not look for tables"); }
+            catch (CatalogUnavailableException ex) { output.WriteLine($"  {"schema names",-13} not read: {(ex.Dialect.Length > 0 && ex.Message.Contains("catalog: none", StringComparison.Ordinal) && !ex.Message.StartsWith("The Flight SQL", StringComparison.Ordinal) ? "the dialect says `catalog: none`, so the tool does not look for tables" : "the Flight SQL server offers no catalog to read (neither metadata calls nor information_schema)")}"); }
             catch (Exception ex) when (ex is not OperationCanceledException) { output.WriteLine($"  {"schema names",-13} not read ({DriverFailure.Describe(ex)})"); }
         }
 
@@ -127,6 +129,7 @@ internal static class InspectCommand
         await session.QueryAsync(login.Dialect.Ping);
         // an origin known only by its driver has no version query of its own (the dialect says nothing about one): the driver says what it can
         var server = engine == "odbc" ? session.ServerDescription ?? "ODBC source"
+            : engine == "flightsql" ? session.ServerDescription ?? "Flight SQL server"
             : (await session.QueryAsync(engine == "postgres" ? "SELECT version()" : engine == "duckdb" ? "SELECT 'DuckDB ' || version()" : "SELECT @@VERSION"))[0][0]?.ToString()?.Split('\n')[0].Trim();
         if (server != null && server.Length > 90) server = server[..90] + "…";
         bool? create = null;
