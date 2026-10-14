@@ -412,7 +412,7 @@ public class OriginCatalogTests
         Assert.Contains("information_schema | odbc | none", text);
         Assert.Contains("readonly flightsql postgres", text);
         Assert.Contains("header.x-datasource=", text);
-        Assert.DoesNotContain("proxy_sql", text);
+        Assert.Contains("not to the driver or the server in front of it", text);
 
         // the example in the page is a project the tool accepts
         var example = string.Join("\n", text.Split('\n').SkipWhile(l => !l.StartsWith("Example:", StringComparison.Ordinal)).Skip(1).TakeWhile(l => !l.StartsWith("See ", StringComparison.Ordinal)).Select(l => l.TrimEnd('\r')));
