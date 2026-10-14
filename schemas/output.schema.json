@@ -1640,6 +1640,125 @@
             ]
           }
         },
+        "connections": {
+          "description": "The connections the metadata of mapped models and copy origins was read from, or why one was skipped.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "connection": {
+                "type": "string"
+              },
+              "driver": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "read",
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "connection",
+              "driver",
+              "status"
+            ]
+          }
+        },
+        "sources": {
+          "description": "The mapped models (and the tables copies read) compared with their tables: what differs, per model.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "table",
+                  "view",
+                  "unknown"
+                ]
+              },
+              "file": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "connection": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "new",
+                  "changed",
+                  "unchanged",
+                  "stale",
+                  "invalid",
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "column": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "detail"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "changes"
+            ]
+          }
+        },
+        "catalog_notes": {
+          "description": "What an origin's catalog could not say (indexes where it has no way to, keys a driver does not offer), once each.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "online": {
+          "description": "False with --offline: no connection was read.",
+          "type": "boolean"
+        },
         "written": {
           "type": "array",
           "items": {

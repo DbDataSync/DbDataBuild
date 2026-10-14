@@ -85,9 +85,10 @@ public static class CliApp
                     var write = new Option<bool>("--write") { Description = "Non-interactive: write the definitions without asking (needs --answers for any open questions)" };
                     var check = new Option<bool>("--check") { Description = "CI: fail if any definition is out of sync with its query; asks nothing, writes nothing" };
                     var accept = new Option<bool>("--accept-inferred") { Description = "Accept inferred proposals marked high certainty (names from paths, types from DuckDB, nullability from lineage)" };
-                    cmd.Arguments.Add(paths);
+                    var defineOffline = new Option<bool>("--offline") { Description = "Read no connection: update only the definitions of models from their queries (no mapped model is compared with its table)" };
+                    cmd.Arguments.Add(paths); cmd.Options.Add(defineOffline);
                     cmd.Options.Add(defineProject); cmd.Options.Add(answers); cmd.Options.Add(write); cmd.Options.Add(check); cmd.Options.Add(accept);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => DefineCommand.Run(spec, pr.GetValue(defineProject)!.FullName, pr.GetValue(paths) ?? [], pr.GetValue(answers), pr.GetValue(write), pr.GetValue(check), pr.GetValue(accept), o, e, input, interactive && !o.IsJson())));
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => ModelUpdateCommand.Run(spec, pr.GetValue(defineProject)!.FullName, pr.GetValue(paths) ?? [], pr.GetValue(answers), pr.GetValue(write), pr.GetValue(check), pr.GetValue(accept), pr.GetValue(defineOffline), o, e, input, interactive && !o.IsJson(), environment ?? Environment.GetEnvironmentVariable)));
                     break;
                 case "project compile":
                     var renderModels = new Argument<string[]>("models") { Description = "Model names (marts.fct_orders), model files, or directories (default: every model)", Arity = ArgumentArity.ZeroOrMore };

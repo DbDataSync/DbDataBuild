@@ -6,7 +6,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 |---|---|---|---|
 | [`project create`](#project-create) | `P⇒P` | Repo files only (no target connection) | List the project templates built in, or create a ready-to-run project from one |
 | [`project model create`](#project-model-create) | `P⇒P` | Repo files only (no target connection) | Create a model to start from: a definition and a placeholder query that runs, in the project's layout (a view, a full table, or an incremental one) |
-| [`project model update`](#project-model-update) | `P⇒P` | Repo files only (no target connection) | Generate or update model definition files |
+| [`project model update`](#project-model-update) | `C→P` | Target read-only | Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing |
 | [`project compile`](#project-compile) | `P⇒P` | Repo files only (no target connection) | Validate the project and write what is compiled from it (rendered/): the lowered queries and the load scripts per connection |
 | [`project tests run`](#project-tests-run) | `P→` | Offline only | Run the project's tests: metadata rules (DuckDB SQL over the metadata views) in tests/metadata/ and model tests (given rows, expected rows) in tests/models/ |
 | [`project tests list`](#project-tests-list) | `P→` | Offline only | List the project's tests with their kind, severity and tags (nothing is run) |
@@ -69,9 +69,9 @@ Usage: `dbdatabuild project model create <model> [options]`
 
 ## project model update
 
-Generate or update model definition files.
+Generate or update model definition files from the models' queries, and the mapped models (and the tables copies read) from their tables on the connections they are on; --offline reads no connection, --check writes nothing.
 
-Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
+Effect: Target read-only. Reads and writes: `C→P`.
 
 Usage: `dbdatabuild project model update [paths]... [options]`
 
@@ -84,6 +84,7 @@ Usage: `dbdatabuild project model update [paths]... [options]`
 | `--accept-inferred` | Accept inferred proposals marked high certainty (names from paths, types from DuckDB, nullability from lineage) |
 | `--answers` `<file>` | Answers file for the questions (see schemas/answers.schema.json) |
 | `--check` | CI: fail if any definition is out of sync with its query; asks nothing, writes nothing |
+| `--offline` | Read no connection: update only the definitions of models from their queries (no mapped model is compared with its table) |
 | `--project` `<path>` | Project root (contains models/) |
 | `--write` | Non-interactive: write the definitions without asking (needs --answers for any open questions) |
 

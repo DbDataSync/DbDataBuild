@@ -44,7 +44,7 @@ internal static class TuiCommand
                 var cmd = CliApp.Find(root, spec.Name)!;
                 var args = cmd.Arguments.Select(a => new ArgumentInfo(a.Name, a.Description ?? "", a.Arity.MaximumNumberOfValues > 1, a.Arity.MinimumNumberOfValues > 0, ArgumentChoices(spec.Name, a.Name))).ToList();
                 var options = cmd.Options.Where(o => !Hidden.Contains(o.Name)).Select(o => Describe(o)).ToList();
-                result.Add(new CommandInfo(spec.Name, spec.Purpose, spec.Effect.Describe(), ImpactOf(spec.Effect), args, options, WriteFlagOf(spec.Name), spec.Lane, spec.Disposition));
+                result.Add(new CommandInfo(spec.Name, spec.Purpose, spec.Effect.Describe(), ImpactOf(spec), args, options, WriteFlagOf(spec.Name), spec.Lane, spec.Disposition));
             }
             return result;
         }
@@ -69,13 +69,16 @@ internal static class TuiCommand
         /// <summary>Commands that only change something when a flag says so (`--write`), unless a flag says not to (`!--check`), or with any of several (`--apply-plan|--yes|--ack`).</summary>
         private static string? WriteFlagOf(string command) => command switch
         {
-            "project compile" => "!--check",
+            "project compile" or "project update" => "!--check",
             "project model update" => "--write",
             "connection init" or "connection seed" => "--apply",
             "connection deploy" => "--apply-plan|--yes|--ack",
             "connection refresh" => "!--dry-run",
             _ => null,
         };
+
+        // the two update commands read connections (a read login) and write the project's files: a person is asked before the second, an agent is not (project files are its work)
+        private static Impact ImpactOf(CommandSpec spec) => spec.Name is "project update" or "project model update" ? Impact.RepoFiles : ImpactOf(spec.Effect);
 
         private static Impact ImpactOf(EffectClass e) => e switch
         {
