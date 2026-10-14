@@ -54,6 +54,9 @@ public sealed record ConnectionConfig(string Name, string Engine, int? Version =
 
     public ConnectionKind Kind => DeclaredKind ?? ConnectionKind.OfEngine(Engine);
 
+    /// <summary>The project's own dialect profile (`dialects:`) that this connection's `engine` names; null when the dialect is a built-in.</summary>
+    public DialectProfile? Profile { get; init; }
+
     /// <summary>The connection is only read: no write login, never a destination, a tracking connection or a target of a deploy.</summary>
     public bool ReadOnly => Kind.ReadOnly;
 

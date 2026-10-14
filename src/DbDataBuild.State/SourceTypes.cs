@@ -29,7 +29,23 @@ public sealed record SourceType(string? LogicalType, SourceTypeFit Fit, string R
 /// </summary>
 public static class SourceTypes
 {
-    public static SourceType From(string target, ColumnShape c) => target == "duckdb" ? DuckDb(c) : target == "postgres" ? Postgres(c) : TSql(c);
+    /// <param name="profile">The dialect of a source that is known only by its driver (`odbc`, `flightsql`): its `types:` say what the catalog's type names are. Ignored for the engines the tool builds on and DuckDB.</param>
+    public static SourceType From(string target, ColumnShape c, DbDataBuild.Models.DialectProfile? profile = null) =>
+        target is "odbc" or "flightsql" ? FromProfile(profile ?? DbDataBuild.Models.DialectProfiles.Ansi, c)
+        : target == "duckdb" ? DuckDb(c) : target == "postgres" ? Postgres(c) : TSql(c);
+
+    // The standard names of information_schema, or the ones a project's dialect maps (`types:`). A type the profile does not name has no logical type, and is said so rather than guessed.
+    private static SourceType FromProfile(DbDataBuild.Models.DialectProfile profile, ColumnShape c)
+    {
+        if (!profile.Types.TryGetValue(c.Type.ToLowerInvariant(), out var logical))
+            return No($"{c.Type} has no logical type in the dialect `{profile.Name}` (map it under `types:` of the dialect)");
+        return logical switch
+        {
+            "DECIMAL" => c.Precision == null ? No("decimal without a precision") : c.Precision > 38 ? No($"decimal({c.Precision}) is wider than the 38 digits of a logical DECIMAL") : Exact(Dec(c.Precision, c.Scale)),
+            "VARCHAR" => Text(c, c.Type.ToLowerInvariant() is "char" or "character" or "bpchar", c.Type),
+            _ => Exact(logical),
+        };
+    }
 
     private static SourceType Exact(string logical) => new(logical, SourceTypeFit.Exact, "");
     private static SourceType Widened(string logical, string why) => new(logical, SourceTypeFit.Widened, why);

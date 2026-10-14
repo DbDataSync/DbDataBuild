@@ -38,7 +38,7 @@ internal static class InspectCommand
             try { probe = Task.Run(() => ProbeAsync(login, connection.Engine)).GetAwaiter().GetResult(); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                probe = new(kind.ToString().ToLowerInvariant(), variable, true, login.User, false, null, $"{ex.GetType().Name}{CliApp.DriverNumber(ex)}", null);
+                probe = new(kind.ToString().ToLowerInvariant(), variable, true, login.User, false, null, DriverFailure.Describe(ex), null);
             }
             probes.Add(probe);
             if (kind == Login.Read) readProbe = probe;
@@ -94,16 +94,18 @@ internal static class InspectCommand
                 var names = ProjectContext.Load(root).Project.Sources.Where(s => s.Definition.Targets?.Contains(connection.Name) ?? config.DefaultConnections.Contains(connection.Name))
                     .Select(s => DbDataBuild.Targets.Ddl.DdlGenerator.Split(s.Definition.Name).SchemaName).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
                 var (readLogin, _) = LoginSettings.FromEnvironment(connection, Login.Read, env);
+                if (readLogin!.Dialect.Catalog == CatalogStyle.None) throw new CatalogUnavailableException(readLogin.Dialect.Name);
                 var existing = Task.Run(async () =>
                 {
                     await using var read = await ReadSession.OpenAsync(readLogin!);
-                    var rows = await read.QueryAsync(connection.Engine is "postgres" or "duckdb" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
+                    var rows = await read.QueryAsync(connection.Engine is "postgres" or "duckdb" or "odbc" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
                     return rows.Select(r => (string)r[0]!).ToHashSet(StringComparer.Ordinal);
                 }).GetAwaiter().GetResult();
                 schemas.AddRange(names.Select(n => (n, (bool?)existing.Contains(n))));
                 output.WriteLine($"  {"schema names",-13} {(schemas.Count == 0 ? "no model declares this connection" : string.Join(", ", schemas.Select(s => $"{s.Name} ({(s.Exists == true ? "exists" : "missing: a deploy creates it")})")))}");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { output.WriteLine($"  {"schema names",-13} not read ({ex.GetType().Name}{CliApp.DriverNumber(ex)})"); }
+            catch (CatalogUnavailableException) { output.WriteLine($"  {"schema names",-13} not read: the dialect says `catalog: none`, so the tool does not look for tables"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { output.WriteLine($"  {"schema names",-13} not read ({DriverFailure.Describe(ex)})"); }
         }
 
         output.Payload("connection", connection.Name);
@@ -123,7 +125,9 @@ internal static class InspectCommand
         await using var session = await ReadSession.OpenForInspectionAsync(login);
         // the dialect's own ping first: it is what says the connection answers (a DuckDB file that is not there, an ODBC driver that is missing, fail here)
         await session.QueryAsync(login.Dialect.Ping);
-        var server = (await session.QueryAsync(engine == "postgres" ? "SELECT version()" : engine == "duckdb" ? "SELECT 'DuckDB ' || version()" : "SELECT @@VERSION"))[0][0]?.ToString()?.Split('\n')[0].Trim();
+        // an origin known only by its driver has no version query of its own (the dialect says nothing about one): the driver says what it can
+        var server = engine == "odbc" ? session.ServerDescription ?? "ODBC source"
+            : (await session.QueryAsync(engine == "postgres" ? "SELECT version()" : engine == "duckdb" ? "SELECT 'DuckDB ' || version()" : "SELECT @@VERSION"))[0][0]?.ToString()?.Split('\n')[0].Trim();
         if (server != null && server.Length > 90) server = server[..90] + "…";
         bool? create = null;
         if (login.Login == Login.Write)

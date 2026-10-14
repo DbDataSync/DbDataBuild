@@ -11,13 +11,7 @@ namespace DbDataBuild.Apply;
 public sealed class SessionInputRunner(ReadSession session) : IInputQueryRunner
 {
     /// <summary>The error number of a database exception (SQL Server's `Number`, PostgreSQL's `SqlState`): what went wrong without the driver's message, which can quote a value.</summary>
-    internal static string DriverNumber(Exception ex)
-    {
-        if (ex is not System.Data.Common.DbException) return "";
-        foreach (var name in new[] { "Number", "SqlState" })
-            if (ex.GetType().GetProperty(name)?.GetValue(ex) is { } value && value.ToString() is { Length: > 0 and <= 12 } text && text != "0") return $" (error {text})";
-        return "";
-    }
+    internal static string DriverNumber(Exception ex) => DriverFailure.Number(ex);
 
     public async Task<InputQueryResult> RunAsync(RefreshInputResolver resolver, string text, string? origin, CancellationToken ct)
     {
@@ -27,7 +21,7 @@ public sealed class SessionInputRunner(ReadSession session) : IInputQueryRunner
             return new(names, rows, null);
         }
         catch (GateRefusedException) { throw; }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return new([], [], $"failed to run ({ex.GetType().Name}{DriverNumber(ex)})"); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return new([], [], $"failed to run ({DriverFailure.Describe(ex)})"); }
     }
 }
 
@@ -39,7 +33,7 @@ public sealed class OriginInputRunner(Func<string, CancellationToken, Task<ReadS
     public async Task<InputQueryResult> RunAsync(RefreshInputResolver resolver, string text, string? ignored, CancellationToken ct)
     {
         try { session ??= await open(origin, ct); }
-        catch (Exception ex) when (ex is not (OperationCanceledException or GateRefusedException)) { return new([], [], $"could not reach the origin `{origin}` ({ex.GetType().Name})"); }
+        catch (Exception ex) when (ex is not (OperationCanceledException or GateRefusedException)) { return new([], [], $"could not reach the origin `{origin}` ({DriverFailure.Describe(ex)})"); }
         return await new SessionInputRunner(session).RunAsync(resolver, text, origin, ct);
     }
 

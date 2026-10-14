@@ -63,17 +63,22 @@ public sealed class LoginSettings
         var (settings, error) = FromEnvironment(connection.Name, connection.Engine, login, env);
         if (settings == null) return (null, error);
         var kind = connection.Kind;
-        return (settings.With(kind.ReadOnly, dialect ?? DialectProfiles.BuiltIn.GetValueOrDefault(kind.Dialect) ?? DialectProfiles.Ansi), null);
+        return (settings.With(kind.ReadOnly, dialect ?? connection.Profile ?? DialectProfiles.BuiltIn.GetValueOrDefault(kind.Dialect) ?? DialectProfiles.Ansi), null);
     }
 
     private LoginSettings With(bool readOnly, DialectProfile dialect) => new(Connection, Engine, Login, Variable, ConnectionString) { ReadOnly = readOnly, Dialect = dialect };
+
+    /// <summary>Reads the read or write login of a connection by name: the project's own connection (with its dialect) when it has one, else the connection named after an engine.</summary>
+    public static (LoginSettings? Settings, Diagnostic? Error) FromEnvironment(ProjectConfig project, string connection, Login login, Func<string, string?>? env = null) =>
+        project.Connections.TryGetValue(connection, out var declared) ? FromEnvironment(declared, login, env, project.Dialects.GetValueOrDefault(declared.Kind.Dialect))
+            : FromEnvironment(connection, project.EngineOf(connection) ?? connection, login, env);
 
     /// <summary>For a connection named after its engine (`sqlserver`, `postgres`, `fabric`), which needs no declaration.</summary>
     public static (LoginSettings? Settings, Diagnostic? Error) FromEnvironment(string connection, Login login, Func<string, string?>? env = null) =>
         FromEnvironment(connection, connection, login, env);
 
     /// <summary>For the command header (DESIGN.md 9.1): which variable and which user, never the password or the rest of the string.</summary>
-    public string Describe() => $"{(Engine == "duckdb" ? "DuckDB file, read-only" : User ?? "integrated/default")} ({Variable})";
+    public string Describe() => $"{(Engine == "duckdb" ? "DuckDB file, read-only" : Engine == "odbc" ? $"ODBC, {User ?? "the driver's own credentials"}" : User ?? "integrated/default")} ({Variable})";
 
     public string? User
     {
@@ -82,6 +87,7 @@ public sealed class LoginSettings
             try
             {
                 if (Engine == "duckdb") return null;                              // a file has no user
+                if (Engine == "odbc") return OdbcLogin.UserOf(ConnectionString);
                 if (Engine == "postgres") return new NpgsqlConnectionStringBuilder(ConnectionString).Username;
                 var b = new SqlConnectionStringBuilder(ConnectionString);
                 return string.IsNullOrEmpty(b.UserID) ? null : b.UserID;
@@ -94,13 +100,19 @@ public sealed class LoginSettings
     internal async Task<IRowSource> OpenRowSourceAsync(CancellationToken ct)
     {
         var connection = await OpenAsync(ct);
-        return Engine == "duckdb" ? new DuckDbRowSource(connection, Dialect.Parameters) : new AdoRowSource(connection, Dialect.Parameters);
+        return Engine switch
+        {
+            "duckdb" => new DuckDbRowSource(connection, Dialect.Parameters),
+            "odbc" => new OdbcRowSource((System.Data.Odbc.OdbcConnection)connection, Dialect.Parameters),
+            _ => new AdoRowSource(connection, Dialect.Parameters),
+        };
     }
 
     /// <summary>Opens a connection of the right provider. Internal on purpose: the write side is reached only through <see cref="MutationGate"/>, the read side through <see cref="ReadSession"/>.</summary>
     internal async Task<DbConnection> OpenAsync(CancellationToken ct)
     {
         if (Engine == "duckdb") return await OpenDuckDbAsync(ct);
+        if (Engine == "odbc") return await OpenOdbcAsync(ct);
         DbConnection c = Engine == "postgres"
             ? new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString)
             {
@@ -109,6 +121,19 @@ public sealed class LoginSettings
             }.ConnectionString)
             : new SqlConnection(new SqlConnectionStringBuilder(ConnectionString) { ApplicationName = Login == Login.Read ? $"{ProductInfo.Cli}-read" : $"{ProductInfo.Cli}-write" }.ConnectionString);
         await c.OpenAsync(ct);
+        return c;
+    }
+
+    /// <summary>
+    /// An ODBC origin: the login's value goes to the driver manager as written (unixODBC on Linux and macOS, the system's on Windows) and the vendor's driver it names; the tool ships neither. There is no write side to an ODBC
+    /// connection. A missing driver manager or driver surfaces here as an exception that <see cref="DriverFailure"/> turns into a sentence that says which is missing.
+    /// </summary>
+    private async Task<DbConnection> OpenOdbcAsync(CancellationToken ct)
+    {
+        if (Login == Login.Write) throw new InvalidOperationException("An ODBC connection is only read.");
+        var c = new System.Data.Odbc.OdbcConnection(OdbcLogin.Normalize(ConnectionString)) { ConnectionTimeout = 30 };
+        try { await c.OpenAsync(ct); }
+        catch { await c.DisposeAsync(); throw; }
         return c;
     }
 

@@ -118,9 +118,9 @@ public sealed class LoadRenderer(SupportMatrix matrix, MatrixLinter linter, Proj
         var diags = new List<Diagnostic>();
         var engine = config.EngineOf(engineConnection) ?? engineConnection;
         var who = $"{def.Name}.{operation} input `{input}` on {engineConnection}";
-        if (engine == "duckdb")
+        if (!TargetNames.All.Contains(engine))
         {
-            // an origin that is DuckDB runs the resolver in the dialect it was lowered to: there is nothing to transpile and no engine rule to apply, and its own parser is the check
+            // an origin that is not one of the three engines (a DuckDB file, an ODBC source) runs the resolver in the dialect it was lowered to: there is nothing to transpile and no engine rule to apply, and its own parser is the check
             var verdict = Polyglot.Validate(loweredSql, Dialects.Canonical);
             if (!verdict.Valid)
             {

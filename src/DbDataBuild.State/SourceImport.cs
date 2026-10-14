@@ -28,11 +28,11 @@ public sealed record SourceChange(SourceChangeKind Kind, string? Column, string 
 /// </summary>
 public static class SourceImport
 {
-    public static ImportedObject Describe(string target, ObjectShape shape, IReadOnlyList<string>? primaryKey, IReadOnlyList<ForeignKeyShape>? foreignKeys = null, ModelLayout layout = ModelLayout.Folder)
+    public static ImportedObject Describe(string target, ObjectShape shape, IReadOnlyList<string>? primaryKey, IReadOnlyList<ForeignKeyShape>? foreignKeys = null, ModelLayout layout = ModelLayout.Folder, DialectProfile? dialect = null)
     {
         var columns = shape.Columns.Select(c =>
         {
-            var t = SourceTypes.From(target, c);
+            var t = SourceTypes.From(target, c, dialect);
             return new ImportedColumn(c.Name, NativeText(c), t.LogicalType, t.Fit, t.Reason, c.Nullable);
         }).ToList();
         // an index or foreign key is exported only if every column it names is a column of the descriptor; the primary key's own index is the grain

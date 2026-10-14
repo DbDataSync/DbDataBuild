@@ -51,6 +51,11 @@ internal static class ImportSourcesCommand
 
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}{(write ? " + writes models/" : "")}  |  connection: {target}  |  login: {login?.Describe() ?? "none"}");
         if (missing != null) { error.Diag(missing); return CliApp.ExitFindings; }
+        if (login!.Dialect.Catalog == CatalogStyle.None)
+        {
+            error.WriteLine($"`{target}` has the dialect `{login.Dialect.Name}`, which says `catalog: none`: its tables and columns are not read from a catalog, so they are not guessed. Declare each table by hand as a mapped model (its columns and types in a source descriptor).");
+            return CliApp.ExitFindings;
+        }
 
         var rows = new List<Row>();
         var skipped = new List<Skipped>();
@@ -74,7 +79,7 @@ internal static class ImportSourcesCommand
                         if (!wanted.Any(w => w.SchemaName.IsMatch(shape.SchemaName) && w.Table.IsMatch(shape.Name))) continue;
                         seen.Add(qualified);
                         if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a model, not a source")); continue; }
-                        var live = SourceImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout);
+                        var live = SourceImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout, login!.Dialect);
                         // a table the project already has a mapped model for is written where that model's file is, whatever the layout says
                         if (committed.TryGetValue(qualified, out var existing) && existing.File.Length > 0) live = live with { File = existing.File };
                         if (live.File == null)
@@ -98,6 +103,7 @@ internal static class ImportSourcesCommand
             }).GetAwaiter().GetResult();
         }
         catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); return CliApp.ExitFindings; }
+        catch (CatalogUnavailableException ex) { error.WriteLine(ex.Message); return CliApp.ExitFindings; }
 
         rows = rows.OrderBy(r => r.Name, StringComparer.Ordinal).ToList();
         foreach (var d in diags) error.Diag(d);

@@ -96,7 +96,6 @@ public class ReadOriginsTests
     [InlineData("connections:\n  x: { engine: readonly postgres ansi }\n", "already has a dialect")]
     [InlineData("connections:\n  x: { engine: duckdb }\n", "needs `readonly`")]
     [InlineData("connections:\n  x: { engine: [] }\n", "list of keywords")]
-    [InlineData("connections:\n  x: { engine: readonly odbc }\n", "not built yet")]
     [InlineData("connections:\n  x: { engine: readonly postgres, allow_native_commands: true }\n", null)]
     [InlineData("connections:\n  postgres: { engine: sqlserver }\n", "named after an engine")]
     [InlineData("connections:\n  x: { engine: readonly duckdb, allow_native_commands: true }\n", "SQL Server and PostgreSQL connections")]

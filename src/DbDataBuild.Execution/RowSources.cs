@@ -35,4 +35,7 @@ public interface IRowSource : IAsyncDisposable
 
     /// <summary>The columns a SELECT would return, asked without running it; null when the origin cannot say.</summary>
     Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct);
+
+    /// <summary>What the source says about itself without a query of ours (an ODBC driver's name and the server's version); null when it says nothing.</summary>
+    string? ServerDescription => null;
 }

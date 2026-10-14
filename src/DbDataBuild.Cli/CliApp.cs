@@ -20,13 +20,7 @@ public static class CliApp
     /// The error number of a database exception (SQL Server's `Number`, PostgreSQL's `SqlState`), which says what went wrong (18456 is a failed login, 28P01 a wrong password) without the driver's message, which
     /// can quote a server name or a value. Read by name so the CLI does not depend on a driver.
     /// </summary>
-    internal static string DriverNumber(Exception ex)
-    {
-        if (ex is not System.Data.Common.DbException) return "";
-        foreach (var name in new[] { "Number", "SqlState" })
-            if (ex.GetType().GetProperty(name)?.GetValue(ex) is { } value && value.ToString() is { Length: > 0 and <= 12 } text && text != "0") return $" (error {text})";
-        return "";
-    }
+    internal static string DriverNumber(Exception ex) => DbDataBuild.Execution.DriverFailure.Number(ex);
 
     /// <summary>Top-level guard: unhandled exceptions become an internal-error diagnostic, never a stack trace.</summary>
     public static int Guarded(string[] args, TextWriter error, Func<int> body, TextWriter? output = null)

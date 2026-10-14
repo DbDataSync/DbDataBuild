@@ -56,6 +56,19 @@ ready() {
   esac
 }
 
+# The ODBC origin's tests (a copy from PostgreSQL through psqlodbc) need the driver manager (unixODBC) and PostgreSQL's ODBC driver on this machine: a driver unpacked by scripts/fetch-psqlodbc.sh, or one installed
+# on the system (odbcinst lists `PostgreSQL Unicode`). Without either the tests skip and say why.
+odbc_env() {
+  local dir="${DDB_PSQLODBC_DIR:-$HOME/.cache/dbdatabuild/psqlodbc}" driver
+  driver="$(find "$dir" -name psqlodbcw.so 2>/dev/null | head -1 || true)"
+  if [ -n "$driver" ]; then
+    echo "export DBDATABUILD_TEST_ODBC_PG_DRIVER='$driver'"
+    echo "export LD_LIBRARY_PATH='$(dirname "$(dirname "$driver")")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'"
+  elif command -v odbcinst >/dev/null 2>&1 && odbcinst -q -d 2>/dev/null | grep -qx '\[PostgreSQL Unicode\]'; then
+    echo "export DBDATABUILD_TEST_ODBC_PG_DRIVER='PostgreSQL Unicode'"
+  fi
+}
+
 case "${1:-}" in
   up)
     shift
@@ -69,6 +82,7 @@ case "${1:-}" in
     running ddb-conf-mssql && echo "export DBDATABUILD_TEST_MSSQL='Server=127.0.0.1,$(port ddb-conf-mssql 1433);User Id=sa;Password=$SA_PASSWORD;TrustServerCertificate=true;Encrypt=false'"
     running ddb-conf-mssql2025 && echo "export DBDATABUILD_TEST_MSSQL2025='Server=127.0.0.1,$(port ddb-conf-mssql2025 1433);User Id=sa;Password=$SA_PASSWORD;TrustServerCertificate=true;Encrypt=false'"
     running ddb-conf-pg && echo "export DBDATABUILD_TEST_PG='Host=127.0.0.1;Port=$(port ddb-conf-pg 5432);Username=postgres;Password=$PG_PASSWORD'"
+    odbc_env
     running ddb-conf-oracle && echo "export DBDATABUILD_TEST_ORACLE='Host=127.0.0.1;Port=$(port ddb-conf-oracle 1521);User Id=system;Password=$ORACLE_PASSWORD;Service=FREEPDB1'"
     running ddb-conf-spark && echo "export DBDATABUILD_TEST_SPARK='Host=127.0.0.1;Port=$(port ddb-conf-spark 10000)'"
     running ddb-conf-bigquery && echo "export DBDATABUILD_TEST_BIGQUERY='Host=127.0.0.1;Port=$(port ddb-conf-bigquery 9050)'"

@@ -11,7 +11,13 @@ namespace DbDataBuild.Execution;
 public sealed class ReadSession : IAsyncDisposable
 {
     private readonly IRowSource source;
-    private ReadSession(IRowSource source, string engine) { this.source = source; Engine = engine; }
+    private ReadSession(IRowSource source, string engine, DbDataBuild.Models.DialectProfile? dialect = null) { this.source = source; Engine = engine; Dialect = dialect ?? DbDataBuild.Models.DialectProfiles.OfEngine(engine) ?? DbDataBuild.Models.DialectProfiles.Ansi; }
+
+    /// <summary>The SQL dialect of the connection this session reads: what the catalog queries of a source that is not one of the three engines are written for (`catalog: none` means there is no catalog to read).</summary>
+    public DbDataBuild.Models.DialectProfile Dialect { get; }
+
+    /// <summary>What the source says about itself without a query of ours (an ODBC driver's name and the server's version); null when it says nothing.</summary>
+    public string? ServerDescription => source.ServerDescription;
 
     /// <summary>The engine of the connection this session reads (sqlserver, fabric, postgres, duckdb): what the catalog and tracking queries are written for.</summary>
     public string Engine { get; }
@@ -19,11 +25,11 @@ public sealed class ReadSession : IAsyncDisposable
     public static async Task<ReadSession> OpenAsync(LoginSettings read, CancellationToken ct = default)
     {
         if (read.Login != Login.Read) throw new ArgumentException("A read session needs the read login.", nameof(read));
-        return new ReadSession(await read.OpenRowSourceAsync(ct), read.Engine);
+        return new ReadSession(await read.OpenRowSourceAsync(ct), read.Engine, read.Dialect);
     }
 
     /// <summary>Opens a session on a login of either kind, to ask what that login may do (`connection inspect`). Every statement is still guarded as a read: only SELECTs go through it, whichever login it is.</summary>
-    public static async Task<ReadSession> OpenForInspectionAsync(LoginSettings login, CancellationToken ct = default) => new(await login.OpenRowSourceAsync(ct), login.Engine);
+    public static async Task<ReadSession> OpenForInspectionAsync(LoginSettings login, CancellationToken ct = default) => new(await login.OpenRowSourceAsync(ct), login.Engine, login.Dialect);
 
     /// <summary>For tests only: told the text of every query this process reads (a test proves that a command asked the connection nothing about its structure).</summary>
     internal static Action<string>? Observer { get; set; }
@@ -31,7 +37,7 @@ public sealed class ReadSession : IAsyncDisposable
     internal static ReadSession ForTesting(DbConnection connection, string engine = "sqlserver") => new(new AdoRowSource(connection, DbDataBuild.Models.ParameterStyle.NamedAt), engine);
 
     /// <summary>For tests only: a session over a source of the test's own.</summary>
-    internal static ReadSession ForTesting(IRowSource source, string engine) => new(source, engine);
+    internal static ReadSession ForTesting(IRowSource source, string engine, DbDataBuild.Models.DialectProfile? dialect = null) => new(source, engine, dialect);
 
     /// <summary>Seconds a query of <see cref="QueryAsync"/> may run before the driver gives up (the driver's own default, 30, when null; 0 is no limit). A comparison of two large tables is one query that scans each.</summary>
     public int? CommandTimeoutSeconds { get; set; }
@@ -95,7 +101,7 @@ public sealed class ReadSession : IAsyncDisposable
     /// </summary>
     public async Task<string?> RoutineDefinitionAsync(string engine, string name, CancellationToken ct = default)
     {
-        if (engine == "duckdb") return null;       // a DuckDB file holds no routines to watch
+        if (engine is "duckdb" or "odbc" or "flightsql") return null;       // a DuckDB file or an ODBC source holds no routines to watch
         var sql = engine == "postgres"
             ? $"SELECT pg_get_functiondef(CAST(@name AS {(name.Contains('(') ? "regprocedure" : "regproc")}))"
             : "SELECT OBJECT_DEFINITION(OBJECT_ID(@name))";
@@ -172,7 +178,7 @@ internal class AdoRowSource(DbConnection connection, ParameterStyle style) : IRo
 {
     protected DbConnection Connection => connection;
 
-    protected void Bind(DbCommand cmd, IReadOnlyList<GateParameter> parameters)
+    protected virtual void Bind(DbCommand cmd, IReadOnlyList<GateParameter> parameters)
     {
         foreach (var p in parameters)
         {
@@ -231,6 +237,103 @@ internal class AdoRowSource(DbConnection connection, ParameterStyle style) : IRo
     }
 
     public ValueTask DisposeAsync() => connection.DisposeAsync();
+}
+
+/// <summary>
+/// An ODBC connection as a row source (System.Data.Odbc over the machine's driver manager and the vendor's driver). Parameters are positional `?`, bound in the order given; the ADO.NET types the plan uses are
+/// mapped to ones ODBC has. The result's shape is asked with the driver's schema-only mode and described in the standard names of `information_schema`, which the dialect's `types` maps.
+/// </summary>
+internal sealed class OdbcRowSource(System.Data.Odbc.OdbcConnection connection, ParameterStyle style) : AdoRowSource(connection, style), IRowSource
+{
+    /// <summary>`ODBC driver psqlodbcw.so, server version 17.02.0000`: the driver's file name (never a path) and the version the server reported.</summary>
+    public string? ServerDescription
+    {
+        get
+        {
+            try { return $"ODBC driver {Path.GetFileName(connection.Driver)}, server version {connection.ServerVersion}"; }
+            catch (Exception) { return null; }
+        }
+    }
+
+    protected override void Bind(DbCommand cmd, IReadOnlyList<GateParameter> parameters) => BindPositional(cmd, parameters);
+
+    /// <summary>The values as ODBC parameters, in the order given (ODBC has no names: a `?` takes the next one).</summary>
+    internal static void BindPositional(DbCommand cmd, IReadOnlyList<GateParameter> parameters)
+    {
+        foreach (var p in parameters)
+        {
+            var dp = (System.Data.Odbc.OdbcParameter)cmd.CreateParameter();
+            dp.OdbcType = p.Type switch
+            {
+                DbType.DateTime2 or DbType.DateTimeOffset or DbType.DateTime => System.Data.Odbc.OdbcType.DateTime,
+                DbType.Date => System.Data.Odbc.OdbcType.Date,
+                DbType.Int64 => System.Data.Odbc.OdbcType.BigInt,
+                DbType.Int32 => System.Data.Odbc.OdbcType.Int,
+                DbType.Int16 => System.Data.Odbc.OdbcType.SmallInt,
+                DbType.Decimal => System.Data.Odbc.OdbcType.Numeric,
+                DbType.Boolean => System.Data.Odbc.OdbcType.Bit,
+                DbType.Guid => System.Data.Odbc.OdbcType.UniqueIdentifier,
+                DbType.Binary => System.Data.Odbc.OdbcType.VarBinary,
+                _ => System.Data.Odbc.OdbcType.NVarChar,
+            };
+            if (p.Value == null) { dp.Value = DBNull.Value; dp.Size = 1; }
+            else
+            {
+                dp.Value = p.Value;
+                if (p.Value is decimal d) { dp.Precision = 38; dp.Scale = (byte)((decimal.GetBits(d)[3] >> 16) & 0x7F); }
+            }
+            cmd.Parameters.Add(dp);
+        }
+    }
+
+    public override async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
+    {
+        await using var cmd = Connection.CreateCommand();
+        cmd.CommandText = sql;
+        Bind(cmd, parameters);
+        try
+        {
+            await using var rd = await cmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly, ct);
+            if (rd.GetSchemaTable() is not { } table) return null;
+            var columns = new List<ColumnShape>();
+            foreach (DataRow r in table.Rows)
+            {
+                var name = (string)r["ColumnName"];
+                var size = r["ColumnSize"] is int n and > 0 and < int.MaxValue ? n : (int?)null;
+                int? precision = r["NumericPrecision"] is short or int ? Convert.ToInt32(r["NumericPrecision"], CultureInfo.InvariantCulture) : null;
+                int? scale = r["NumericScale"] is short or int ? Convert.ToInt32(r["NumericScale"], CultureInfo.InvariantCulture) : null;
+                var nullable = r["AllowDBNull"] is not bool b || b;
+                var type = OdbcTypeName((System.Data.Odbc.OdbcType)Convert.ToInt32(r["ProviderType"], CultureInfo.InvariantCulture));
+                if (type.Length == 0) return null;
+                var text = type is "character" or "character varying";
+                var numeric = type == "decimal";
+                columns.Add(new(name, type, text ? size : null, numeric ? precision : null, numeric ? scale : null, nullable, null, null));
+            }
+            return columns;
+        }
+        catch (DbException) { return null; }
+    }
+
+    /// <summary>The standard name (the one `information_schema` uses) of an ODBC type; empty for one with no standard name.</summary>
+    internal static string OdbcTypeName(System.Data.Odbc.OdbcType type) => type switch
+    {
+        System.Data.Odbc.OdbcType.BigInt => "bigint",
+        System.Data.Odbc.OdbcType.Int => "integer",
+        System.Data.Odbc.OdbcType.SmallInt or System.Data.Odbc.OdbcType.TinyInt => "smallint",
+        System.Data.Odbc.OdbcType.Bit => "boolean",
+        System.Data.Odbc.OdbcType.Numeric or System.Data.Odbc.OdbcType.Decimal => "decimal",
+        System.Data.Odbc.OdbcType.Double => "double precision",
+        System.Data.Odbc.OdbcType.Real => "real",
+        System.Data.Odbc.OdbcType.Date => "date",
+        System.Data.Odbc.OdbcType.Time => "time",
+        System.Data.Odbc.OdbcType.DateTime or System.Data.Odbc.OdbcType.SmallDateTime or System.Data.Odbc.OdbcType.Timestamp => "timestamp",
+        System.Data.Odbc.OdbcType.Char or System.Data.Odbc.OdbcType.NChar => "character",
+        System.Data.Odbc.OdbcType.VarChar or System.Data.Odbc.OdbcType.NVarChar => "character varying",
+        System.Data.Odbc.OdbcType.Text or System.Data.Odbc.OdbcType.NText => "text",
+        System.Data.Odbc.OdbcType.Binary or System.Data.Odbc.OdbcType.VarBinary or System.Data.Odbc.OdbcType.Image => "blob",
+        System.Data.Odbc.OdbcType.UniqueIdentifier => "uuid",
+        _ => "",
+    };
 }
 
 internal sealed class AdoRowReader(DbCommand command, DbDataReader reader, DbTransaction? transaction) : IRowReader
