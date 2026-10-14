@@ -76,6 +76,8 @@ internal static class HelpDialects
         output.WriteLine("Extending: name a system that has no built-in after the system (a lower-case name that is not a keyword of `engine`), `extends:` the nearest dialect, change only what differs. A profile that is not valid is DDB-456 when the project loads.");
         output.WriteLine("A system behind a proxy is described by its own dialect, not by the proxy's: the proxy has many.");
         output.WriteLine();
+        output.WriteLine("A Flight SQL connection with no dialect keyword is asked what it is by `project update`, which commits the answer in dialects.lock.yml (an explicit keyword always wins).");
+        output.WriteLine();
         output.WriteLine("Example:");
         foreach (var line in Example.Split('\n')) output.WriteLine(line.TrimEnd().Length == 0 ? "" : "  " + line.TrimEnd());
         output.WriteLine();

@@ -52,7 +52,8 @@ Every command says, in its header and in `--help`, what it touches:
 |---|---|---|
 | `project create <dir>` | start a project from a template | `P⇒P` |
 | `project model create <schema.object>` | add a model | `P⇒P` |
-| `project model update [models]` | write or update the definitions of models from their queries | `P⇒P` |
+| `project model update [models]` | write or update the definitions of models from their queries, and the mapped models from their tables (`--offline` reads no connection) | `C→P` |
+| `project update [selectors]` | `project model update` for every model, plus the dialect each Flight SQL server reports (`dialects.lock.yml`); `--offline`, `--check` | `C→P` |
 | `project compile [models]` | check the project and write the compiled files (`rendered/`, refresh plans); `--check` for CI | `P⇒P` |
 | `project tests run [tests]` | run the project's tests | `P→` |
 | `project sample <models>` | run models on sample data | `P→` |
