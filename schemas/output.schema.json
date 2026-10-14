@@ -186,6 +186,25 @@
       "if": {
         "properties": {
           "command": {
+            "const": "help dialects"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/data_help_dialects"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
             "const": "help code"
           }
         },
@@ -1327,6 +1346,63 @@
           }
         }
       }
+    },
+    "data_help_dialects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "description": "The fields of a dialect profile under `dialects:`.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "choices": { "type": "array", "items": { "type": "string" } },
+              "default": { "type": "string" },
+              "meaning": { "type": "string" },
+              "used_by": { "type": "string" }
+            },
+            "required": [ "name", "choices", "default", "meaning", "used_by" ]
+          }
+        },
+        "built_in": {
+          "description": "The built-in dialects, as the tool has them.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "quote": { "type": "string" },
+              "parameters": { "enum": [ "named_at", "positional", "numbered" ] },
+              "ping": { "type": "string" },
+              "catalog": { "enum": [ "information_schema", "odbc", "none" ] },
+              "identifier_case": { "enum": [ "preserve", "upper", "lower" ] },
+              "limit": { "enum": [ "limit", "top", "fetch" ] },
+              "types": { "description": "How many catalog type names the dialect maps.", "type": "integer" }
+            },
+            "required": [ "name", "quote", "parameters", "ping", "catalog", "identifier_case", "limit", "types" ]
+          }
+        },
+        "keywords": {
+          "description": "The closed classes of the keywords of a connection's `engine`.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "access": { "type": "array", "items": { "type": "string" } },
+            "driver": { "type": "array", "items": { "type": "string" } },
+            "dialect": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": [ "access", "driver", "dialect" ]
+        },
+        "example": {
+          "description": "A project's dialects and connections for a proxy in front of several systems.",
+          "type": "string"
+        }
+      },
+      "required": [ "fields", "built_in", "keywords", "example" ]
     },
     "data_help_matrix": {
       "type": "object",

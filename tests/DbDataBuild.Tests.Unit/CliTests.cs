@@ -28,7 +28,7 @@ public class CliTests
     [Fact]
     public void Command_surface_matches_the_design_document()
     {
-        string[] expected = ["project create", "project model create", "project model update", "project compile", "project tests run", "project tests list", "project sample", "project seed", "project import", "project show loads", "project show graph", "project show metadata", "project show plan", "project show refresh", "project agent-kit", "connection inspect", "connection init", "connection status", "connection deploy", "connection refresh", "connection monitor", "connection compare", "connection seed", "connection publish", "ui terminal", "ui web", "ui mcp", "help code", "help matrix"];
+        string[] expected = ["project create", "project model create", "project model update", "project compile", "project tests run", "project tests list", "project sample", "project seed", "project import", "project show loads", "project show graph", "project show metadata", "project show plan", "project show refresh", "project agent-kit", "connection inspect", "connection init", "connection status", "connection deploy", "connection refresh", "connection monitor", "connection compare", "connection seed", "connection publish", "ui terminal", "ui web", "ui mcp", "help code", "help dialects", "help matrix"];
         Assert.Equal(expected.OrderBy(x => x), CommandSpecs.All.Select(c => c.Name).OrderBy(x => x));
     }
 

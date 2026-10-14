@@ -33,6 +33,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`ui mcp`](#ui-mcp) | `—` | Offline only | Model Context Protocol server on standard input and output: the commands as tools for an AI agent, the agent kit as resources (each tool it offers declares its own effect; commands that change a connection are offered only with --allow-writes) |
 | [`help code`](#help-code) | `—` | Offline only | Long-form explanation of a diagnostic code |
 | [`help matrix`](#help-matrix) | `—` | Offline only | Print the support matrix and portability report |
+| [`help dialects`](#help-dialects) | `—` | Offline only | What a dialect profile is: its fields, the built-in dialects, how to add one for a system behind odbc or flightsql (with an example) |
 
 ## project create
 
@@ -552,3 +553,11 @@ Usage: `dbdatabuild help matrix [options]`
 | Option | Meaning |
 |---|---|
 | `--rewrites` | List the rewrites that make the engines give DuckDB's answers (what each does, where it is required, and what the engine does without it); `rewrites:` in dbdatabuild.yml or a model turns the optional ones off |
+
+## help dialects
+
+What a dialect profile is: its fields, the built-in dialects, how to add one for a system behind odbc or flightsql (with an example).
+
+Effect: Offline only. Reads and writes: `—`.
+
+Usage: `dbdatabuild help dialects`

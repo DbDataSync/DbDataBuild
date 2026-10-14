@@ -399,6 +399,33 @@ public class OriginCatalogTests
         Assert.Null((await CatalogReader.FindAsync(plain, "odbc", "src", "items")).Shape);
     }
 
+    // ---- help dialects ----
+
+    [Fact]
+    public void Help_dialects_lists_the_fields_and_the_built_ins_from_the_data_and_its_example_is_a_project_that_loads()
+    {
+        var o = new StringWriter(); var e = new StringWriter();
+        Assert.Equal(0, Cli.CliApp.Run(["help", "dialects"], o, e, environment: _ => null));
+        var text = o.ToString();
+        foreach (var field in new[] { "extends", "quote", "parameters", "ping", "catalog", "identifier_case", "limit", "types" }) Assert.Contains($"  {field} ", text);
+        foreach (var name in DialectProfiles.BuiltIn.Keys) Assert.Contains($"  {name} ", text);
+        Assert.Contains("information_schema | odbc | none", text);
+        Assert.Contains("readonly flightsql postgres", text);
+        Assert.Contains("header.x-datasource=", text);
+        Assert.DoesNotContain("proxy_sql", text);
+
+        // the example in the page is a project the tool accepts
+        var example = string.Join("\n", text.Split('\n').SkipWhile(l => !l.StartsWith("Example:", StringComparison.Ordinal)).Skip(1).TakeWhile(l => !l.StartsWith("See ", StringComparison.Ordinal)).Select(l => l.TrimEnd('\r')));
+        var cfg = Load(example, out var diags)!;
+        Assert.DoesNotContain(diags, d => d.Severity == Severity.Error);
+        Assert.Equal(("postgres", "sqlserver", "clickhouse_sql"), (cfg.DialectOf("erp").Name, cfg.DialectOf("sales").Name, cfg.DialectOf("clicks").Name));
+
+        var json = new StringWriter();
+        Assert.Equal(0, Cli.CliApp.Run(["help", "dialects", "--format", "json"], json, new StringWriter(), environment: _ => null));
+        using var doc = System.Text.Json.JsonDocument.Parse(json.ToString());
+        Assert.Equal(8, doc.RootElement.GetProperty("data").GetProperty("fields").GetArrayLength());
+    }
+
     [Fact]
     public void The_gate_names_the_native_odbc_catalog_file_and_it_executes_no_statement()
     {

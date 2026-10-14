@@ -344,6 +344,9 @@ public static class CliApp
                     cmd.Options.Add(matrixRewrites);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => PrintMatrix(spec, pr.GetValue(matrixRewrites), o, e)));
                     break;
+                case "help dialects":
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => HelpDialects.Run(spec, o)));
+                    break;
                 case "help code":
                     var code = new Argument<string>("code") { Description = "Diagnostic code, e.g. DDB-214" };
                     cmd.Arguments.Add(code);

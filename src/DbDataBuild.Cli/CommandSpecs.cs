@@ -54,7 +54,7 @@ public static class CommandGroups
         ["project tests"] = "The project's tests",
         ["connection"] = "Work on a database the project is built on",
         ["ui"] = "Interfaces: the terminal screens, the web page, the server for AI agents",
-        ["help"] = "Reference: explain a diagnostic code, the support matrix",
+        ["help"] = "Reference: explain a diagnostic code, the support matrix, the dialects of read-only origins",
     };
 }
 
@@ -92,5 +92,6 @@ public static class CommandSpecs
         new("ui mcp", EffectClass.OfflineOnly, "Model Context Protocol server on standard input and output: the commands as tools for an AI agent, the agent kit as resources (each tool it offers declares its own effect; commands that change a connection are offered only with --allow-writes)", true, "", "—"),
         new("help code", EffectClass.OfflineOnly, "Long-form explanation of a diagnostic code", true, "", "—"),
         new("help matrix", EffectClass.OfflineOnly, "Print the support matrix and portability report", true, "", "—"),
+        new("help dialects", EffectClass.OfflineOnly, "What a dialect profile is: its fields, the built-in dialects, how to add one for a system behind odbc or flightsql (with an example)", true, "", "—"),
     ];
 }
