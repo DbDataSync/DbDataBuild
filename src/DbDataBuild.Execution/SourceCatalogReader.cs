@@ -57,15 +57,25 @@ JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.refnum
 WHERE c.contype = 'f' AND n.nspname = @schema
 ORDER BY t.relname, c.conname, k.ord";
 
+    // DuckDB: its own schemas are information_schema and pg_catalog (`main` is where tables go when no schema is named); the constraints come from duckdb_constraints(), parameters by position
+    private const string DuckDbSchemas = "SELECT schema_name FROM information_schema.schemata WHERE catalog_name = current_database() AND schema_name NOT IN ('information_schema', 'pg_catalog') ORDER BY schema_name";
+    private const string DuckDbPrimaryKeys = "SELECT table_name, array_to_string(constraint_column_names, chr(31)) FROM duckdb_constraints() WHERE constraint_type = 'PRIMARY KEY' AND database_name = current_database() AND schema_name = ? ORDER BY table_name";
+    private const string DuckDbForeignKeys = "SELECT table_name, constraint_name, array_to_string(constraint_column_names, chr(31)), referenced_table, array_to_string(referenced_column_names, chr(31)) FROM duckdb_constraints() WHERE constraint_type = 'FOREIGN KEY' AND database_name = current_database() AND schema_name = ? ORDER BY table_name, constraint_name";
+
     public static async Task<IReadOnlyList<string>> SchemasAsync(ReadSession read, string target, CancellationToken ct = default)
     {
-        var rows = await read.QueryAsync(target == "postgres" ? PostgresSchemas : SqlServerSchemas, null, ct);
+        var rows = await read.QueryAsync(target == "duckdb" ? DuckDbSchemas : target == "postgres" ? PostgresSchemas : SqlServerSchemas, null, ct);
         return rows.Select(r => (string)r[0]!).ToList();
     }
 
     /// <summary>Primary key columns, in key order, per table name of the schema name.</summary>
     public static async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> PrimaryKeysAsync(ReadSession read, string target, string schema, CancellationToken ct = default)
     {
+        if (target == "duckdb")
+        {
+            var keys = await read.QueryAsync(DuckDbPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct);
+            return keys.ToDictionary(r => (string)r[0]!, r => (IReadOnlyList<string>)((string)r[1]!).Split('\u001f').ToList(), StringComparer.Ordinal);
+        }
         var rows = await read.QueryAsync(target == "postgres" ? PostgresPrimaryKeys : SqlServerPrimaryKeys, [new GateParameter("schema", DbType.String, schema)], ct);
         return rows.GroupBy(r => (string)r[0]!, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.OrderBy(r => Convert.ToInt32(r[2], CultureInfo.InvariantCulture)).Select(r => (string)r[1]!).ToList(), StringComparer.Ordinal);
@@ -74,6 +84,15 @@ ORDER BY t.relname, c.conname, k.ord";
     /// <summary>Foreign keys per table name of the schema name, columns in key order.</summary>
     public static async Task<IReadOnlyDictionary<string, IReadOnlyList<State.ForeignKeyShape>>> ForeignKeysAsync(ReadSession read, string target, string schema, CancellationToken ct = default)
     {
+        if (target == "duckdb")
+        {
+            // DuckDB does not say which schema the referenced table is in: it is read as the same one
+            var keys = await read.QueryAsync(DuckDbForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
+            return keys.GroupBy(r => (string)r[0]!, StringComparer.Ordinal).ToDictionary(
+                table => table.Key,
+                table => (IReadOnlyList<State.ForeignKeyShape>)table.Select(r => new State.ForeignKeyShape((string)r[1]!, ((string)r[2]!).Split('\u001f').ToList(), schema, (string)r[3]!, ((string)r[4]!).Split('\u001f').ToList())).ToList(),
+                StringComparer.Ordinal);
+        }
         var rows = await read.QueryAsync(target == "postgres" ? PostgresForeignKeys : SqlServerForeignKeys, [new GateParameter("schema", DbType.String, schema)], ct);
         return rows.GroupBy(r => (string)r[0]!, StringComparer.Ordinal).ToDictionary(
             table => table.Key,

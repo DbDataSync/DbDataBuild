@@ -1,6 +1,7 @@
 using System.Data.Common;
 using DbDataBuild.Core;
 using DbDataBuild.Models;
+using DuckDB.NET.Data;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 
@@ -72,7 +73,7 @@ public sealed class LoginSettings
         FromEnvironment(connection, connection, login, env);
 
     /// <summary>For the command header (DESIGN.md 9.1): which variable and which user, never the password or the rest of the string.</summary>
-    public string Describe() => $"{User ?? "integrated/default"} ({Variable})";
+    public string Describe() => $"{(Engine == "duckdb" ? "DuckDB file, read-only" : User ?? "integrated/default")} ({Variable})";
 
     public string? User
     {
@@ -80,6 +81,7 @@ public sealed class LoginSettings
         {
             try
             {
+                if (Engine == "duckdb") return null;                              // a file has no user
                 if (Engine == "postgres") return new NpgsqlConnectionStringBuilder(ConnectionString).Username;
                 var b = new SqlConnectionStringBuilder(ConnectionString);
                 return string.IsNullOrEmpty(b.UserID) ? null : b.UserID;
@@ -89,11 +91,16 @@ public sealed class LoginSettings
     }
 
     /// <summary>Opens the read side of this login as a row source. Internal on purpose: the way to it is <see cref="ReadSession"/>.</summary>
-    internal async Task<IRowSource> OpenRowSourceAsync(CancellationToken ct) => new AdoRowSource(await OpenAsync(ct), Dialect.Parameters);
+    internal async Task<IRowSource> OpenRowSourceAsync(CancellationToken ct)
+    {
+        var connection = await OpenAsync(ct);
+        return Engine == "duckdb" ? new DuckDbRowSource(connection, Dialect.Parameters) : new AdoRowSource(connection, Dialect.Parameters);
+    }
 
     /// <summary>Opens a connection of the right provider. Internal on purpose: the write side is reached only through <see cref="MutationGate"/>, the read side through <see cref="ReadSession"/>.</summary>
     internal async Task<DbConnection> OpenAsync(CancellationToken ct)
     {
+        if (Engine == "duckdb") return await OpenDuckDbAsync(ct);
         DbConnection c = Engine == "postgres"
             ? new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString)
             {
@@ -102,6 +109,22 @@ public sealed class LoginSettings
             }.ConnectionString)
             : new SqlConnection(new SqlConnectionStringBuilder(ConnectionString) { ApplicationName = Login == Login.Read ? $"{ProductInfo.Cli}-read" : $"{ProductInfo.Cli}-write" }.ConnectionString);
         await c.OpenAsync(ct);
+        return c;
+    }
+
+    /// <summary>
+    /// A DuckDB origin: the login's value is the **path of a .duckdb file**, opened read-only (`access_mode=READ_ONLY`: a file that is not there is an error, never created, and nothing can be written to it), or `:memory:`, a
+    /// database with no file, for a native query that reads a Parquet or CSV file. There is no write side to a DuckDB connection.
+    /// </summary>
+    private async Task<DbConnection> OpenDuckDbAsync(CancellationToken ct)
+    {
+        if (Login == Login.Write) throw new InvalidOperationException("A DuckDB connection is only read.");
+        var path = ConnectionString.Trim();
+        var builder = new DuckDBConnectionStringBuilder { DataSource = path };
+        if (!string.Equals(path, ":memory:", StringComparison.Ordinal)) builder["access_mode"] = "READ_ONLY";
+        var c = new DuckDBConnection(builder.ConnectionString);
+        try { await c.OpenAsync(ct); }
+        catch { await c.DisposeAsync(); throw; }
         return c;
     }
 }

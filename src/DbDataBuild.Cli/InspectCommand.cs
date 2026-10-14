@@ -97,7 +97,7 @@ internal static class InspectCommand
                 var existing = Task.Run(async () =>
                 {
                     await using var read = await ReadSession.OpenAsync(readLogin!);
-                    var rows = await read.QueryAsync(connection.Engine == "postgres" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
+                    var rows = await read.QueryAsync(connection.Engine is "postgres" or "duckdb" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
                     return rows.Select(r => (string)r[0]!).ToHashSet(StringComparer.Ordinal);
                 }).GetAwaiter().GetResult();
                 schemas.AddRange(names.Select(n => (n, (bool?)existing.Contains(n))));
@@ -121,7 +121,9 @@ internal static class InspectCommand
     private static async Task<Probe> ProbeAsync(LoginSettings login, string engine)
     {
         await using var session = await ReadSession.OpenForInspectionAsync(login);
-        var server = (await session.QueryAsync(engine == "postgres" ? "SELECT version()" : "SELECT @@VERSION"))[0][0]?.ToString()?.Split('\n')[0].Trim();
+        // the dialect's own ping first: it is what says the connection answers (a DuckDB file that is not there, an ODBC driver that is missing, fail here)
+        await session.QueryAsync(login.Dialect.Ping);
+        var server = (await session.QueryAsync(engine == "postgres" ? "SELECT version()" : engine == "duckdb" ? "SELECT 'DuckDB ' || version()" : "SELECT @@VERSION"))[0][0]?.ToString()?.Split('\n')[0].Trim();
         if (server != null && server.Length > 90) server = server[..90] + "…";
         bool? create = null;
         if (login.Login == Login.Write)

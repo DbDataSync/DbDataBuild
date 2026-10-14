@@ -29,7 +29,7 @@ public sealed record SourceType(string? LogicalType, SourceTypeFit Fit, string R
 /// </summary>
 public static class SourceTypes
 {
-    public static SourceType From(string target, ColumnShape c) => target == "postgres" ? Postgres(c) : TSql(c);
+    public static SourceType From(string target, ColumnShape c) => target == "duckdb" ? DuckDb(c) : target == "postgres" ? Postgres(c) : TSql(c);
 
     private static SourceType Exact(string logical) => new(logical, SourceTypeFit.Exact, "");
     private static SourceType Widened(string logical, string why) => new(logical, SourceTypeFit.Widened, why);
@@ -74,6 +74,30 @@ public static class SourceTypes
         "binary" or "varbinary" or "image" => Widened("BLOB", $"{c.Type} is bytes of a declared length; BLOB has none"),
         "text" or "ntext" => Exact("VARCHAR"),
         "xml" => AsText("xml"),
+        _ => No($"{c.Type} has no logical type"),
+    };
+
+    // DuckDB's own type names are the logical types: most map exactly. An unsigned or 128-bit integer, an interval, a list, a struct, a map and an enum have no logical type.
+    private static SourceType DuckDb(ColumnShape c) => c.Type switch
+    {
+        "bigint" => Exact("BIGINT"),
+        "integer" => Exact("INTEGER"),
+        "smallint" => Exact("SMALLINT"),
+        "tinyint" => Widened("SMALLINT", "tinyint is 8 bits; SMALLINT holds every value of it"),
+        "boolean" => Exact("BOOLEAN"),
+        "decimal" => c.Precision == null ? No("decimal without a precision") : c.Precision > 38 ? No($"decimal({c.Precision}) is wider than the 38 digits of a logical DECIMAL") : Exact(Dec(c.Precision, c.Scale)),
+        "double" => Exact("DOUBLE"),
+        "float" or "real" => Exact("FLOAT"),
+        "date" => Exact("DATE"),
+        "time" => Exact("TIME"),
+        "timestamp" => Exact("TIMESTAMP"),
+        "timestamp_s" or "timestamp_ms" => Widened("TIMESTAMP", $"{c.Type} has fewer fractional digits than TIMESTAMP"),
+        "timestamp_ns" => Lossy("TIMESTAMP", "timestamp_ns keeps nanoseconds; TIMESTAMP keeps microseconds"),
+        "timestamp with time zone" => Exact("TIMESTAMP WITH TIME ZONE"),
+        "uuid" => Exact("UUID"),
+        "varchar" => Exact("VARCHAR"),
+        "blob" => Exact("BLOB"),
+        "json" => AsText("json"),
         _ => No($"{c.Type} has no logical type"),
     };
 

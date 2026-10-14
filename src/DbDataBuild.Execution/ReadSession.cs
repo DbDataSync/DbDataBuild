@@ -95,6 +95,7 @@ public sealed class ReadSession : IAsyncDisposable
     /// </summary>
     public async Task<string?> RoutineDefinitionAsync(string engine, string name, CancellationToken ct = default)
     {
+        if (engine == "duckdb") return null;       // a DuckDB file holds no routines to watch
         var sql = engine == "postgres"
             ? $"SELECT pg_get_functiondef(CAST(@name AS {(name.Contains('(') ? "regprocedure" : "regproc")}))"
             : "SELECT OBJECT_DEFINITION(OBJECT_ID(@name))";
@@ -167,9 +168,11 @@ public sealed class RowStream : IAsyncDisposable
 // The ADO.NET implementation of the row source lives here, with the session, because this file and MutationGate.cs are the only places GateInvariantTests lets hand text to a driver.
 
 /// <summary>An ADO.NET connection as a row source. <paramref name="style"/> says how the origin takes parameters: by name (`@name`) or by position (`?`, `$1`).</summary>
-internal sealed class AdoRowSource(DbConnection connection, ParameterStyle style) : IRowSource
+internal class AdoRowSource(DbConnection connection, ParameterStyle style) : IRowSource
 {
-    private void Bind(DbCommand cmd, IReadOnlyList<GateParameter> parameters)
+    protected DbConnection Connection => connection;
+
+    protected void Bind(DbCommand cmd, IReadOnlyList<GateParameter> parameters)
     {
         foreach (var p in parameters)
         {
@@ -203,7 +206,7 @@ internal sealed class AdoRowSource(DbConnection connection, ParameterStyle style
         catch { await cmd.DisposeAsync(); await transaction.RollbackAsync(CancellationToken.None); await transaction.DisposeAsync(); throw; }
     }
 
-    public async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
+    public virtual async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
@@ -251,5 +254,40 @@ internal sealed class AdoRowReader(DbCommand command, DbDataReader reader, DbTra
                 if (transaction != null) { await transaction.RollbackAsync(CancellationToken.None); await transaction.DisposeAsync(); }     // a command's effects, if it had any, are never kept
             }
         }
+    }
+}
+
+/// <summary>
+/// DuckDB's connection as a row source. It answers `DescribeAsync` without reading rows by running the SELECT as a derived table with `LIMIT 0` (the driver has no schema-only mode); the parameters are bound as for a read, so a
+/// native text with `?` placeholders can be described.
+/// </summary>
+internal sealed class DuckDbRowSource(DbConnection connection, ParameterStyle style) : AdoRowSource(connection, style)
+{
+    public override async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
+    {
+        await using var cmd = Connection.CreateCommand();
+        cmd.CommandText = $"SELECT * FROM ({sql.Trim().TrimEnd(';')}) AS ddb_described LIMIT 0";
+        Bind(cmd, parameters);
+        try
+        {
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            var columns = new List<ColumnShape>();
+            for (var i = 0; i < rd.FieldCount; i++)
+            {
+                var declared = (rd.GetDataTypeName(i) ?? "").ToLowerInvariant();
+                if (declared.Length == 0) return null;
+                var open = declared.IndexOf('(');
+                var type = open < 0 ? declared : declared[..open].Trim();
+                int? precision = null, scale = null;
+                if (type == "decimal" && open >= 0)
+                {
+                    var parts = declared[(open + 1)..].TrimEnd(')').Split(',');
+                    if (parts.Length == 2 && int.TryParse(parts[0], out var p) && int.TryParse(parts[1], out var sc)) (precision, scale) = (p, sc);
+                }
+                columns.Add(new(rd.GetName(i), type, null, precision, scale, true, null, null));
+            }
+            return columns;
+        }
+        catch (DbException) { return null; }
     }
 }

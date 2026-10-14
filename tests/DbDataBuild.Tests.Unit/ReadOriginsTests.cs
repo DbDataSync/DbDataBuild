@@ -99,6 +99,8 @@ public class ReadOriginsTests
     [InlineData("connections:\n  x: { engine: readonly odbc }\n", "not built yet")]
     [InlineData("connections:\n  x: { engine: readonly postgres, allow_native_commands: true }\n", null)]
     [InlineData("connections:\n  postgres: { engine: sqlserver }\n", "named after an engine")]
+    [InlineData("connections:\n  x: { engine: readonly duckdb, allow_native_commands: true }\n", "SQL Server and PostgreSQL connections")]
+    [InlineData("connections:\n  x: { engine: readonly flightsql }\n", "not built yet")]
     public void A_bad_engine_is_a_diagnostic_that_names_the_choices(string yaml, string? expected)
     {
         Load(yaml, out var diags);
@@ -109,10 +111,9 @@ public class ReadOriginsTests
     }
 
     [Fact]
-    public void Native_commands_are_only_for_the_engines_the_tool_builds_on()
+    public void Only_the_engines_the_tool_builds_on_are_build_targets()
     {
-        // (duckdb is not built in step 1, so the case is the rule on the kind itself)
-        Assert.False(ConnectionKind.OfEngine("postgres") is { IsBuildTarget: false });
+        Assert.True(ConnectionKind.OfEngine("postgres").IsBuildTarget);
         Assert.False(new ConnectionKind(ConnectionAccess.ReadOnly, "duckdb", "duckdb").IsBuildTarget);
     }
 

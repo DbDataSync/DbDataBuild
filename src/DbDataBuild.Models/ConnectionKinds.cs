@@ -41,7 +41,7 @@ public static class ConnectionKeywords
     public static bool NeedsReadOnly(string driver) => driver is "odbc" or "flightsql" or "duckdb";
 
     /// <summary>Drivers the tool lists but does not have yet; a connection of one is refused with a message that says so.</summary>
-    public static bool IsBuilt(string driver) => driver is "sqlserver" or "postgres" or "fabric";
+    public static bool IsBuilt(string driver) => driver is "sqlserver" or "postgres" or "fabric" or "duckdb";
 
     /// <summary>Splits the text of `engine` into words: separated by spaces and/or commas.</summary>
     public static IReadOnlyList<string> Words(string text) => text.Split([' ', ',', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

@@ -38,6 +38,11 @@ internal static class DiffCommand
             if (!ctx.Config.Connections.TryGetValue(againstConnection, out otherConnection)) { error.WriteLine($"Unknown connection `{againstConnection}`. One of: {string.Join(", ", ctx.Config.Connections.Keys.Order(StringComparer.Ordinal))}."); return CliApp.ExitUsage; }
         }
         var across = !string.Equals(otherConnection.Name, connection.Name, StringComparison.Ordinal);
+        if (!connection.Kind.IsBuildTarget || !otherConnection.Kind.IsBuildTarget)
+        {
+            error.WriteLine($"`connection compare` compares tables of SQL Server and PostgreSQL connections; `{(connection.Kind.IsBuildTarget ? otherConnection : connection).Name}` is {(connection.Kind.IsBuildTarget ? otherConnection : connection).Kind.Describe()}.");
+            return CliApp.ExitUsage;
+        }
         if (!across && string.Equals(left.SchemaName, right.SchemaName, StringComparison.OrdinalIgnoreCase) && string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)) { error.WriteLine("Both sides name the same table."); return CliApp.ExitUsage; }
 
         // the key: given, or the table's own grain (a model's grain or unique key, a source's grain)

@@ -21,8 +21,11 @@ internal static class NativeShapeCheck
         var values = NativeInline.Values(native, use, config, connection);
         var parameters = use.Parameters.Where(p => values.ContainsKey(p.Key)).Select(p => ApplyEngine.ToGate(new PlanParameter(p.Placeholder, values[p.Key].Type, "parameter", values[p.Key].Value))).ToList();
         var engine = config.EngineOf(connection) ?? connection;
+        // an origin that takes its values by position gets the text the transfer will send, and the values in the order the placeholders appear
+        var (text, order) = ParameterPlaceholders.Rewrite(use.Text, use.Parameters.Select(p => p.Placeholder).ToList(), login.Dialect);
+        if (order.Count > 0) parameters = order.Select(name => parameters.First(p => p.Name == name)).ToList();
         await using var read = await ReadSession.OpenAsync(login);
-        var columns = await read.DescribeAsync(use.Text, engine, parameters);
+        var columns = await read.DescribeAsync(text, engine, parameters);
         if (columns == null) return null;
         var live = SourceImport.Describe(engine, new ObjectShape("native", native.Name, ObjectKind.Table, columns, []), null);
         var now = SourceImport.ToDescriptor(live, native);

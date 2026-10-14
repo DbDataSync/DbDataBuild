@@ -648,7 +648,7 @@ internal sealed record OriginAccess(ProjectConfig Config, Func<string, string?> 
         try
         {
             await using var session = await OpenAsync(name, ct);
-            await session.QueryFirstRowsAsync("SELECT 1", 1, 30, ct);
+            await session.QueryFirstRowsAsync(Config.DialectOf(name).Ping, 1, 30, ct);
             return null;
         }
         catch (GateRefusedException ex) { return ex.Diagnostic.Found; }
