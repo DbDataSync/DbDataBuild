@@ -31,6 +31,25 @@ A **model** is a table or view in a connection's database, described by files in
 | **Drift** | detected | detected | detected | detected | detected | checked against the database (`project import`, the structure check) | the routines it names (`track_definition`) |
 | **Typical use** | a mart over other tables | a small dimension | a fact table with a key | an event table by day | bring a shop system's orders into the warehouse | a source table you read but do not own | `STRING_SPLIT`, a table-valued function, a stored procedure result |
 
+## Settings inside `kind`
+
+`kind` is a mapping. `type` is the one setting every model has, and its values are the seven above. The other keys depend on the type; any key not listed for a type is an error (unknown keys are refused). Closed sets of values are marked.
+
+| Key | Used by | Required | Values | Meaning |
+|---|---|---|---|---|
+| `type` | all | yes | **closed:** `view`, `full`, `incremental_by_unique_key`, `incremental_by_time_range`, `copy`, `mapped`, `native` | what the model is |
+| `unique_key` | `incremental_by_unique_key`; `copy` (an incremental copy) | yes for `incremental_by_unique_key`; for a copy, needed with `watermark` | a list of column names | the rows of a load replace the rows with the same key; checked against `grain` |
+| `time_column` | `incremental_by_time_range` | yes | a `DATE` or `TIMESTAMP` column | the column the range is measured on |
+| `lookback` | `incremental_by_time_range` | no | a duration such as `3 days` (minutes, hours, days, weeks, months; a `DATE` column takes days, weeks or months) | how far before the newest value a load starts again, for late or changed rows |
+| `from` | `copy` | yes | `schema_name.table_name` of a model, mapped model or another copy, on exactly one connection other than the copy's | the origin |
+| `slice` | `copy` | no | `column`, `value` (may use `${origin.name}` or `${connection.name}`), `type` (when the origin has no such column) | which rows belong to an origin, for a copy from several connections; a load replaces only that origin's rows |
+| `watermark` | `copy` | no | `column`, `lookback` | makes a copy incremental: read the rows at or after the newest value the destination holds, less `lookback` (needs `unique_key`) |
+| `on_mismatch` | `copy` | no | **closed:** `fail` (default), `skip` | what a deploy does about an origin whose table differs from its declaration: stop, or leave that origin out (never silently). A refresh does not make this check |
+| `access` | `native` | no (default `select`) | **closed:** `select`, `command` | `select`: a query can contain it (it is inlined as a derived table). `command`: it can only be run, as the origin of a copy |
+| `query` | `native` | yes, here or in a `.native.sql` file beside the definition (not both) | the engine's own text | a single `SELECT` for `select`; one call (`EXEC`, `EXECUTE`, `CALL` or `SELECT`) for `command` |
+
+`view`, `full` and `mapped` take no other key in `kind`. Settings that belong to the model rather than to its kind are outside `kind`: `columns`, `grain`, `indexes`, `connections`, `loads`, `refresh`, `hooks`, `renames`, `title`, `description`, `tags`, `properties`. A native model also has `reads`, `parameters` and `track_definition` outside `kind`.
+
 ## The seven in more detail
 
 ### `view`
