@@ -11,6 +11,7 @@ public static class DriverFailure
     /// <summary>` (error 1234)` for a database exception (SQL Server's `Number`, PostgreSQL's `SqlState`, the SQLSTATE of an ODBC driver), else nothing.</summary>
     public static string Number(Exception ex)
     {
+        if (ex is OdbcCatalogException catalogFunction) return State(catalogFunction.SqlState) is { } fromFunction ? $" (error {fromFunction})" : "";
         if (ex is OdbcException odbc) return odbc.Errors.Count > 0 && State(odbc.Errors[0].SQLState) is { } state ? $" (error {state})" : "";
         if (ex is not System.Data.Common.DbException) return "";
         foreach (var name in new[] { "Number", "SqlState" })

@@ -445,7 +445,12 @@ public static class ProjectConfigLoader
                         if (parsed == null) Add(DiagnosticCatalog.InvalidValue, en, problem!, fix);
                         else if (!ConnectionKeywords.IsBuilt(parsed.Driver)) Add(DiagnosticCatalog.InvalidValue, en, $"The driver `{parsed.Driver}` is listed but not built yet in this release.", $"Built: {string.Join(", ", ConnectionKeywords.Drivers.Where(ConnectionKeywords.IsBuilt))}.");
                         else if (isEngineName && parsed.Driver != name) Add(DiagnosticCatalog.InvalidValue, en, $"The connection `{name}` is named after an engine, so its driver is `{name}`, not `{parsed.Driver}`.", "Give the connection another name.");
-                        else { engine = parsed.Driver; kind = parsed; }
+                        else
+                        {
+                            engine = parsed.Driver; kind = parsed;
+                            if (ProfileOf(parsed, dialects) is { Catalog: CatalogStyle.Odbc } && parsed.Driver != "odbc")
+                                Add(DiagnosticCatalog.DialectProfileInvalid, en, $"The dialect `{parsed.Dialect}` says `catalog: odbc`, which reads the catalog with an ODBC driver's functions, and the connection `{name}` is `{parsed.Driver}`.", "Use a dialect with `catalog: information_schema` (or `none`) for this connection; Flight SQL reads its own metadata calls without a setting.");
+                        }
                     }
                 }
                 else if (!isEngineName) Add(DiagnosticCatalog.MissingKey, e.Key, $"The connection `{name}` needs an `engine`.", EngineChoices(dialects));
@@ -470,9 +475,19 @@ public static class ProjectConfigLoader
                     if (mp is YamlScalar mps && int.TryParse(mps.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap is >= 1 and <= 64) maxParallel = cap;
                     else Add(DiagnosticCatalog.InvalidValue, mp, $"`connections.{name}.max_parallel` must be a whole number from 1 to 64.");
                 }
-                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel, DeclaredKind = kind, Profile = kind != null && dialects.TryGetValue(kind.Dialect, out var own) ? own : null };
+                if (engine != null) result[name] = new ConnectionConfig(name, engine, version, e.Key.Line, parameters, ownTracking, allowCommands, ReadSemanticsOverride(settings, name), ReadLifecycleOverride(settings, $"connections.{name}"), ReadInfo(settings)) { Timezone = ReadTimezone(settings, $"`connections.{name}.timezone`"), MaxParallel = maxParallel, DeclaredKind = kind, Profile = ProfileOf(kind, dialects) };
             }
             return result;
+        }
+
+        /// <summary>The profile of a connection that reads through a driver of its own: the project's profile or the built-in one the keyword names, as that driver uses it (<see cref="DialectProfiles.ForDriver"/>); null for the others.</summary>
+        private static DialectProfile? ProfileOf(ConnectionKind? kind, IReadOnlyDictionary<string, DialectProfile> dialects)
+        {
+            if (kind == null) return null;
+            if (dialects.TryGetValue(kind.Dialect, out var own)) return DialectProfiles.ForDriver(kind.Driver, own);
+            if (kind.Driver is not ("odbc" or "flightsql") || !DialectProfiles.BuiltIn.TryGetValue(kind.Dialect, out var builtIn)) return null;
+            var adjusted = DialectProfiles.ForDriver(kind.Driver, builtIn);
+            return ReferenceEquals(adjusted, builtIn) ? null : adjusted;      // `ansi` and `duckdb` are used as they are
         }
 
         private static string EngineChoices(IReadOnlyDictionary<string, DialectProfile> dialects) =>

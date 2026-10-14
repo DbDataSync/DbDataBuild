@@ -98,15 +98,15 @@ internal static class InspectCommand
                 var existing = Task.Run(async () =>
                 {
                     await using var read = await ReadSession.OpenAsync(readLogin!);
-                    // a Flight SQL server answers with its metadata calls when it has them (then `information_schema`)
-                    if (connection.Engine == "flightsql") return (await SourceCatalogReader.SchemasAsync(read, "flightsql")).ToHashSet(StringComparer.Ordinal);
+                    // a Flight SQL server answers with its metadata calls when it has them (then `information_schema`); an ODBC source whose dialect says `catalog: odbc`, with the driver's own catalog functions
+                    if (connection.Engine == "flightsql" || (connection.Engine == "odbc" && readLogin.Dialect.Catalog == CatalogStyle.Odbc)) return (await SourceCatalogReader.SchemasAsync(read, connection.Engine)).ToHashSet(StringComparer.Ordinal);
                     var rows = await read.QueryAsync(connection.Engine is "postgres" or "duckdb" or "odbc" ? "SELECT schema_name FROM information_schema.schemata" : "SELECT name FROM sys.schemas");
                     return rows.Select(r => (string)r[0]!).ToHashSet(StringComparer.Ordinal);
                 }).GetAwaiter().GetResult();
                 schemas.AddRange(names.Select(n => (n, (bool?)existing.Contains(n))));
                 output.WriteLine($"  {"schema names",-13} {(schemas.Count == 0 ? "no model declares this connection" : string.Join(", ", schemas.Select(s => $"{s.Name} ({(s.Exists == true ? "exists" : "missing: a deploy creates it")})")))}");
             }
-            catch (CatalogUnavailableException ex) { output.WriteLine($"  {"schema names",-13} not read: {(ex.Dialect.Length > 0 && ex.Message.Contains("catalog: none", StringComparison.Ordinal) && !ex.Message.StartsWith("The Flight SQL", StringComparison.Ordinal) ? "the dialect says `catalog: none`, so the tool does not look for tables" : "the Flight SQL server offers no catalog to read (neither metadata calls nor information_schema)")}"); }
+            catch (CatalogUnavailableException ex) { output.WriteLine($"  {"schema names",-13} not read: {ex.Brief}"); }
             catch (Exception ex) when (ex is not OperationCanceledException) { output.WriteLine($"  {"schema names",-13} not read ({DriverFailure.Describe(ex)})"); }
         }
 

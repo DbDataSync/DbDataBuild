@@ -386,7 +386,7 @@ public class FlightSqlOriginConformanceTests
     }
 
     [SkippableFact]
-    public async Task A_server_that_gives_no_schema_for_a_prepared_statement_is_still_read_and_the_native_text_is_reported_as_not_checked()
+    public async Task A_server_that_gives_no_schema_for_a_prepared_statement_is_still_read_and_the_native_text_is_described_by_a_zero_row_read()
     {
         await using var server = await InProcessFlightSqlServer.StartAsync();
         server.Exec("CREATE TABLE t AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) v(id, s)");
@@ -395,7 +395,11 @@ public class FlightSqlOriginConformanceTests
         var rows = await session.QueryAsync("SELECT id, s FROM t WHERE id >= ? /*noschema*/", [new("w", System.Data.DbType.Int64, 2L)]);
         Assert.Equal([[2, "b"]], rows.Select(r => r.Select(v => v is long l ? (object)(int)l : v).ToArray()).ToArray());
         Assert.True(server.OpenPrepared == 0, string.Join(",", server.Actions));
-        Assert.Null(await session.DescribeAsync("SELECT id, s FROM t WHERE id >= ? /*noschema*/", "flightsql", [new("w", System.Data.DbType.Int64, 2L)]));
+        // the server will not say the schema of the statement as it is, so the tool asks for no rows of it in the dialect's limit style (ansi: FETCH FIRST 0 ROWS ONLY) and takes the schema of the answer
+        server.ClearLog();
+        var viaZeroRows = await session.DescribeAsync("SELECT id, s FROM t WHERE id >= ? /*noschema*/", "flightsql", [new("w", System.Data.DbType.Int64, 2L)]);
+        Assert.Equal(["id", "s"], viaZeroRows!.Select(c => c.Name).ToArray());
+        Assert.Contains(server.Texts, t => t.Contains("AS ddb_described FETCH FIRST 0 ROWS ONLY"));
         Assert.True(server.OpenPrepared == 0, string.Join(",", server.Actions));
         var described = await session.DescribeAsync("SELECT id, s FROM t WHERE id >= ?", "flightsql", [new("w", System.Data.DbType.Int64, 2L)]);
         Assert.Equal(["integer", "character varying"], described!.Select(c => c.Type).ToArray());

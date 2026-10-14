@@ -210,6 +210,7 @@ public sealed record ProjectConfig(
     /// <summary>The SQL dialect an origin takes: the built-in or the project's profile that the connection's `engine` names. A connection the project does not have is read as the engine of that name.</summary>
     public DialectProfile DialectOf(string connection)
     {
+        if (Connections.TryGetValue(connection, out var withProfile) && withProfile.Profile != null) return withProfile.Profile;
         var name = Connections.TryGetValue(connection, out var c) ? c.Kind.Dialect : connection;
         return Dialects.TryGetValue(name, out var own) ? own : DbDataBuild.Models.DialectProfiles.BuiltIn.TryGetValue(name, out var builtIn) ? builtIn : DbDataBuild.Models.DialectProfiles.Ansi;
     }

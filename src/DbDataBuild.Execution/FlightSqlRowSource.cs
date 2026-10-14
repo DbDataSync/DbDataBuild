@@ -6,6 +6,7 @@ using Apache.Arrow.Flight;
 using Apache.Arrow.Flight.Client;
 using Apache.Arrow.Flight.Sql;
 using Apache.Arrow.Flight.Sql.Client;
+using DbDataBuild.Models;
 using DbDataBuild.State;
 using Google.Protobuf;
 using Grpc.Core;
@@ -20,12 +21,18 @@ internal sealed record MetadataTable(string SchemaName, string Name, bool IsView
 /// <summary>A foreign key as a Flight SQL server's imported-keys call describes it: the key's name, its columns and what they reference.</summary>
 internal sealed record MetadataForeignKey(string Table, string Name, IReadOnlyList<string> Columns, string ReferencedSchema, string ReferencedTable, IReadOnlyList<string> ReferencedColumns);
 
+/// <summary>An index as a catalog describes it: its table, name, whether it is unique, its key columns in order (`name desc` for a descending one) and its included columns.</summary>
+internal sealed record MetadataIndex(string Table, string Name, bool Unique, IReadOnlyList<string> Columns, IReadOnlyList<string> Include);
+
 /// <summary>
-/// What a source that has a catalog of its own, apart from SQL, can say about its tables: Flight SQL's metadata calls (`CommandGetDbSchemas`, `CommandGetTables`, `CommandGetPrimaryKeys`, `CommandGetImportedKeys`).
-/// Every answer is null when the server does not offer that call; the caller then falls back to the dialect's `information_schema` text, or says plainly that there is no catalog to read.
+/// What a source that has a catalog of its own, apart from SQL, can say about its tables: Flight SQL's metadata calls (`CommandGetDbSchemas`, `CommandGetTables`, `CommandGetPrimaryKeys`, `CommandGetImportedKeys`) and
+/// ODBC's catalog functions (`catalog: odbc`). Every answer is null when the source does not offer that call; the caller then falls back to the dialect's `information_schema` text, or says plainly that there is no catalog to read.
 /// </summary>
 internal interface IMetadataCatalog
 {
+    /// <summary>The indexes of the tables of a schema, per table; null where the source has no way to say (Flight SQL has no metadata call for indexes).</summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<MetadataIndex>>?> IndexesAsync(string schema, CancellationToken ct) => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<MetadataIndex>>?>(null);
+
     Task<IReadOnlyList<string>?> SchemasAsync(CancellationToken ct);
     Task<IReadOnlyList<MetadataTable>?> TablesAsync(string schema, string? table, CancellationToken ct);
     Task<IReadOnlyDictionary<string, IReadOnlyList<string>>?> PrimaryKeysAsync(string schema, CancellationToken ct);
@@ -226,7 +233,22 @@ internal sealed class FlightSqlRowSource : IRowSource, IMetadataCatalog
     public Task<IRowReader> ExecuteCommandAsync(string text, IReadOnlyList<GateParameter> parameters, CancellationToken ct) =>
         throw new NotSupportedException("A Flight SQL connection runs queries only: a native command is for SQL Server and PostgreSQL connections.");
 
+    /// <summary>The dialect of the connection, for the one bounded read this source makes (<see cref="DescribeAsync"/>); the login sets it.</summary>
+    internal DialectProfile Dialect { get; set; } = DialectProfiles.Ansi;
+
     public async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
+    {
+        if (await DescribeByProtocolAsync(sql, ct) is { } described) return described;
+        // a server that will not say the schema of a statement without running it: a read bounded to no rows, in the dialect's `limit` style, gives the schema of its (empty) result
+        try
+        {
+            await using var reader = (FlightSqlRowReader)await ExecuteAsync(Dialect.Bounded(sql, 0), parameters, null, false, ct);
+            return reader.ResultSchema.FieldsList.Count == 0 ? null : ArrowConversions.Columns(reader.ResultSchema);
+        }
+        catch (Exception ex) when (DriverFailure.Rpc(ex) != null) { return null; }
+    }
+
+    private async Task<IReadOnlyList<ColumnShape>?> DescribeByProtocolAsync(string sql, CancellationToken ct)
     {
         var options = Options(null);
         PreparedHandle? prepared = null;
@@ -396,6 +418,9 @@ internal sealed class FlightSqlRowReader : IRowReader
     }
 
     public IReadOnlyList<string> Names => schema.FieldsList.Select(f => f.Name).ToList();
+
+    /// <summary>The Arrow schema of the result as the server (or the first batch) said it.</summary>
+    internal Schema ResultSchema => schema;
 
     // the next batch with rows, across endpoints; false at the end of the last
     private async Task<bool> AdvanceBatchAsync()

@@ -61,8 +61,8 @@ public class OdbcOriginTests
     [Fact]
     public void A_dialect_of_the_project_reaches_the_login_through_every_way_of_asking_for_it()
     {
-        var cfg = ProjectConfigLoader.Load("dialects:\n  proxy_sql: { extends: ansi, quote: '`', ping: SELECT 42 }\nconnections:\n  legacy: { engine: readonly odbc proxy_sql }\n  plain: { engine: readonly odbc }\n", "dbdatabuild.yml", [])!;
-        Assert.Equal("proxy_sql", cfg.Connections["legacy"].Profile!.Name);
+        var cfg = ProjectConfigLoader.Load("dialects:\n  backtick_sql: { extends: ansi, quote: '`', ping: SELECT 42 }\nconnections:\n  legacy: { engine: readonly odbc backtick_sql }\n  plain: { engine: readonly odbc }\n", "dbdatabuild.yml", [])!;
+        Assert.Equal("backtick_sql", cfg.Connections["legacy"].Profile!.Name);
         Assert.Null(cfg.Connections["plain"].Profile);
         string? Env(string _) => "DSN=x";
         Assert.Equal("SELECT 42", LoginSettings.FromEnvironment(cfg.Connections["legacy"], Login.Read, Env).Settings!.Dialect.Ping);

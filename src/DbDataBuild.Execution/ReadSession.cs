@@ -19,7 +19,12 @@ public sealed class ReadSession : IAsyncDisposable
     /// <summary>What the source says about itself without a query of ours (an ODBC driver's name and the server's version); null when it says nothing.</summary>
     public string? ServerDescription => source.ServerDescription;
 
-    /// <summary>The metadata calls of a source that has a catalog apart from SQL (a Flight SQL server); null for the others.</summary>
+    /// <summary>What the catalog readers could not read from this origin, in words (the indexes a source has no way to say, the keys a driver does not offer); the command that asked says each once.</summary>
+    public List<string> CatalogNotes { get; } = [];
+
+    internal void Note(string note) { if (!CatalogNotes.Contains(note)) CatalogNotes.Add(note); }
+
+    /// <summary>The metadata calls of a source that has a catalog apart from SQL (a Flight SQL server, an ODBC driver's catalog functions); null for the others.</summary>
     internal IMetadataCatalog? Metadata => source as IMetadataCatalog;
 
     /// <summary>The engine of the connection this session reads (sqlserver, fabric, postgres, duckdb): what the catalog and tracking queries are written for.</summary>
@@ -239,15 +244,31 @@ internal class AdoRowSource(DbConnection connection, ParameterStyle style) : IRo
         catch (DbException) { return null; }
     }
 
-    public ValueTask DisposeAsync() => connection.DisposeAsync();
+    public virtual ValueTask DisposeAsync() => connection.DisposeAsync();
 }
 
 /// <summary>
 /// An ODBC connection as a row source (System.Data.Odbc over the machine's driver manager and the vendor's driver). Parameters are positional `?`, bound in the order given; the ADO.NET types the plan uses are
 /// mapped to ones ODBC has. The result's shape is asked with the driver's schema-only mode and described in the standard names of `information_schema`, which the dialect's `types` maps.
 /// </summary>
-internal sealed class OdbcRowSource(System.Data.Odbc.OdbcConnection connection, ParameterStyle style) : AdoRowSource(connection, style), IRowSource
+internal sealed class OdbcRowSource(System.Data.Odbc.OdbcConnection connection, ParameterStyle style, string login, DialectProfile dialect) : AdoRowSource(connection, style), IRowSource, IMetadataCatalog
 {
+    // The catalog functions of the driver (`catalog: odbc`, and the indexes of any ODBC origin) run on a connection of their own, opened when first asked.
+    private OdbcCatalog? catalog;
+    private OdbcCatalog Catalog => catalog ??= new OdbcCatalog(new OdbcNativeFunctions(login), dialect);
+
+    public Task<IReadOnlyList<string>?> SchemasAsync(CancellationToken ct) => Catalog.SchemasAsync(ct);
+    public Task<IReadOnlyList<MetadataTable>?> TablesAsync(string schema, string? table, CancellationToken ct) => Catalog.TablesAsync(schema, table, ct);
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>?> PrimaryKeysAsync(string schema, CancellationToken ct) => Catalog.PrimaryKeysAsync(schema, ct);
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<MetadataForeignKey>>?> ForeignKeysAsync(string schema, CancellationToken ct) => Catalog.ForeignKeysAsync(schema, ct);
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<MetadataIndex>>?> IndexesAsync(string schema, CancellationToken ct) => Catalog.IndexesAsync(schema, ct);
+
+    public override async ValueTask DisposeAsync()
+    {
+        if (catalog != null) await catalog.DisposeAsync();
+        await base.DisposeAsync();
+    }
+
     /// <summary>`ODBC driver psqlodbcw.so, server version 17.02.0000`: the driver's file name (never a path) and the version the server reported.</summary>
     public string? ServerDescription
     {
@@ -289,14 +310,18 @@ internal sealed class OdbcRowSource(System.Data.Odbc.OdbcConnection connection, 
         }
     }
 
-    public override async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
+    public override async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct) =>
+        // the driver's schema-only mode first; a driver that refuses it or says nothing is asked with a read bounded to no rows, written in the dialect's own `limit` style
+        await DescribeAsync(sql, CommandBehavior.SchemaOnly, parameters, ct) ?? await DescribeAsync(dialect.Bounded(sql, 0), CommandBehavior.Default, parameters, ct);
+
+    private async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string statement, CommandBehavior behavior, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
     {
         await using var cmd = Connection.CreateCommand();
-        cmd.CommandText = sql;
+        cmd.CommandText = statement;
         Bind(cmd, parameters);
         try
         {
-            await using var rd = await cmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly, ct);
+            await using var rd = await cmd.ExecuteReaderAsync(behavior, ct);
             if (rd.GetSchemaTable() is not { } table) return null;
             var columns = new List<ColumnShape>();
             foreach (DataRow r in table.Rows)
@@ -372,7 +397,7 @@ internal sealed class DuckDbRowSource(DbConnection connection, ParameterStyle st
     public override async Task<IReadOnlyList<ColumnShape>?> DescribeAsync(string sql, IReadOnlyList<GateParameter> parameters, CancellationToken ct)
     {
         await using var cmd = Connection.CreateCommand();
-        cmd.CommandText = $"SELECT * FROM ({sql.Trim().TrimEnd(';')}) AS ddb_described LIMIT 0";
+        cmd.CommandText = DialectProfiles.DuckDb.Bounded(sql, 0);
         Bind(cmd, parameters);
         try
         {

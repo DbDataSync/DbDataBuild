@@ -72,8 +72,11 @@ internal static class CopyOriginCheck
     {
         await using var read = await ReadSession.OpenAsync(login);
         var (schema, name) = (origin.Table[..origin.Table.IndexOf('.')], origin.Table[(origin.Table.IndexOf('.') + 1)..]);
-        var shapes = await CatalogReader.ReadObjectsAsync(read, origin.Engine, schema);
-        if (!shapes.TryGetValue(origin.Table, out var shape)) return [$"the table does not exist there"];
+        // a name written without quotes is looked up the way the origin folds one (`identifier_case`); the read quotes the name as declared, so a declaration that is not spelled as stored is said
+        var (shape, storedAs) = await CatalogReader.FindAsync(read, origin.Engine, schema, name);
+        if (shape == null) return [$"the table does not exist there"];
+        if (storedAs != null)
+            return [$"the table is stored as `{storedAs}` there (the dialect `{login.Dialect.Name}` folds a name without quotes to {(login.Dialect.Case == IdentifierCase.Upper ? "upper" : "lower")} case), and the copy reads the name as declared: declare it as `{storedAs}`"];
         var live = SourceImport.Describe(origin.Engine, shape, null, dialect: login.Dialect);
         var now = SourceImport.ToDescriptor(live, declared);
         // what a copy reads: a column that is gone, a type that changed, a column that can now be NULL where the declaration says it cannot; an added column is not read, so it is no difference

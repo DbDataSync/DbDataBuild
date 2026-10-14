@@ -77,7 +77,7 @@ public class OdbcOriginConformanceTests
 
     private static string Sensitive(string name) => name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : "";
 
-    private static async Task<Run> SetUp(string destination, string extraConfig = "")
+    private static async Task<Run> SetUp(string destination, string extraConfig = "", string legacyEngine = "readonly odbc")
     {
         var driver = RequireDriver();
         var to = EngineEnv.Require(destination);
@@ -86,7 +86,7 @@ public class OdbcOriginConformanceTests
         await from.StartAsync();
         var run = new Run(to, from, driver, destination, Path.Combine(Path.GetTempPath(), "ddb-odbc-" + Guid.NewGuid().ToString("N")));
         Directory.CreateDirectory(run.Dir);
-        run.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\nconnections:\n  legacy: {{ engine: readonly odbc }}\n{extraConfig}" + Sensitive(destination));
+        run.Write("dbdatabuild.yml", $"defaults: {{connections: [{destination}]}}\ntracking: {{ connection: {destination} }}\nconnections:\n  legacy: {{ engine: {legacyEngine} }}\n{extraConfig}" + Sensitive(destination));
         // the driver manager and the driver have to work before anything is asked of the tool
         try { await from.RowsAsync("SELECT 1"); await using var probe = await ReadSession.OpenAsync(LoginSettings.FromEnvironment("legacy", "odbc", Login.Read, v => v == "DBDATABUILD_LEGACY_READ" ? run.Legacy : null).Settings!); }
         catch (Exception ex) when (DriverFailure.Prerequisite(ex) is { } why) { await from.DisposeAsync(); await to.DisposeAsync(); Skip.If(true, $"The ODBC driver manager or the psqlodbc driver cannot be used on this machine: {why}."); }
@@ -285,13 +285,40 @@ public class OdbcOriginConformanceTests
     }
 
     [SkippableTheory, MemberData(nameof(Destinations))]
-    public async Task Project_import_reads_the_catalog_through_information_schema_and_a_changed_origin_table_is_named_before_its_transfer(string destination)
+    public async Task Project_import_reads_the_catalog_through_information_schema_and_a_changed_origin_table_is_named_before_its_transfer(string destination) =>
+        await ImportAndCheck(destination, "", "readonly odbc");
+
+    [SkippableTheory, MemberData(nameof(Destinations))]
+    public async Task The_same_import_and_structure_check_work_when_the_catalog_is_read_with_the_drivers_own_functions(string destination) =>
+        await ImportAndCheck(destination, "dialects:\n  driver_catalog: { extends: postgres, catalog: odbc }\n", "readonly odbc driver_catalog");
+
+    [SkippableTheory, MemberData(nameof(Destinations))]
+    public async Task A_declared_table_stored_in_the_other_case_is_found_through_identifier_case_and_the_declaration_is_asked_to_match(string destination)
     {
-        using var run = await SetUp(destination);
+        using var run = await SetUp(destination, "dialects:\n  shouting: { extends: ansi, identifier_case: upper }\n", "readonly odbc shouting");
+        await using var to = run.Destination;
+        await using var from = run.Origin;
+        await from.ExecAsync("CREATE SCHEMA \"SRC\"; CREATE TABLE \"SRC\".\"ITEMS\" (id BIGINT NOT NULL PRIMARY KEY, label VARCHAR(20)); INSERT INTO \"SRC\".\"ITEMS\" VALUES (1, 'a')");
+        run.Write("models/src/items.yml", "name: src.items\nkind: {type: mapped}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: label, type: \"VARCHAR(20)\"}\n");
+        run.Write("models/dst/items.yml", "name: dst.items\nkind: {type: copy, from: src.items}\n");
+        Ok(run.Cli("connection", "init", destination, "--apply"), "init");
+        Ok(run.Cli("project", "compile"), "compile");
+        var plan = run.Cli("connection", "deploy", destination, "--write-plan");
+        Ok(plan, "plan");
+        var apply = run.Cli("connection", "deploy", "--apply-plan", PlanOf(run, plan.Out));
+        Assert.NotEqual(0, apply.Exit);
+        Assert.Contains("DDB-230", apply.Out + apply.Err);
+        Assert.Contains("stored as `SRC.ITEMS`", apply.Out + apply.Err);
+        Assert.Contains("declare it as `SRC.ITEMS`", apply.Out + apply.Err);
+    }
+
+    private static async Task ImportAndCheck(string destination, string dialects, string legacyEngine)
+    {
+        using var run = await SetUp(destination, dialects, legacyEngine);
         await using var to = run.Destination;
         await using var from = run.Origin;
         await from.ExecAsync("CREATE SCHEMA src; CREATE TABLE src.parents (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(30) NOT NULL); " +
-            "CREATE TABLE src.kids (id BIGINT NOT NULL, parent_id BIGINT NOT NULL, born DATE, price NUMERIC(10,2), payload BYTEA, CONSTRAINT pk_kids PRIMARY KEY (id), CONSTRAINT fk_kids_parent FOREIGN KEY (parent_id) REFERENCES src.parents (id))");
+            "CREATE TABLE src.kids (id BIGINT NOT NULL, parent_id BIGINT NOT NULL, born DATE, price NUMERIC(10,2), payload BYTEA, CONSTRAINT pk_kids PRIMARY KEY (id), CONSTRAINT fk_kids_parent FOREIGN KEY (parent_id) REFERENCES src.parents (id)); CREATE INDEX ix_kids_born ON src.kids (born)");
         run.Write("models/src/parents.yml", "name: src.parents\nkind: {type: mapped}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n  - {name: name, type: \"VARCHAR(30)\", nullable: false}\n");
         var check = run.Cli("project", "import", "legacy", "src.*", "--check");
         Assert.True(check.Exit is 0 or 1, check.Out + check.Err);
@@ -303,7 +330,9 @@ public class OdbcOriginConformanceTests
         Assert.Contains("parent_id", descriptor);
         Assert.Contains("fk_kids_parent", descriptor);
         Assert.Contains("DECIMAL(10, 2)", descriptor);
-        Assert.DoesNotContain("payload", descriptor);                                                                  // bytea has no logical type in the ansi profile, and is said not to be guessed
+        if (dialects.Length == 0) Assert.DoesNotContain("payload", descriptor);                                        // bytea has no logical type in the ansi profile's information_schema names, and is said not to be guessed
+        else Assert.Contains("BLOB", descriptor);                                                                      // the dialect `postgres` knows the driver's own name for it
+        Assert.Contains("ix_kids_born", descriptor);                                                                   // the index, from the driver's statistics whichever way the columns were read
 
         run.Write("models/dst/parents.yml", "name: dst.parents\nkind: {type: copy, from: src.parents}\n");
         Ok(run.Cli("connection", "init", destination, "--apply"), "init");

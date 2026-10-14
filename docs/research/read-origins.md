@@ -32,8 +32,8 @@ All of a connection's kind stays in `engine`, as a space- or comma-separated lis
 | dialect | `ansi`, `duckdb`, `sqlserver`, `postgres`, `fabric`, or a name from `dialects:` | the SQL the origin takes |
 
 ```yaml
-dialects:                        # a profile for a system the tool has no built-in for (section 5)
-  proxy_sql:
+dialects:                        # a profile for a system the tool has no built-in for (section 5), named after the system
+  clickhouse_sql:
     extends: ansi
     quote: '`'
     ping: SELECT 1               # parameters are positional (?) in every profile but the three engines'
@@ -42,7 +42,8 @@ connections:
   store_east:  { engine: readonly postgres }                 # a shop system the tool only reads (today's `postgres`, plus the guarantee)
   legacy_erp:  { engine: readonly odbc ansi }
   analytics:   { engine: readonly duckdb }                   # a .duckdb file; the data in it
-  proxy:       { engine: "readonly, flightsql, proxy_sql" }
+  proxy_erp:   { engine: "readonly, flightsql, postgres" }   # a proxy is several connections: the dialect is the one of the system behind it
+  proxy_clicks:{ engine: "readonly, flightsql, clickhouse_sql" }
   warehouse:   { engine: sqlserver }                         # unchanged
 ```
 
@@ -95,7 +96,7 @@ A dialect profile is **data**, not code (the repo prefers a table to a switch). 
 | `limit` | `limit` (`LIMIT n`), `top`, `fetch` (`FETCH FIRST n ROWS ONLY`), for the sample and a bounded read | `fetch` |
 | `types` | how the catalog's type names map to logical types (used by `project import` and the structure check only) | a standard table for ANSI names |
 
-Built-in profiles: `sqlserver`, `postgres`, `fabric` (today's, unchanged), `duckdb`, and **`ansi`**. `extends:` lets a project tweak one (`proxy_sql` above). A profile that is invalid is a diagnostic at load, with a fixture.
+Built-in profiles: `sqlserver`, `postgres`, `fabric` (today's, unchanged), `duckdb`, and **`ansi`**. `extends:` lets a project tweak one (`clickhouse_sql` above). The dialect belongs to the system a connection reaches, not to the server in front of it: one proxy is several connections, each naming its system's dialect. A profile that is invalid is a diagnostic at load, with a fixture.
 
 `ansi` is the lowest common denominator: it must work with a `SELECT` of quoted columns and a `WHERE col >= ?`. Anything past that (a function, a hint) belongs in a user's native text, which is sent as written to the origin.
 
@@ -118,7 +119,8 @@ Positional parameters change one thing: the committed `read_incremental` text an
 2. **DuckDB origin.** A file as an origin: copy, mapped model, `source` resolver, `project import`, `inspect`. Tests with no docker.
 3. **ODBC origin.** Positional parameters through the plan. Test against PostgreSQL through its ODBC driver in the engine container setup (unixODBC and `psqlodbc` in the test image) and, if cheap, a second driver.
 4. **Flight SQL origin.** The `IRowSource` over a Flight SQL client; auth and TLS settings; tests against an open-source Flight SQL server (a DuckDB or SQLite one in docker) and against the owner's proxy.
-5. **Catalog on the new origins** (structure check DDB-230 per origin, `import`) where `information_schema` is not offered.
+5. **Catalog on the new origins** (structure check DDB-230 per origin, `import`) where `information_schema` is not offered. Built (section 8c).
+6. **The dialect from the server** (planned, section 10).
 
 Each is a separate agent run on a branch, as for the refresh plans, with the unit suite and the conformance groups after each.
 
@@ -135,7 +137,7 @@ Decided by the owner:
 
 Still open:
 
-1. **The proxy's auth** (bearer token, user and password, mTLS) and **its SQL** (plain ANSI, or what is behind it): decides the `proxy_sql` profile and how the login value is written.
+1. **The proxy's auth** (bearer token, user and password, mTLS) and **its SQL**: settled by section 8c, the dialect is the one of the system behind each connection, and the login selects it with `header.x-datasource=<name>`.
 2. **Parquet through DuckDB.** A native copy needs an origin connection. For parquet alone, does a `readonly duckdb` connection whose login is `:memory:` do (a database with no file; the query reads the parquet)? It should; it is checked when DuckDB is built.
 3. **ODBC packaging.** The tool ships no driver manager or drivers. OK to document "install unixODBC and your vendor's driver", and have `connection inspect` say clearly when either is missing?
 4. **Snapshot.** A copy's read is "a snapshot where the engine offers one". For ODBC and Flight SQL the tool cannot know. OK to document it as the origin's behaviour?
@@ -160,6 +162,25 @@ What was built is what section 4 says, with these facts the build settled:
 * **Entra ID / OIDC**: no flow is built. A token obtained outside the tool is used through `token`, `token_env` or `token_command`; the rest is in OPEN-ITEMS V.
 * **Tested against** voltrondata/sqlflite (C++ Flight SQL server, DuckDB, plain and TLS, JWT after the basic handshake) and an in-process server (DuckDB, typed parameters, no metadata calls). sqlflite binds every parameter as text.
 
+## 8c. As built, step 5 (the catalog on the new origins, entry 161)
+
+* **`catalog: odbc`** is a third choice of the profile (`information_schema`, `odbc`, `none`; `ansi` stays `information_schema`), for an `odbc` connection only (DDB-456 on any other). The driver's own catalog functions are called through the driver manager directly (`OdbcCatalogClient.cs`: `SQLTables`, `SQLColumns`, `SQLPrimaryKeys`, `SQLForeignKeys`, `SQLStatistics`), because `System.Data.Odbc`'s `GetSchema` has no keys; a connection of its own, the same login, no statement executed (a test scans the file). Used by `project import`, the DDB-230 check and `connection inspect`.
+* **Indexes** are written by `project import` from `duckdb_indexes()` (DuckDB) and `SQLStatistics` (any ODBC source, whichever catalog its dialect names); Flight SQL has no metadata call for them and `information_schema` has no view, so the import says so in words (`catalog_notes`).
+* **DuckDB foreign keys**: `duckdb_constraints()` has no referenced-schema column, its constraint text has the qualifier and is read; DuckDB 1.5 refuses foreign keys across schemas, so the answer is always the key's own schema (pinned by a test).
+* **`limit`** and **`identifier_case`** act where they are meaningful: `limit` writes the one bounded read the tool makes (the zero-row read that describes a native query when the driver has no schema-only mode); `identifier_case` finds a declared table that is stored in the other case in the structure check and says how to spell it. Neither is applied to a copy's read (that would change `readonly odbc postgres`). No sample, preview or row count of an origin exists, so there is no other bounded read.
+* **A built-in engine dialect with `odbc` or `flightsql`** (`readonly flightsql postgres`) was accepted by the keyword rules but did not work: it bound `@name` and had no type names. Fixed: those drivers read it with positional parameters and the engine's type names on top of the standard ones.
+* **What the proxy offers** (github.com/DbDataSync/DbDataProxy, read with `gh` on 2026-10-14; no release yet, parameters in progress): Flight SQL over SQL Server, DuckDB and ODBC data sources; the data source is chosen per call by the `x-datasource` header (so `header.x-datasource=<name>` in the login URI; one proxy is several connections); parameters are `?` bound by position through prepared statements (`@name` also on SQL Server); metadata calls answered: `GetCatalogs`, `GetDbSchemas`, `GetTables` (with each table's Arrow schema), `GetTableTypes`, `GetPrimaryKeys`, `GetSqlInfo` (server name, server version, Arrow version, read-only `false`, SQL `true`, Substrait `false`; no identifier quote character, no dialect name); not answered: `GetImportedKeys`, `GetExportedKeys`, `GetCrossReference`, `GetXdbcTypeInfo`. Tables and schemas come from `information_schema` for SQL Server and DuckDB sources and from `SQLTables` for ODBC sources; an ODBC source reports no primary keys (an empty answer). So the tool's foreign keys through the proxy come from `information_schema` over the query path (SQL Server and DuckDB sources only).
+
 ## 9. Not covered
 
 Pushing a model's query down to an origin (the origin runs a DuckDB-dialect query lowered for it): out of scope, as "no DuckDB in the middle" and native queries already decided. Writing to any of these. A catalog of every ODBC driver's quirks: a profile per system is the user's.
+
+## 10. Step 6, planned and not built: the dialect from the server
+
+Today `engine: readonly flightsql` with no dialect keyword is `ansi`, and a person names the dialect of the system behind a proxy by hand. The proxy can report enough for the tool to choose.
+
+* **When**: `readonly flightsql` with no dialect keyword asks the server (Flight SQL `GetSqlInfo`) for: the identifier quote character (`SQL_IDENTIFIER_QUOTE_CHAR`), the identifier case (`SQL_IDENTIFIER_CASE`, `SQL_QUOTED_IDENTIFIER_CASE`), the server name and version, and a key the proxy defines for the name of the dialect behind the data source (its id is the proxy's to publish; a Flight SQL server may use ids of its own). An explicit dialect keyword always wins and nothing is asked. If the server says nothing usable the dialect is `ansi`, as now.
+* **Mapping**: a dialect name the server sends that is a built-in or a name in the project's `dialects:` is that dialect; otherwise the facts it did send build a profile on `ansi` (quote character, case; `limit` stays `fetch` unless the dialect name says otherwise). `connection inspect` prints what the server reported and which dialect was chosen and why.
+* **Recorded, not rediscovered**: the committed read text of a copy depends on the dialect (quoting, placeholders), and `project compile` is offline, so discovery is an explicit step by a command that opens the connection (proposal: `connection inspect <c> --adopt-dialect` writes `dialects.lock.yml`: the dialect chosen, the facts reported, a hash of the profile). Compile, plans and `loads.yml` use the lock exactly as they use a keyword, and the plan and `loads.yml` carry the dialect name and profile hash beside `parameter_order`. A refresh asks the server again as part of its ping before an origin's turn; if the answer differs from the lock, the origin fails (`failed: origin`) naming what differs, and the text is never changed silently. Alternative for the owner: record it in the plan only (`connection deploy --write-plan`), which then cannot serve a refresh without a deploy.
+* **What the proxy would need to send** (a contract for its repo; it sends today the server name, version, Arrow version, read-only, SQL and Substrait flags): answers to `GetSqlInfo` that are per data source (the same `x-datasource` header as every call): `SQL_IDENTIFIER_QUOTE_CHAR`, `SQL_IDENTIFIER_CASE`, `SQL_QUOTED_IDENTIFIER_CASE`, and a custom id carrying the dialect name of the system behind the data source (`postgres`, `sqlserver`, `duckdb`, or the ODBC driver's product name), optionally the parameter style and the limit style. Also useful, not required: `GetImportedKeys` for SQL Server and DuckDB sources and primary keys for ODBC sources (its README says they report none).
+* **Open for the owner**: lock file or plan-only; the id of the custom key; whether a dialect name the tool does not know is an error or `ansi` with the facts.

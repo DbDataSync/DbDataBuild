@@ -82,6 +82,7 @@ Every command says, in its header and in `--help`, what it touches:
 | `ui terminal`, `ui web`, `ui mcp` | the terminal interface, the web page, the MCP server for AI agents |
 | `help code <code>` | explain a diagnostic such as `DDB-214` |
 | `help matrix` | the support matrix |
+| `help dialects` | the dialect profiles of read-only origins: fields, built-ins, how to add one |
 
 ## Plans and events
 
@@ -139,7 +140,7 @@ When a check fails the refresh stops (`refresh.on_fail: block`) and names the ob
 | engine | what kind of connection it is, as keywords in `engine:` (any order): the driver (`sqlserver`, `postgres`, `fabric`, `duckdb`, `odbc`, `flightsql`), `readonly`, and a dialect where the driver has none of its own |
 | readonly | a connection the tool only reads: a copy's origin, a mapped or native model's, a `source` resolver's. It has no write login and is never a destination, a tracking connection or a deploy, refresh, seed, publish or init target |
 | origin | a connection a copy (or a mapped or native model) reads from; it needs only a read login. A DuckDB file (`readonly duckdb`) or any system with an ODBC driver (`readonly odbc`) or an Arrow Flight SQL server (`readonly flightsql`) can be one; the tool ships no ODBC driver manager or driver |
-| dialect | the SQL an origin takes: how a name is quoted, how a parameter is written, what to send to see it answers. Built in for the three engines, DuckDB and `ansi`; a project adds its own under `dialects:` |
+| dialect | the SQL an origin takes: how a name is quoted, how a parameter is written, what to send to see it answers, where the catalog is read from (`information_schema`, the ODBC driver's own functions, or nowhere). It is the dialect of the system a connection reaches, not of the server in front of it (a proxy in front of PostgreSQL and SQL Server is two connections, `readonly flightsql postgres` and `readonly flightsql sqlserver`). Built in for the three engines, DuckDB and `ansi`; a project adds its own under `dialects:` (`help dialects`) |
 | lane | deploy or refresh |
 | event | one run of a plan, with an id like `dep-20261007T204550-a7f3` or `ref-…` |
 | tracking tables | the tables the tool keeps in the database: plans, events, steps, shape history, decisions |

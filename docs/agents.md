@@ -35,7 +35,7 @@ For Claude Code, allow what changes nothing and make a person approve the rest. 
   "permissions": {
     "allow": [
       "Bash(dbdatabuild project compile:*)", "Bash(dbdatabuild project sample:*)", "Bash(dbdatabuild project show metadata:*)", "Bash(dbdatabuild project show loads:*)",
-      "Bash(dbdatabuild help matrix:*)", "Bash(dbdatabuild help code:*)", "Bash(dbdatabuild project compile:*)", "Bash(dbdatabuild project model update:*)",
+      "Bash(dbdatabuild help matrix:*)", "Bash(dbdatabuild help dialects:*)", "Bash(dbdatabuild help code:*)", "Bash(dbdatabuild project compile:*)", "Bash(dbdatabuild project model update:*)",
       "Bash(dbdatabuild connection status:*)", "Bash(dbdatabuild connection deploy:*)", "Bash(dbdatabuild connection monitor:*)", "Bash(dbdatabuild project agent-kit:*)"
     ],
     "ask": [

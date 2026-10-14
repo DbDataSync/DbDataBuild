@@ -95,7 +95,7 @@ public class FlightSqlOriginTests
     [Fact]
     public void A_dialect_of_the_project_reaches_the_flight_sql_login()
     {
-        var cfg = ProjectConfigLoader.Load("dialects:\n  proxy_sql: { extends: ansi, quote: '`', ping: SELECT 42 }\nconnections:\n  proxy: { engine: readonly flightsql proxy_sql }\n  duck: { engine: readonly flightsql duckdb }\n", "dbdatabuild.yml", [])!;
+        var cfg = ProjectConfigLoader.Load("dialects:\n  backtick_sql: { extends: ansi, quote: '`', ping: SELECT 42 }\nconnections:\n  proxy: { engine: readonly flightsql backtick_sql }\n  duck: { engine: readonly flightsql duckdb }\n", "dbdatabuild.yml", [])!;
         string? Env(string _) => "grpc://h:1";
         Assert.Equal("SELECT 42", LoginSettings.FromEnvironment(cfg, "proxy", Login.Read, Env).Settings!.Dialect.Ping);
         Assert.Equal("duckdb", LoginSettings.FromEnvironment(cfg, "duck", Login.Read, Env).Settings!.Dialect.Name);
@@ -477,7 +477,7 @@ public class FlightSqlOriginTests
     [Fact]
     public void A_copy_reads_a_flight_sql_origin_in_its_dialect_with_positional_parameters_in_the_plans_order()
     {
-        var cfg = ProjectConfigLoader.Load("dialects:\n  proxy_sql: { extends: ansi, quote: '`' }\nconnections:\n  proxy: { engine: readonly flightsql proxy_sql }\n  plain: { engine: readonly flightsql }\n", "dbdatabuild.yml", [])!;
+        var cfg = ProjectConfigLoader.Load("dialects:\n  backtick_sql: { extends: ansi, quote: '`' }\nconnections:\n  proxy: { engine: readonly flightsql backtick_sql }\n  plain: { engine: readonly flightsql }\n", "dbdatabuild.yml", [])!;
         Assert.Equal(ParameterStyle.Positional, cfg.DialectOf("proxy").Parameters);
         Assert.Equal("`", cfg.DialectOf("proxy").QuoteOpen);
         Assert.Equal("\"", cfg.DialectOf("plain").QuoteOpen);
