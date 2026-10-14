@@ -317,4 +317,49 @@ public class OdbcOriginConformanceTests
         Assert.Contains("DDB-230", apply.Out + apply.Err);
         Assert.Contains("name", apply.Out + apply.Err);
     }
+
+    [SkippableFact]
+    public async Task Max_parallel_on_an_odbc_origin_keeps_the_copies_that_run_together_to_that_many_sessions_there()
+    {
+        using var run = await SetUp("sqlserver", "refresh:\n  plans:\n    fan: {}\n");
+        await using var to = run.Destination;
+        await using var from = run.Origin;
+        await from.ExecAsync("CREATE SCHEMA src");
+        foreach (var n in new[] { "1", "2", "3" })
+        {
+            await from.ExecAsync($"CREATE VIEW src.slow{n} AS SELECT CAST({n} AS BIGINT) AS id FROM pg_sleep(1.5)");          // a view that takes a second and a half to answer
+            run.Write($"models/src/slow{n}.yml", $"name: src.slow{n}\nkind: {{type: mapped}}\nconnections=: [legacy]\ngrain: [id]\ncolumns:\n  - {{name: id, type: BIGINT}}\n");
+            run.Write($"models/dst/copy{n}.yml", $"name: dst.copy{n}\nkind: {{type: copy, from: src.slow{n}}}\nrefresh: {{ fan: default }}\n");
+        }
+        Deploy(run);
+        SessionLimits? seen = null;
+        RefreshCommand.LimitsObserver = l => seen = l;
+        try
+        {
+            Ok(run.Cli("connection", "refresh", "sqlserver", "fan", "--parallel", "3"), "uncapped");
+            Assert.Equal(3, seen!.MostInUse("legacy"));
+            run.Write("dbdatabuild.yml", File.ReadAllText(Path.Combine(run.Dir, "dbdatabuild.yml")).Replace("legacy: { engine: readonly odbc }", "legacy: { engine: readonly odbc, max_parallel: 1 }"));
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var capped = run.Cli("connection", "refresh", "sqlserver", "fan", "--parallel", "3");
+            Ok(capped, "capped");
+            Assert.Equal(1, seen!.MostInUse("legacy"));
+            Assert.True(clock.Elapsed >= TimeSpan.FromSeconds(4.5), $"three reads of 1.5 s, one at a time, took {clock.Elapsed}");
+            Assert.Equal(["1", "2", "3"], await to.RowsAsync("SELECT CAST(id AS VARCHAR(10)) FROM (SELECT id FROM dst.copy1 UNION ALL SELECT id FROM dst.copy2 UNION ALL SELECT id FROM dst.copy3) x ORDER BY id"));
+        }
+        finally { RefreshCommand.LimitsObserver = null; }
+    }
+
+    [SkippableFact]
+    public async Task A_statement_that_runs_past_its_timeout_is_stopped_by_the_driver()
+    {
+        var driver = RequireDriver();
+        await using var from = new PostgresEngine();
+        await from.StartAsync();
+        var login = LoginSettings.FromEnvironment("legacy", "odbc", Login.Read, _ => OdbcValue(driver, from)).Settings!;
+        await using var session = await ReadSession.OpenAsync(login);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => session.QueryFirstRowsAsync("SELECT count(*) FROM pg_sleep(8)", 1, 1));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(6), $"the 1 s limit stopped the statement after {clock.Elapsed}");
+        Assert.IsType<System.Data.Odbc.OdbcException>(ex);
+    }
 }

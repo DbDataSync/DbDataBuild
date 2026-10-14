@@ -1379,7 +1379,7 @@
       }
     },
     "engineKeywords": {
-      "description": "What kind of connection this is, as keywords in any order, separated by spaces or commas (or a YAML list). Access: `readonly` (the tool only reads it: never a destination, a tracking connection or a deploy target, and no _WRITE login is read; the default is read and write). Driver, exactly one: sqlserver, postgres, fabric, duckdb, odbc, flightsql (duckdb, odbc and flightsql need `readonly`). Dialect, at most one: ansi, duckdb, sqlserver, postgres, fabric or a name from `dialects:`; the engines the tool builds on and duckdb bring their own, odbc and flightsql default to ansi. Examples: `postgres`, `readonly postgres`, `readonly odbc ansi`, `readonly, flightsql, proxy_sql`.",
+      "description": "What kind of connection this is, as keywords in any order, separated by spaces or commas (or a YAML list). Access: `readonly` (the tool only reads it: never a destination, a tracking connection or a deploy target, and no _WRITE login is read; the default is read and write). Driver, exactly one: sqlserver, postgres, fabric, duckdb, odbc, flightsql (duckdb, odbc and flightsql need `readonly`; flightsql is not built yet). The read login of an odbc connection is an ODBC connection string or a DSN with its credentials; the machine needs the ODBC driver manager and the vendor's driver. Dialect, at most one: ansi, duckdb, sqlserver, postgres, fabric or a name from `dialects:`; the engines the tool builds on and duckdb bring their own, odbc and flightsql default to ansi. Examples: `postgres`, `readonly postgres`, `readonly odbc ansi`, `readonly, flightsql, proxy_sql`.",
       "oneOf": [
         {
           "type": "string",
