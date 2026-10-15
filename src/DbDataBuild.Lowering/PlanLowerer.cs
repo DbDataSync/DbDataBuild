@@ -487,8 +487,12 @@ public sealed class PlanLowerer
         if (name == "->>") name = "json_extract_string";
         else if (name == "->") name = "json_extract";
         if (name is "list_value" or "struct_pack" or "map") throw new LoweringException($"the nested-type function {name}");
-        // `current_timestamp` is bound as get_current_timestamp(), which no engine has (and polyglot does not translate); `now()` is the same value and is translated
-        if (name == "get_current_timestamp" && children.Count == 0) name = "now";
+        // `current_timestamp` is bound as get_current_timestamp(), which no engine has (and polyglot does not translate); `now()` is the same value and is translated. transaction_timestamp() is `now()` in DuckDB too
+        if (name is "get_current_timestamp" or "transaction_timestamp" && children.Count == 0) name = "now";
+        // `localtime` is bound as current_localtime(), which polyglot writes as CURRENT_LOCALTIME() (no engine has it); it is the time part of `localtimestamp`, which is translated
+        if (name == "current_localtime" && children.Count == 0) return "CAST(current_localtimestamp() AS TIME)";
+        // DuckDB answers about its own session, version and transactions; no engine's answer is the same, so none is written
+        if (SessionFunctions.Contains(name)) throw new LoweringException($"the session function {name}() (DuckDB answers about its own session, version or transaction; an engine's answer differs)");
         var a = children.Select(c => Expr(c, outs)).ToList();
         var returns = TypeId(e);
         // position(needle IN haystack) is `position(haystack, needle)` in the plan, which reads the other way round as written; strpos(haystack, needle) says what it means
@@ -540,6 +544,12 @@ public sealed class PlanLowerer
         }
         return text;
     }
+
+    /// <summary>Functions whose answer is a fact about the DuckDB session that planned the query (its schema, database, version, transaction, connection and query text), which no target can reproduce.</summary>
+    private static readonly HashSet<string> SessionFunctions = new(StringComparer.Ordinal)
+    {
+        "version", "txid_current", "current_schema", "current_schemas", "current_database", "current_connection_id", "current_query", "current_query_id", "current_transaction_id", "current_setting", "getenv",
+    };
 
     private static bool IsZeroConstant(JsonElement value) =>
         value.TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True || !value.TryGetProperty("value", out var x) || x.ValueKind == JsonValueKind.Number && x.GetRawText().Trim('0', '.', '-') == "";

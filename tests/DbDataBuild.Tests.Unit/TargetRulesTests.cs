@@ -349,8 +349,7 @@ public class TargetRulesTests
     [Fact]
     public void The_lowerer_marks_exactly_the_expressions_the_rules_need()
     {
-        using var c = new DuckDB.NET.Data.DuckDBConnection("DataSource=:memory:");
-        c.Open();
+        using var c = DbDataBuild.Targets.DuckDb.PlanningConnection.Open(lockDown: false);
         using (var cmd = c.CreateCommand()) { cmd.CommandText = "CREATE TABLE t (s VARCHAR, n INTEGER, x DOUBLE, d DECIMAL(10,2))"; cmd.ExecuteNonQuery(); }
         string Lower(string sql)
         {

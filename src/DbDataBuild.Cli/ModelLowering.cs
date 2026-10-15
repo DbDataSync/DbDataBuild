@@ -94,7 +94,9 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
         foreach (var d in library.Definitions)
         {
             if (QueryDescriber.CheckPrelude(upstream, library.PreludeFor([d.Sql])) is { } why)
-                found.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(d.File, d.Line, 0), $"`{d.Name}` could not be created: {why}.",
+                found.Add(why.StartsWith(QueryDescriber.ClockDefaultCode + ": ", StringComparison.Ordinal)
+                    ? new Diagnostic(DiagnosticCatalog.MacroDefaultIsClock, new(d.File, d.Line, 0), $"`{d.Name}`: {why[(QueryDescriber.ClockDefaultCode.Length + 2)..]}.") with { SeverityOverride = Severity.Warning }
+                    : new Diagnostic(DiagnosticCatalog.InvalidValue, new(d.File, d.Line, 0), $"`{d.Name}` could not be created: {why}.",
                     Fix: "A macro that names a table or type directly needs it to be declared; one that takes its table as a parameter (`query_table(tbl)`) needs nothing. Declare what it names or pass the name in.") with { SeverityOverride = Severity.Warning });
         }
         return found;
@@ -231,6 +233,8 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
         var policy = RewriteCatalog.For(config, definition);
         var prelude = (macros ?? MacroLibrary.Empty).PreludeFor([authorSql]);
         var (json, error) = QueryDescriber.SerializePlan(upstream, authorSql, prelude);
+        if (json == null && error != null && error.StartsWith(QueryDescriber.ClockDefaultCode + ": ", StringComparison.Ordinal))
+            return (null, new Diagnostic(DiagnosticCatalog.MacroDefaultIsClock, new(queryFile, 0, 0), $"{name}: {error[(QueryDescriber.ClockDefaultCode.Length + 2)..]}."));
         if (json == null) return (null, Fail(error ?? "DuckDB returned no plan"));
         LoweredQuery query;
         try

@@ -17,7 +17,8 @@ public sealed class EngineProbe : IDisposable
     public sealed record Case(string Id, string Sql, string? Note = null);
     public sealed record Outcome(string Rows, string? Error);
 
-    private readonly DuckDBConnection duck = new("DataSource=:memory:");
+    // the connection that plans is the one that answers (DuckDB's rows are what the engine's are compared to): on DuckDB 2.0 its replacements keep the clock calls in the plan and return the real time
+    private readonly DuckDBConnection duck = PlanningConnection.Open(lockDown: false);
     private readonly IProbeEngine engine;
 
     // id, i, j, d, n, s, dt, ts
@@ -36,7 +37,6 @@ public sealed class EngineProbe : IDisposable
     public EngineProbe(IProbeEngine engine)
     {
         this.engine = engine;
-        duck.Open();
         Duck("CREATE TABLE probe (id INTEGER NOT NULL, i INTEGER, j INTEGER, d DOUBLE, n DECIMAL(10, 2), s VARCHAR, dt DATE, ts TIMESTAMP)");
         Duck(Insert(sqlServer: false));
     }

@@ -37,15 +37,9 @@ public static partial class QueryDescriber
         foreach (var column in upstream.SelectMany(t => t.Columns).Where(c => !IsPlainType(c.Type)))
             return new(null, $"The declared type `{column.Type}` of column `{column.Name}` is not a plain SQL type name.");
 
-        using var connection = new DuckDBConnection("DataSource=:memory:");
-        connection.Open();
+        using var connection = PlanningConnection.Open();
         try
         {
-            // Lock the engine down before anything repo-controlled reaches it. These settings cannot be changed back.
-            Run(connection, "SET autoinstall_known_extensions = false");
-            Run(connection, "SET autoload_known_extensions = false");
-            Run(connection, "SET enable_external_access = false");
-
             Build(connection, upstream, prelude);
 
             using var cmd = connection.CreateCommand();
@@ -74,13 +68,10 @@ public static partial class QueryDescriber
     {
         foreach (var column in upstream.SelectMany(t => t.Columns).Where(c => !IsPlainType(c.Type)))
             return (null, $"The declared type `{column.Type}` of column `{column.Name}` is not a plain SQL type name.");
-        using var connection = new DuckDBConnection("DataSource=:memory:");
-        connection.Open();
+        using var connection = PlanningConnection.Open(out var status);
+        if (status.ClockWouldFreeze) return (null, status.Problem ?? "this DuckDB folds the clock functions into constants and they could not be replaced, so a lowered query would freeze the day of lowering");
         try
         {
-            Run(connection, "SET autoinstall_known_extensions = false");
-            Run(connection, "SET autoload_known_extensions = false");
-            Run(connection, "SET enable_external_access = false");
             Build(connection, upstream, prelude);
             using var cmd = connection.CreateCommand();
             cmd.CommandText = PlanStatement(sql);
@@ -102,13 +93,9 @@ public static partial class QueryDescriber
     {
         foreach (var column in upstream.SelectMany(t => t.Columns).Where(c => !IsPlainType(c.Type)))
             return $"The declared type `{column.Type}` of column `{column.Name}` is not a plain SQL type name.";
-        using var connection = new DuckDBConnection("DataSource=:memory:");
-        connection.Open();
+        using var connection = PlanningConnection.Open();
         try
         {
-            Run(connection, "SET autoinstall_known_extensions = false");
-            Run(connection, "SET autoload_known_extensions = false");
-            Run(connection, "SET enable_external_access = false");
             Build(connection, upstream, prelude);
             return null;
         }
@@ -155,8 +142,29 @@ public static partial class QueryDescriber
         catch (DuckDBException ex)
         {
             var head = statement.Trim().Split('\n', 2)[0].Trim();
+            if (ClockDefault(ex.Message) is { } clock)
+                throw new PreludeException($"{ClockDefaultCode}: a macro of the project ({(head.Length > 70 ? head[..70] + "..." : head)}) has a clock or session function as the default of parameter `{clock.Parameter}` ({clock.Default}); a default is a constant, bound when the macro is created");
             throw new PreludeException($"a macro or type of the project could not be created ({(head.Length > 70 ? head[..70] + "..." : head)}): {FirstLine(ex.Message)}");
         }
+    }
+
+    /// <summary>The diagnostic code that starts the error text when a macro's default is a clock or session function (see <see cref="ClockOverrides"/>); a caller that builds a diagnostic from the text looks for it.</summary>
+    public const string ClockDefaultCode = "DDB-325";
+
+    private static readonly Regex NotAConstantDefault = new(@"Default value '(?<default>.*)' for parameter '(?<parameter>[^']*)' is not a constant expression", RegexOptions.CultureInvariant | RegexOptions.Singleline);
+
+    private static readonly Lazy<Regex> ClockWords = new(() =>
+        new Regex(@"(?<![A-Za-z0-9_])(" + string.Join("|", ClockOverrides.All.SelectMany(o => o.Keywords.Prepend(o.Name)).Distinct().Select(Regex.Escape)) + @")(?![A-Za-z0-9_])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+
+    /// <summary>
+    /// DuckDB's refusal of a macro default that is not a constant, when the default names one of the clock or session functions the planning connections replace (a default of `random()` is refused too, and says the same,
+    /// but it is not ours to explain). With the replacements in place the call stays a call, so DuckDB refuses it; without them DuckDB 2.0 would fold it into the day of the lowering.
+    /// </summary>
+    internal static (string Parameter, string Default)? ClockDefault(string duckDbMessage)
+    {
+        var m = NotAConstantDefault.Match(duckDbMessage);
+        if (!m.Success || !ClockWords.Value.IsMatch(m.Groups["default"].Value)) return null;
+        return (m.Groups["parameter"].Value.Trim('"'), m.Groups["default"].Value);                   // 2.0 quotes the parameter's name
     }
 
     private static void Run(DuckDBConnection connection, string sql)

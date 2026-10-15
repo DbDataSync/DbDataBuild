@@ -1,0 +1,23 @@
+{
+  "comment": "The built-in functions DuckDB 2.0's binder folds into constants when they are stable within a query (probed on v2.0.0-alpha48256 by `SELECT year(current_date)`-style plans with the optimizer off: the call is gone from the plan and a constant of the day of lowering stands in its place, also inside date_trunc, age, +, -, date_diff, timezone, epoch_ms ...). The planning connections register a volatile function of the same name and type over each, so the plan keeps the call. Docs: docs/research/duckdb-2.0/README.md, section 2026-10-15 (the override). `value` says how the replacement computes what the built-in would: the time kinds read the clock when the function runs (DuckDB's TimeZone setting of the connection when it was registered; the planning connections never change it), `captured` kinds are what the same connection answered to `capture` just before the registration (the planning connections are fresh, in-memory, and never change schema, database or transaction).",
+  "overrides": [
+    { "name": "current_date",           "returns": "DATE",                    "value": "local_date",      "keywords": ["current_date"] },
+    { "name": "today",                  "returns": "DATE",                    "value": "local_date",      "keywords": [] },
+    { "name": "now",                    "returns": "TIMESTAMP WITH TIME ZONE", "value": "utc_timestamp",   "keywords": [] },
+    { "name": "get_current_timestamp",  "returns": "TIMESTAMP WITH TIME ZONE", "value": "utc_timestamp",   "keywords": ["current_timestamp"] },
+    { "name": "transaction_timestamp",  "returns": "TIMESTAMP WITH TIME ZONE", "value": "utc_timestamp",   "keywords": [] },
+    { "name": "get_current_time",       "returns": "TIME WITH TIME ZONE",      "value": "local_time_tz",   "keywords": ["current_time"] },
+    { "name": "current_localtime",      "returns": "TIME",                     "value": "local_time",      "keywords": ["localtime"] },
+    { "name": "current_localtimestamp", "returns": "TIMESTAMP",                "value": "local_timestamp", "keywords": ["localtimestamp"] },
+    { "name": "current_schema",         "returns": "VARCHAR",                  "value": "captured_text",   "keywords": [], "capture": "SELECT current_schema()" },
+    { "name": "current_database",       "returns": "VARCHAR",                  "value": "captured_text",   "keywords": ["current_catalog"], "capture": "SELECT current_database()" },
+    { "name": "version",                "returns": "VARCHAR",                  "value": "captured_text",   "keywords": [], "capture": "SELECT version()" },
+    { "name": "txid_current",           "returns": "UBIGINT",                  "value": "captured_ubigint", "keywords": [], "capture": "SELECT txid_current()" }
+  ],
+  "notCovered": [
+    { "name": "current_schemas", "reason": "returns VARCHAR[]; a list vector is not written by the override, so a call still folds to a constant list on 2.0 (the lowerer refuses nested values)" },
+    { "name": "current_setting", "reason": "its result type is the setting's own (ANY), which a registered function cannot reproduce; a call folds to a constant of the setting's value" },
+    { "name": "getvariable",     "reason": "ANY result like current_setting; a variable is a connection value that the binder reads as a constant on every version" },
+    { "name": "getenv",          "reason": "folds to the environment of the machine that plans; the tool never lowers it for an engine (it has no equivalent)" }
+  ]
+}

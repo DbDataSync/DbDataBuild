@@ -336,6 +336,24 @@ public class MacroTests
         Assert.Contains("'2024-06-30'", File.ReadAllText(Path.Combine(dir, "rendered", "sqlserver", "marts.live_totals", "load.default.sql")));
     }
 
+    [Fact]
+    public void A_macro_default_that_is_a_clock_function_is_DDB_325_with_the_fix_where_the_macro_is_defined_and_where_a_query_reaches_it()
+    {
+        // with the clock kept as calls (what DuckDB 2.0 needs; forced on here so that DuckDB 1.5 behaves the same) DuckDB refuses the default itself, and the tool says why and what to write instead
+        using var _ = DbDataBuild.Targets.DuckDb.PlanningConnection.UseMode(DbDataBuild.Targets.DuckDb.ClockOverrideMode.Always);
+        var dir = Project(WithDefaults.Replace("lag_days := 0", "lag_days := 0, live_as_of := current_date"));
+        Write(dir, "models/marts/live_totals.sql", "SELECT * FROM totals('src.orders')\n");
+        Write(dir, "models/marts/snap_totals.sql", "SELECT * FROM totals('src.orders_snap', 'snap_date')\n");
+        var compile = Cli("project", "compile", "--project", dir);
+        Assert.NotEqual(0, compile.Exit);
+        Assert.Contains("warning DDB-325", compile.Err);                                                           // where the macro is defined
+        Assert.Contains("error DDB-325", compile.Err);                                                             // where a query reaches it
+        Assert.Contains("live_as_of", compile.Err);
+        Assert.Contains("body", compile.Err);                                                                      // the fix: move the call into the body or the query
+        Assert.DoesNotContain("not a constant expression", compile.Err);                                           // not the raw binder error
+        Assert.DoesNotContain("DDB-324", compile.Err);
+    }
+
     [Theory]
     [InlineData("SELECT * FROM totals('src.orders_snap', 'snap_date')", "FROM src.orders_snap\nGROUP BY snap_date, status")]                        // every argument given
     [InlineData("SELECT * FROM totals('src.orders_snap', col := 'snap_date')", "FROM src.orders_snap\nGROUP BY snap_date, status")]               // a named argument at the call

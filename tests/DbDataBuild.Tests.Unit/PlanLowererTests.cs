@@ -13,8 +13,7 @@ public class PlanLowererTests
 {
     private static DuckDBConnection Open()
     {
-        var c = new DuckDBConnection("DataSource=:memory:");
-        c.Open();
+        var c = PlanningConnection.Open(lockDown: false);          // the connection that plans is the one that answers too: on DuckDB 2.0 it keeps the clock calls in the plan, and its replacements return the real time
         Exec(c, File.ReadAllText(Path.Combine(RepoRoot(), "spike", "seed.duckdb.sql")));
         // DuckDB 2.0 raises for `%` and `//` by zero where 1.x gave NULL, and the lowering writes the 1.x answer (NULLIF); the oracle answers like 1.x so the rows can be compared (owner decision pending)
         using (var probe = c.CreateCommand())
