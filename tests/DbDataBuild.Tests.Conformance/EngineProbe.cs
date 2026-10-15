@@ -39,7 +39,6 @@ public sealed class EngineProbe : IDisposable
         duck.Open();
         Duck("CREATE TABLE probe (id INTEGER NOT NULL, i INTEGER, j INTEGER, d DOUBLE, n DECIMAL(10, 2), s VARCHAR, dt DATE, ts TIMESTAMP)");
         Duck(Insert(sqlServer: false));
-        QueryDescriber.PreparePlanConnection(duck);
     }
 
     public Task CreateTableAsync() => engine.CreateProbeTableAsync(Seed);

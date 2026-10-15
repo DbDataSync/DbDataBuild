@@ -81,7 +81,6 @@ public static partial class QueryDescriber
             Run(connection, "SET autoinstall_known_extensions = false");
             Run(connection, "SET autoload_known_extensions = false");
             Run(connection, "SET enable_external_access = false");
-            PreparePlanConnection(connection);
             Build(connection, upstream, prelude);
             using var cmd = connection.CreateCommand();
             cmd.CommandText = PlanStatement(sql);
@@ -98,12 +97,6 @@ public static partial class QueryDescriber
         }
     }
 
-    /// <summary>
-    /// Makes DuckDB hand over subqueries in the shape the lowerer reads. DuckDB 2.0 rewrites correlated subqueries into materialized CTEs and joins to grouped derived tables
-    /// while binding, which cannot be turned back into the subquery the author wrote without pattern-matching every rewrite. Its `delim_join_as_cte` setting (2.0; it does not
-    /// exist in 1.x, so it is set only when present) keeps the older delim-join form, which the lowerer reads for 1.x. DuckDB marks the setting deprecated: when it goes, the
-    /// lowering has to read the new shapes (docs/research/duckdb-2.0/README.md).
-    /// </summary>
     /// <summary>Creates the prelude against the upstream schema and says why DuckDB refused it, or null when it was accepted. Nothing is run.</summary>
     public static string? CheckPrelude(IReadOnlyList<DuckTable> upstream, DuckPrelude prelude)
     {
@@ -121,13 +114,6 @@ public static partial class QueryDescriber
         }
         catch (PreludeException ex) { return ex.Message; }
         catch (DuckDBException ex) { return FirstLine(ex.Message); }
-    }
-
-    public static void PreparePlanConnection(DuckDBConnection connection)
-    {
-        using var probe = connection.CreateCommand();
-        probe.CommandText = "SELECT count(*) FROM duckdb_settings() WHERE name = 'delim_join_as_cte'";
-        if (Convert.ToInt64(probe.ExecuteScalar()) > 0) Run(connection, "SET delim_join_as_cte = false");
     }
 
     /// <summary>

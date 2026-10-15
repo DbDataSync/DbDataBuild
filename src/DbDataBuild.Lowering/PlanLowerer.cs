@@ -157,7 +157,7 @@ public sealed class PlanLowerer
             throw new LoweringException(root.TryGetProperty("error_message", out var m) ? m.GetString()! : "unknown error", root.TryGetProperty("error_type", out var et) ? et.GetString()! : "binder");
         var plans = root.GetProperty("plans");
         if (plans.GetArrayLength() != 1) throw new LoweringException($"expected one plan, got {plans.GetArrayLength()}");
-        var lowerer = new PlanLowerer { grainOf = grainOf, rewrites = rewrites ?? RewritePolicy.Exact, trimTrailing = ignoreTrailingSpaces };
+        var lowerer = new PlanLowerer { standardRowNulls = planJson.Contains("\"qname\"", StringComparison.Ordinal), grainOf = grainOf, rewrites = rewrites ?? RewritePolicy.Exact, trimTrailing = ignoreTrailingSpaces };
         foreach (var (schema, table, alias) in authorAliases ?? [])
         {
             var key = AliasKey(schema, table);
@@ -186,6 +186,7 @@ public sealed class PlanLowerer
         return new LoweredQuery(sql, columns, lowerer.rules.Distinct().Order(StringComparer.Ordinal).ToList()) { Tables = lowerer.aliasTables.Values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList() };
     }
 
+    private bool standardRowNulls;
     private readonly List<(string Name, string Sql)> ctesInOrder = [];
     private bool hasRecursiveCte;
     private RewritePolicy rewrites = RewritePolicy.Exact;
@@ -230,6 +231,20 @@ public sealed class PlanLowerer
                 var n = IntegerValue(x);
                 var digits = BigInteger.Abs(n).ToString().PadLeft(scale + 1, '0');
                 return (n.Sign < 0 ? "-" : "") + (scale > 0 ? digits[..^scale] + "." + digits[^scale..] : digits);
+            }
+            case "INTERVAL" when x.ValueKind == JsonValueKind.Object && x.TryGetProperty("months", out var months) && x.TryGetProperty("days", out var days0) && x.TryGetProperty("micros", out var micros):
+            {
+                // DuckDB 2.0 folds INTERVAL 3 DAY into a constant (1.x kept to_days(3)); one unit is written back, which unit of equal length (12 MONTH or 1 YEAR) is not recoverable
+                long mo = months.GetInt64(), da = days0.GetInt64(), mi = micros.GetInt64();
+                if (mo != 0 && da == 0 && mi == 0) return mo % 12 == 0 ? $"INTERVAL {mo / 12} YEAR" : $"INTERVAL {mo} MONTH";
+                if (mo == 0 && da != 0 && mi == 0) return $"INTERVAL {da} DAY";
+                if (mo == 0 && da == 0 && mi != 0)
+                {
+                    if (mi % 3_600_000_000 == 0) return $"INTERVAL {mi / 3_600_000_000} HOUR";
+                    if (mi % 60_000_000 == 0) return $"INTERVAL {mi / 60_000_000} MINUTE";
+                    if (mi % 1_000_000 == 0) return $"INTERVAL {mi / 1_000_000} SECOND";
+                }
+                throw new LoweringException("a literal of type INTERVAL");
             }
             case "VARCHAR": return "'" + x.GetString()!.Replace("'", "''") + "'";
             case "BOOLEAN": return x.ValueKind == JsonValueKind.True || (x.ValueKind == JsonValueKind.String && x.GetString() is "t" or "true") ? "TRUE" : "FALSE";
@@ -516,6 +531,24 @@ public sealed class PlanLowerer
     private static bool IsZeroConstant(JsonElement value) =>
         value.TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True || !value.TryGetProperty("value", out var x) || x.ValueKind == JsonValueKind.Number && x.GetRawText().Trim('0', '.', '-') == "";
 
+    /// <summary>Aggregates whose value over no rows is NULL (a count is 0, and so is not on this list).</summary>
+    private static readonly HashSet<string> NullOnEmpty = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "min", "max", "sum", "sum_no_overflow", "avg", "mean", "first", "last", "any_value", "arbitrary", "string_agg", "group_concat", "listagg", "bool_and", "bool_or",
+        "stddev", "stddev_samp", "stddev_pop", "var_samp", "var_pop", "variance", "mode",
+    };
+
+    private static readonly HashSet<string> NullPropagating = new(StringComparer.Ordinal) { "+", "-", "*", "/", "%", "//", "abs", "round", "floor", "ceil", "ceiling", "sqrt", "ln", "exp", "sign", "trunc" };
+
+    /// <summary>True when the expression is NULL whenever a column it reads is NULL (arithmetic and casts of columns), so a row of NULLs stays a row of NULLs through it.</summary>
+    private static bool NullWhenInputIsNull(JsonElement e) => Str(e, "type") switch
+    {
+        "BOUND_REF" => true,
+        "OPERATOR_CAST" => NullWhenInputIsNull(e.GetProperty("child")),
+        "BOUND_FUNCTION" => NullPropagating.Contains(Str(e, "name") ?? "") && Arr(e, "children").Any(NullWhenInputIsNull),
+        _ => false,
+    };
+
     private static string? SumWidening(string? type) => type switch { "TINYINT" or "SMALLINT" or "INTEGER" => "BIGINT", "BIGINT" => "DECIMAL(38, 0)", _ => null };
 
     private static bool IsQuantile(JsonElement e) =>
@@ -704,6 +737,8 @@ public sealed class PlanLowerer
         public bool HasAgg { get; set; }
         public bool Plain { get; set; }
         public bool IsDelim { get; set; }
+        /// <summary>An aggregate block whose every output is NULL when its input has no rows (a max, a sum, an expression of those; not a count): a join to it that finds no match and the aggregate over nothing agree.</summary>
+        public bool EmptyIsNull { get; set; }
         /// <summary>A correlated `LIMIT k` that DuckDB wrote as `row_number() OVER (PARTITION BY correlated values ORDER BY ...) <= k`: the select item and the ordering to restore.</summary>
         public (int Index, List<string> Orders)? LimitWindow { get; set; }
         public bool SuppressAliases { get; set; }
@@ -730,7 +765,7 @@ public sealed class PlanLowerer
         public Rel Clone() => new Rel()
         {
             Sel = [.. Sel], Frm = Frm, Sources = [.. Sources], Group = [.. Group], Order = [.. Order], Limit = Limit, Offset = Offset, Distinct = Distinct, HasWindow = HasWindow,
-            HasAgg = HasAgg, Plain = Plain, IsDelim = IsDelim, LimitWindow = LimitWindow, SuppressAliases = SuppressAliases, SetOp = SetOp, SetOpDistinct = SetOpDistinct, SetOpNames = SetOpNames,
+            HasAgg = HasAgg, Plain = Plain, IsDelim = IsDelim, EmptyIsNull = EmptyIsNull, LimitWindow = LimitWindow, SuppressAliases = SuppressAliases, SetOp = SetOp, SetOpDistinct = SetOpDistinct, SetOpNames = SetOpNames,
         }.CopyPredicates(this);
 
         private Rel CopyPredicates(Rel from) { Where.AddRange(from.Where); Having.AddRange(from.Having); return this; }
@@ -894,7 +929,17 @@ public sealed class PlanLowerer
         };
     }
 
+    /// <summary>The plan nodes being lowered, innermost last: a join asks its parent what happens to its rows (a filter that rejects NULL makes an inner join and a scalar subquery the same).</summary>
+    private readonly Stack<JsonElement> nodeStack = new();
+
     private Rel Node(JsonElement p)
+    {
+        nodeStack.Push(p);
+        try { return NodeCore(p); }
+        finally { nodeStack.Pop(); }
+    }
+
+    private Rel NodeCore(JsonElement p)
     {
         var t = p.GetProperty("type").GetString()!;
         var kids = Arr(p, "children").ToList();
@@ -933,6 +978,7 @@ public sealed class PlanLowerer
                 var childItems = c.Sel;
                 c.Sel = Arr(p, "expressions").Select(e => new Item(Expr(e, outs), Str(e, "alias"), TypeNameOf(e), IsOuterRef(e, childItems), IsColumnFree(e, childItems))).ToList();
                 c.Plain = false;
+                c.EmptyIsNull = c.EmptyIsNull && Arr(p, "expressions").All(NullWhenInputIsNull);
                 if (c.Sel.Any(s => s.Sql.Contains(" OVER (", StringComparison.Ordinal))) c.HasWindow = true;
                 return c;
             }
@@ -999,6 +1045,7 @@ public sealed class PlanLowerer
                 if (droppedConstant && c.Group.Count == 0 && groups.All(g => g.Outer || g.Const) && aggs.Count > 0 && !c.Having.Any(h => h == "count(*) > 0")) c.Having.Add("count(*) > 0");
                 c.Sel = groups.Concat(aggs).Select(x => new Item(x.Sql, null, x.Type, x.Outer, x.Const)).ToList();
                 c.HasAgg = true;
+                c.EmptyIsNull = aggregateExprs.All(a => IsQuantile(a) || NullOnEmpty.Contains(Str(a, "name") ?? ""));
                 c.Plain = false;
                 return c;
             }
@@ -1045,8 +1092,10 @@ public sealed class PlanLowerer
             case "LOGICAL_COMPARISON_JOIN" or "LOGICAL_CROSS_PRODUCT":
             {
                 var l = Node(kids[0]);
+                if (t == "LOGICAL_COMPARISON_JOIN" && TryKeyedLimit(p, kids, l) is { } limited) return limited;
                 var r = Node(kids[1]);
                 if (l.IsDelim || r.IsDelim) return JoinWithDelim(p, t, l, r);
+                if (t == "LOGICAL_COMPARISON_JOIN" && TryKeyedJoin(p, l, r) is { } keyed) return keyed;
                 if (t == "LOGICAL_CROSS_PRODUCT" && (IsConstantRow(l) || IsConstantRow(r)))
                 {
                     // a subquery that returns one value: it is an expression of the other side, not a table
@@ -1074,7 +1123,7 @@ public sealed class PlanLowerer
                 var full = joinKind is "OUTER" or "FULL";
                 if (!Flat(l) || (full && l.Where.Count > 0)) l = Wrap(l);
                 if (!Flat(r) || (full && r.Where.Count > 0)) r = Wrap(r);
-                var rel = new Rel { Sources = l.Sources.Concat(r.Sources).ToList(), Sel = l.Sel.Concat(RightColumns(p, r.Sel)).ToList() };
+                var rel = new Rel { Sources = l.Sources.Concat(r.Sources).ToList(), Sel = LeftColumns(p, l.Sel).Concat(RightColumns(p, r.Sel)).ToList() };
                 var filled = new List<string>();      // predicates of the side the join fills in with NULLs
                 if (t == "LOGICAL_CROSS_PRODUCT" || joinKind == "INNER") { rel.Where.AddRange(l.Where); rel.Where.AddRange(r.Where); }
                 else if (joinKind == "LEFT") { rel.Where.AddRange(l.Where); filled.AddRange(r.Where); }
@@ -1231,8 +1280,17 @@ public sealed class PlanLowerer
         Rel right;
         try { right = Node(kids[1]); }
         finally { delimFrames.Pop(); }
+        return FinishDelimJoin(p, left, lo, right);
+    }
 
-        var joinType = Str(p, "join_type")!;
+    /// <summary>
+    /// The join of the outer block with its subquery, once both are lowered and the correlation lives in the subquery as predicates on outer columns (items marked Outer carry the outer value): the subquery
+    /// becomes an EXISTS, an IN, scalar subqueries in the select list, or a LATERAL join.
+    /// </summary>
+    private Rel FinishDelimJoin(JsonElement p, Rel left, IReadOnlyList<string> lo, Rel right, string? joinTypeOverride = null)
+    {
+        var joinType = joinTypeOverride ?? Str(p, "join_type")!;
+        left = MapLeft(p, left);
         if (right.SetOp != null) throw new LoweringException("a correlated subquery over a set operation (UNION, INTERSECT, EXCEPT)");
         var ro = right.Outs();
         // conditions that tie a duplicate-eliminated column to its carried copy on the right are plumbing; any other condition is the comparison of an IN
@@ -1297,6 +1355,162 @@ public sealed class PlanLowerer
     }
 
     /// <summary>
+    /// DuckDB 2.0 removes the join with the duplicate-eliminated outer values whenever it can: the correlated equality `u.a = t.a` of a subquery is not a filter inside it any more but a join condition
+    /// `t.a IS NOT DISTINCT FROM g.a` against a subquery that is keyed by `a` (grouped by it, or filtered to `a IS NOT NULL`, which is what makes the null-safe equality an equality). This is the inverse:
+    /// each keyed column of the subquery goes back to being a predicate on the outer value, put first in the WHERE as authors write the correlation, and the key is no longer a GROUP BY column. The
+    /// column that carried the key now carries the outer value (marked Outer), as in the 1.x plan.
+    /// Null when the subquery is not keyed that way (the caller then keeps the join, which is exact too, or refuses).
+    /// </summary>
+    /// <param name="keys">Per key: the index of the subquery column and the text of the outer value (already marked as a reference to the enclosing block).</param>
+    /// <param name="nullSafeFallback">A key without the `IS NOT NULL` filter is written `IS NOT DISTINCT FROM` instead of being refused (an EXISTS or IN, where only the rows matter).</param>
+    private static Rel? PushCorrelation(Rel right, IReadOnlyList<(int Index, string Outer)> keys, bool nullSafeFallback)
+    {
+        if (right.SetOp != null || right.Limit != null || right.Offset != null || right.HasWindow || right.IsDelim) return null;
+        var copy = right.Clone();
+        var unplaced = new List<string>();
+        foreach (var (index, outer) in keys)
+        {
+            if (index >= copy.Sel.Count || copy.Sel[index].Outer) return null;
+            var key = copy.Sel[index].Sql;
+            // DuckDB put the `IS NOT NULL` where the author's equality stood among the other conditions: the predicate takes its place
+            var at = copy.Where.IndexOf($"({key} IS NOT NULL)");
+            var notNull = at >= 0;
+            if (copy.HasAgg)
+            {
+                // the key must be one of the groups; a group the author wrote on the same column stays (it is another entry of the list)
+                var group = copy.Group.IndexOf(key);
+                if (!notNull || group < 0) return null;
+                copy.Group.RemoveAt(group);
+            }
+            else if (!notNull && !nullSafeFallback) return null;
+            var predicate = $"({key} {(notNull ? "=" : "IS NOT DISTINCT FROM")} {outer})";
+            if (notNull) copy.Where[at] = predicate; else unplaced.Add(predicate);
+            copy.Sel[index] = copy.Sel[index] with { Sql = outer, Outer = true };
+        }
+        copy.Where.InsertRange(0, unplaced);
+        return copy;
+    }
+
+    /// <summary>The outer block of a keyed join as a subquery can sit in: not a DISTINCT, LIMIT or window, and a column of something when it is an aggregate; and the keys it supplies.</summary>
+    private (Rel Left, IReadOnlyList<string> Outs, List<(int Index, string Outer)> Keys)? PrepareKeyedLeft(JsonElement p, Rel l)
+    {
+        var left = l;
+        if (!left.Mergeable() || left.HasWindow) left = Wrap(left);
+        var lo = left.Outs();
+        var keys = KeysOf(p, lo);
+        if (keys == null) return null;
+        if (left.HasAgg && keys.Any(k => !Regex.IsMatch(k.Outer, "^\u0002[^\u0001\0\u0002]*\u0001[^\0\u0002]*\u0002$")))
+        {
+            left = Wrap(left);
+            lo = left.Outs();
+            keys = KeysOf(p, lo)!;
+        }
+        return (left, lo, keys);
+    }
+
+    /// <summary>
+    /// The scalar subquery with `ORDER BY ... LIMIT k` (a SINGLE join): DuckDB numbers the rows of each key with row_number() and keeps those up to k, which the author wrote as a LIMIT inside the subquery.
+    /// Recognized before the subquery is lowered, because the window and the filter over it are one thing here: the partition is the correlated key, so the pushed-in predicate replaces it.
+    /// </summary>
+    private Rel? TryKeyedLimit(JsonElement p, List<JsonElement> kids, Rel l)
+    {
+        if (Str(p, "join_type") != "SINGLE" || l.IsDelim || p.TryGetProperty("expression", out _)) return null;
+        var filter = kids[1];
+        if (Str(filter, "type") != "LOGICAL_FILTER" || Arr(filter, "expressions").ToList() is not [{ } cond] || Str(cond, "type") != "COMPARE_LESSTHANOREQUALTO") return null;
+        if (Arr(filter, "children").ToList() is not [{ } window] || Str(window, "type") != "LOGICAL_WINDOW" || Arr(window, "expressions").ToList() is not [{ } numbering] || Str(numbering, "type") != "WINDOW_ROW_NUMBER") return null;
+        if (Arr(window, "children").ToList() is not [{ } source]) return null;
+        var counter = cond.GetProperty("left"); var bound = cond.GetProperty("right");
+        if (Str(counter, "type") != "BOUND_REF" || Str(bound, "type") != "VALUE_CONSTANT" || !bound.GetProperty("value").TryGetProperty("value", out var limitValue) || !limitValue.TryGetInt64(out var limit)) return null;
+        var partitions = Arr(numbering, "partitions").ToList();
+        if (partitions.Count == 0 || partitions.Any(x => Str(x, "type") != "BOUND_REF")) return null;
+        if (PrepareKeyedLeft(p, l) is not var (left, lo, keys)) return null;
+        if (!keys.Select(k => k.Index).Order().SequenceEqual(partitions.Select(x => x.GetProperty("index").GetInt32()).Distinct().Order())) return null;
+        if (keys.Any(k => Projected(p, k.Index))) return null;
+        var rows = Node(source);
+        if (!rows.Mergeable()) rows = Wrap(rows);
+        if (rows.Sel.Count != counter.GetProperty("index").GetInt32()) return null;
+        var orders = Arr(numbering, "orders").Select(o => OrderItem(o, rows.Outs())).ToList();
+        if (PushCorrelation(rows, keys, nullSafeFallback: false) is not { } pushed) return null;
+        pushed.Order = orders;
+        pushed.Limit = limit;
+        pushed.Sel = pushed.Sel.Append(new Item("NULL", null, "BIGINT")).ToList();        // the row number is only ever compared with the limit
+        return FinishDelimJoin(p, left, lo, pushed, "SINGLE");
+    }
+
+    /// <summary>The keys of a join's NOT DISTINCT conditions: the subquery column each is against, and the outer value it carries (null when a condition is not of that form).</summary>
+    private List<(int Index, string Outer)>? KeysOf(JsonElement p, IReadOnlyList<string> lo)
+    {
+        var keys = new List<(int, string)>();
+        foreach (var c in Arr(p, "conditions"))
+        {
+            var r = c.GetProperty("right");
+            if (Str(c, "comparison") != "COMPARE_NOT_DISTINCT_FROM" || Str(r, "type") != "BOUND_REF") return null;
+            keys.Add((r.GetProperty("index").GetInt32(), Requalify(Expr(c.GetProperty("left"), lo))));
+        }
+        return keys.Count == 0 ? null : keys;
+    }
+
+    /// <summary>
+    /// A SINGLE, LEFT or INNER join of a block to a keyed subquery (see <see cref="PushCorrelation"/>) is the correlated subquery the author wrote:
+    /// <list type="bullet">
+    /// <item>a subquery that is an aggregate (SINGLE or LEFT, or INNER when the filter above rejects the rows that found nothing) is a scalar subquery in the select list, as it was in 1.x (where it was a SINGLE
+    /// delim join). The aggregate must give NULL over no rows (a count does not, and DuckDB guards it differently: <see cref="TryCountPatch"/>), because the join gives NULL for an outer value with no match;</item>
+    /// <item>a SINGLE join of a plain subquery is a scalar subquery (it errors on more than one row, as the engines do);</item>
+    /// <item>a LEFT or INNER join of a plain subquery is a LATERAL join.</item>
+    /// </list>
+    /// Anything else is not changed: a join to a derived table has the same rows.
+    /// </summary>
+    private Rel? TryKeyedJoin(JsonElement p, Rel l, Rel r)
+    {
+        var joinKind = Str(p, "join_type");
+        if (joinKind is not ("SINGLE" or "LEFT" or "INNER") || p.TryGetProperty("expression", out _) || l.IsDelim || r.IsDelim) return null;
+        if (PrepareKeyedLeft(p, l) is not var (left, lo, keys)) return null;
+        // scalar subqueries do not carry the key, so a key the query reads again means the join stays
+        var scalar = joinKind == "SINGLE" || r.HasAgg;
+        if (scalar && keys.Any(k => Projected(p, k.Index))) return null;
+        if (r.HasAgg)
+        {
+            if (!r.EmptyIsNull) return null;
+            if (joinKind == "INNER" && !RejectsNullRowsOf(p, left.Sel.Count)) return null;
+        }
+        if (PushCorrelation(r, keys, nullSafeFallback: false) is not { } pushed) return null;
+        var type = scalar ? "SINGLE" : joinKind;
+        return FinishDelimJoin(p, left, lo, pushed, type);
+    }
+
+    /// <summary>
+    /// True when the filter that reads this INNER join's output rejects every row whose subquery columns (from <paramref name="firstRightColumn"/> on) are NULL: a comparison that is NULL when one of its operands
+    /// is. Then the rows the inner join drops (an outer value with no match) are rows the filter drops anyway, and the join is the same as a scalar subquery that gives NULL for them.
+    /// </summary>
+    private bool RejectsNullRowsOf(JsonElement join, int firstRightColumn)
+    {
+        if (nodeStack.Count < 2) return false;
+        var parent = nodeStack.ElementAt(1);        // the join itself is on top
+        if (Str(parent, "type") != "LOGICAL_FILTER") return false;
+
+        bool Rejects(JsonElement e)
+        {
+            switch (Str(e, "type"))
+            {
+                case "CONJUNCTION_AND": return Arr(e, "children").Any(Rejects);
+                case "COMPARE_EQUAL" or "COMPARE_NOTEQUAL" or "COMPARE_LESSTHAN" or "COMPARE_GREATERTHAN" or "COMPARE_LESSTHANOREQUALTO" or "COMPARE_GREATERTHANOREQUALTO":
+                    return e.TryGetProperty("left", out var a) && e.TryGetProperty("right", out var b) && (StrictRight(a, firstRightColumn) || StrictRight(b, firstRightColumn));
+                default: return false;
+            }
+        }
+        return Arr(parent, "expressions").Any(Rejects);
+    }
+
+    /// <summary>An operand that is NULL when a column of the subquery is NULL.</summary>
+    private static bool StrictRight(JsonElement e, int firstRightColumn) => Str(e, "type") switch
+    {
+        "BOUND_REF" => e.GetProperty("index").GetInt32() >= firstRightColumn,
+        "OPERATOR_CAST" => StrictRight(e.GetProperty("child"), firstRightColumn),
+        "BOUND_FUNCTION" => NullPropagating.Contains(Str(e, "name") ?? "") && Arr(e, "children").Any(c => StrictRight(c, firstRightColumn)),
+        _ => false,
+    };
+
+    /// <summary>
     /// DuckDB 2.0 guards a correlated `count` against the COUNT bug: an outer key with no rows must give 0, not NULL. Its plan is the grouped count LEFT-joined to the
     /// distinct outer keys, LEFT-joined again to a count over an empty result, and a CASE that picks the empty count when the key found nothing:
     /// <code>PROJECTION [CASE WHEN marker IS NULL THEN empty_count ELSE count END, key]  over  LEFT(LEFT(DELIM_GET, AGG(count, count GROUP BY key)), AGG(count OVER EMPTY))</code>
@@ -1307,6 +1521,19 @@ public sealed class PlanLowerer
     /// DuckDB 2.0 lists the columns of the right side that a join outputs in `right_projection_map` (it drops the carried copy of a correlated key, for example). Absent, as in
     /// 1.x, every column is output.
     /// </summary>
+    /// <summary>2.0 also lists, per join, the columns of the left side to output (and may repeat one).</summary>
+    private static IReadOnlyList<Item> LeftColumns(JsonElement p, IReadOnlyList<Item> left) =>
+        p.TryGetProperty("left_projection_map", out var map) && map.ValueKind == JsonValueKind.Array && map.GetArrayLength() > 0
+            ? map.EnumerateArray().Select(i => left[i.GetInt32()]).ToList() : left;
+
+    private static Rel MapLeft(JsonElement p, Rel left)
+    {
+        if (!p.TryGetProperty("left_projection_map", out var map) || map.ValueKind != JsonValueKind.Array || map.GetArrayLength() == 0) return left;
+        var copy = left.Clone();
+        copy.Sel = LeftColumns(p, left.Sel).ToList();
+        return copy;
+    }
+
     private static IReadOnlyList<Item> RightColumns(JsonElement p, IReadOnlyList<Item> right) =>
         p.TryGetProperty("right_projection_map", out var map) && map.ValueKind == JsonValueKind.Array && map.GetArrayLength() > 0
             ? map.EnumerateArray().Select(i => right[i.GetInt32()]).ToList() : right;
@@ -1329,6 +1556,19 @@ public sealed class PlanLowerer
 
         var delim = Node(inside[0]);
         var agg = Node(inside[1]);
+        // DuckDB 2.0 keys the grouped count by the outer value (NOT DISTINCT FROM join, a group by and `IS NOT NULL`) rather than filtering by it
+        var countKeys = new List<(int Index, string Outer)>();
+        foreach (var c in Arr(inner, "conditions"))
+        {
+            var le = c.GetProperty("left"); var re = c.GetProperty("right");
+            if (Str(re, "type") == "BOUND_REF" && re.GetProperty("index").GetInt32() is var ri && ri < agg.Sel.Count && !agg.Sel[ri].Outer && IsOuterRef(le, delim.Sel))
+                countKeys.Add((ri, delim.Sel[le.GetProperty("index").GetInt32()].Sql));
+        }
+        if (countKeys.Count > 0)
+        {
+            if (PushCorrelation(agg, countKeys, nullSafeFallback: false) is not { } keyedCount) return null;
+            agg = keyedCount;
+        }
         var items = delim.Sel.Concat(agg.Sel).Append(new Item("0", null, "BIGINT")).ToList();
         var outs = items.Select(i => i.Sql).ToList();
         var result = new List<Item>();
@@ -1375,10 +1615,23 @@ public sealed class PlanLowerer
 
         var comparisons = new List<JsonElement>();       // the comparison(s) of an IN, ANY or ALL: an outer expression against a column of the subquery
         var correlated = new List<string>();
+        // a correlated `=` against a column of the subquery goes back inside it (also when the subquery is grouped by that column)
+        var keys = new List<(int Index, string Outer)>();
+        var keyed = new HashSet<string>();
+        foreach (var c in Arr(p, "conditions"))
+            if (Str(c, "comparison") == "COMPARE_NOT_DISTINCT_FROM" && Str(c.GetProperty("right"), "type") == "BOUND_REF" && c.GetProperty("right").GetProperty("index").GetInt32() is var keyIndex && keyIndex < right.Sel.Count && !right.Sel[keyIndex].Outer)
+                keys.Add((keyIndex, Requalify(Expr(c.GetProperty("left"), lo))));
+        if (keys.Count > 0 && PushCorrelation(right, keys, nullSafeFallback: true) is { } pushed)
+        {
+            right = pushed;
+            ro = right.Outs();
+            foreach (var k in keys) keyed.Add(k.Index + "|" + k.Outer);
+        }
         foreach (var c in Arr(p, "conditions"))
         {
             var op = Str(c, "comparison")!;
             if (op != "COMPARE_NOT_DISTINCT_FROM") { comparisons.Add(c); continue; }
+            if (Str(c.GetProperty("right"), "type") == "BOUND_REF" && keyed.Contains(c.GetProperty("right").GetProperty("index").GetInt32() + "|" + Requalify(Expr(c.GetProperty("left"), lo)))) continue;
             // the null-safe equality DuckDB uses for a correlated `=`: a predicate of the subquery on an outer column
             if (right.HasAgg || right.HasWindow || !right.Mergeable()) throw new LoweringException("a correlated predicate over an aggregate");
             var l = Expr(c.GetProperty("left"), lo);
@@ -1398,6 +1651,7 @@ public sealed class PlanLowerer
         else if (comparisons.Count == 1 && Str(comparisons[0], "comparison") == "COMPARE_EQUAL")
             mark = new Item($"({Expr(comparisons[0].GetProperty("left"), lo)} IN (\n{SubqueryWith(right, Expr(comparisons[0].GetProperty("right"), right.Outs()))}\n))", null, "BOOLEAN");
         else mark = ComparisonMark(comparisons, lo, right);
+        left = MapLeft(p, left);
         left.Sel = left.Sel.Append(mark).ToList();
         left.Plain = false;
         return left;
@@ -1416,6 +1670,7 @@ public sealed class PlanLowerer
         var ro = right.Outs();
         var parts = new List<string>();
         var nulls = new List<string>();
+        var perPart = new List<string>();
         foreach (var c in conditions)
         {
             var op = Str(c, "comparison")!;
@@ -1425,6 +1680,7 @@ public sealed class PlanLowerer
             var flipped = op switch { "COMPARE_LESSTHAN" => ">", "COMPARE_GREATERTHAN" => "<", "COMPARE_LESSTHANOREQUALTO" => ">=", "COMPARE_GREATERTHANOREQUALTO" => "<=", _ => Comparisons[op] };
             var (inner, outer) = (Expr(c.GetProperty("right"), ro), Requalify(Expr(c.GetProperty("left"), lo)));
             parts.Add($"({inner} {flipped} {outer})");
+            perPart.Add($"(({inner} {flipped} {outer}) OR {inner} IS NULL OR {outer} IS NULL)");
             nulls.Add($"{inner} IS NULL");
             nulls.Add($"{outer} IS NULL");
         }
@@ -1432,7 +1688,8 @@ public sealed class PlanLowerer
         var yes = right.Clone();
         yes.Where.Add(predicate);
         var maybe = right.Clone();
-        maybe.Where.Add($"({predicate} OR {string.Join(" OR ", nulls.Distinct())})");
+        // DuckDB 1.x makes a row unknown when any component is NULL; 2.0 follows the standard: a component that is definitely different makes the row definitely not a match
+        maybe.Where.Add(standardRowNulls && parts.Count > 1 ? "(" + string.Join(" AND ", perPart) + ")" : $"({predicate} OR {string.Join(" OR ", nulls.Distinct())})");
         marks.Add(($"EXISTS (\n{SubqueryWith(yes, "1")}\n)", $"(NOT EXISTS (\n{SubqueryWith(maybe, "1")}\n))"));
         return new Item($"\u0003{marks.Count - 1}\u0003", null, "BOOLEAN");
     }
@@ -1507,9 +1764,34 @@ public sealed class PlanLowerer
         {
             var jt = Str(p, "join_type");
             if (jt is not ("INNER" or "LEFT") || (jt == "LEFT" && !l.IsDelim)) throw new LoweringException($"the correlated join type {jt}");
-            var lo = l.Outs(); var ro = r.Outs();
+            var lo = l.Outs();
+            // DuckDB 2.0 joins the outer values to a subquery that is keyed by them (`delim.a IS NOT DISTINCT FROM g.a` over a group by `a`) instead of filtering inside it: the key goes back inside
+            var pushed = new HashSet<int>();
+            if (l.IsDelim && jt is "INNER" or "LEFT")
+            {
+                var keys = new List<(int Index, string Outer)>();
+                var all = Arr(p, "conditions").ToList();
+                for (var i = 0; i < all.Count; i++)
+                {
+                    var le = all[i].GetProperty("left"); var re = all[i].GetProperty("right");
+                    if (Str(all[i], "comparison") == "COMPARE_NOT_DISTINCT_FROM" && IsOuterRef(le, l.Sel) && Str(re, "type") == "BOUND_REF" && !IsOuterRef(re, r.Sel))
+                    {
+                        keys.Add((re.GetProperty("index").GetInt32(), l.Sel[le.GetProperty("index").GetInt32()].Sql));
+                        pushed.Add(i);
+                    }
+                }
+                if (keys.Count > 0)
+                {
+                    if (PushCorrelation(r, keys, nullSafeFallback: false) is { } keyed) { r = keyed; other = r; }
+                    else pushed.Clear();
+                }
+            }
+            var ro = r.Outs();
+            var position = -1;
             foreach (var c in Arr(p, "conditions"))
             {
+                position++;
+                if (pushed.Contains(position)) continue;
                 var le = c.GetProperty("left"); var re = c.GetProperty("right");
                 var bothOuter = IsOuterRef(le, l.Sel) && IsOuterRef(re, r.Sel);
                 if (bothOuter) continue;      // the join back to the outer value: true by construction
@@ -1518,7 +1800,7 @@ public sealed class PlanLowerer
             }
             if (p.TryGetProperty("expression", out _)) throw new LoweringException("a correlated join with an extra expression");
         }
-        var sel = l.Sel.Concat(RightColumns(p, r.Sel)).ToList();
+        var sel = LeftColumns(p, l.Sel).Concat(RightColumns(p, r.Sel)).ToList();
         other.Sel = sel;
         other.Plain = false;
         return other;

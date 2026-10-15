@@ -16,7 +16,12 @@ public class PlanLowererTests
         var c = new DuckDBConnection("DataSource=:memory:");
         c.Open();
         Exec(c, File.ReadAllText(Path.Combine(RepoRoot(), "spike", "seed.duckdb.sql")));
-        QueryDescriber.PreparePlanConnection(c);        // the same plan shape as the production path
+        // DuckDB 2.0 raises for `%` and `//` by zero where 1.x gave NULL, and the lowering writes the 1.x answer (NULLIF); the oracle answers like 1.x so the rows can be compared (owner decision pending)
+        using (var probe = c.CreateCommand())
+        {
+            probe.CommandText = "SELECT count(*) FROM duckdb_settings() WHERE name = 'error_on_division_by_zero'";
+            if (Convert.ToInt64(probe.ExecuteScalar()) > 0) Exec(c, "SET error_on_division_by_zero = false");
+        }
         return c;
     }
 
