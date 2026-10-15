@@ -8,7 +8,7 @@ using Terminal.Gui.Views;
 
 namespace DbDataBuild.Tui.Views;
 
-/// <summary>The models of the project, read from the `metadata` document: what each one is, and the things to do with it (sample data, render, plan).</summary>
+/// <summary>The models of the project, all seven kinds, read from the `metadata` document: what each one is, and the things to do with it (sample data, render, plan; a mapped or native model is declared, not built, so those say so).</summary>
 public sealed class ModelsWindow : Ui.Modal
 {
     private readonly TuiSession session;
@@ -27,7 +27,7 @@ public sealed class ModelsWindow : Ui.Modal
         s.App.Run(new ModelsWindow(s, models));
     }
 
-    private ModelsWindow(TuiSession s, JsonArray models) : base($"Models  ({models.Count})", 96, 94)
+    private ModelsWindow(TuiSession s, JsonArray models) : base($"Models  ({models.Count}: {Breakdown(models)})", 96, 94)
     {
         session = s;
         this.models = models;
@@ -76,7 +76,8 @@ public sealed class ModelsWindow : Ui.Modal
         if (settings["unique_key"] is JsonArray { Count: > 0 } uk) sb.AppendLineLf($"unique key: {Join(uk)}");
         if ((string?)settings["time_column"] is { } tc) sb.AppendLineLf($"time column: {tc}{((string?)settings["lookback"] is { } lb ? ", lookback " + lb : "")}");
         if ((string?)settings["from"] is { } origin) sb.AppendLineLf($"copies: {origin}");
-        sb.AppendLineLf($"files: {(string?)m["files"]!["query"]}");
+        if ((string?)settings["access"] is { } access) sb.AppendLineLf($"native access: {access}{(settings["reads"] is JsonArray { Count: > 0 } reads ? ", reads " + Join(reads) : "")}");
+        sb.AppendLineLf($"files: {(string?)m["files"]!["query"] ?? (string?)m["files"]!["definition"]}");
         if (m["upstream"] is JsonArray { Count: > 0 } up) sb.AppendLineLf("reads: " + string.Join(", ", up.Select(u => $"{(string?)u!["name"]} ({(string?)u["kind"]})")));
         sb.AppendLineLf().AppendLineLf("Columns");
         foreach (var c in m["columns"]!.AsArray())
@@ -94,6 +95,11 @@ public sealed class ModelsWindow : Ui.Modal
             sb.AppendLineLf().AppendLineLf("Indexes");
             foreach (var i in ix) sb.AppendLineLf($"  {(string?)i!["name"]}  ({Join(i["columns"])}){((bool?)i["unique"] == true ? " unique" : "")}");
         }
+        if (m["foreign_keys"] is JsonArray { Count: > 0 } fk)
+        {
+            sb.AppendLineLf().AppendLineLf("Foreign keys");
+            foreach (var f in fk) sb.AppendLineLf($"  {(string?)f!["name"]}  ({Join(f["columns"])}) -> {(string?)f["references"]!["table"]} ({Join(f["references"]!["columns"])})");
+        }
         if (m["index_advice"] is JsonArray { Count: > 0 } adv)
         {
             sb.AppendLineLf().AppendLineLf("Index advice");
@@ -102,6 +108,10 @@ public sealed class ModelsWindow : Ui.Modal
         if (m["lowered"] is JsonObject lo) sb.AppendLineLf().AppendLineLf($"Lowered query: {(string?)lo["file"]}   rules: {Join(lo["rules"])}");
         return sb.ToString();
     }
+
+    /// <summary>The models counted by kind: `3 view, 1 mapped`.</summary>
+    private static string Breakdown(JsonArray models) =>
+        string.Join(", ", models.GroupBy(m => (string?)m!["kind"] ?? "?").OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Count()} {g.Key}"));
 
     private static string Join(JsonNode? n) => n is JsonArray a ? string.Join(", ", a.Select(x => (string?)x)) : "";
 }

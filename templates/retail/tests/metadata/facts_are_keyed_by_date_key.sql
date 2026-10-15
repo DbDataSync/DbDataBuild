@@ -3,4 +3,4 @@
 -- tags: design
 SELECT model FROM metadata_models
 WHERE model LIKE 'marts.fct\_%' ESCAPE '\'
-  AND model NOT IN (SELECT model FROM metadata_columns WHERE kind = 'model' AND column_name IN ('date_key', 'shipped_date_key', 'budget_month'))
+  AND model NOT IN (SELECT model FROM metadata_columns WHERE model_kind NOT IN ('mapped', 'native') AND column_name IN ('date_key', 'shipped_date_key', 'budget_month'))

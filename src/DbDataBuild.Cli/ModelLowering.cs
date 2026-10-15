@@ -16,7 +16,7 @@ internal sealed record LoweredModel(string Sql, LoweredQuery Query, string Artif
 /// The lowering stage (docs/research/duckdb-plan-lowering): DuckDB binds each model query against an empty schema built from the declared columns of everything
 /// else in the project, and the bound plan becomes one explicit query that the matrix lint and polyglot then work on. A query that cannot be lowered is DDB-324.
 /// </summary>
-internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IReadOnlyList<SourceDescriptor> descriptors, ProjectConfig config, MacroLibrary? macros = null)
+internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IReadOnlyList<DeclaredModel> descriptors, ProjectConfig config, MacroLibrary? macros = null)
 {
     private readonly Dictionary<string, (LoweredModel? Model, Diagnostic? Error)> cache = new(StringComparer.Ordinal);
     private string? duckDbVersion;
@@ -32,7 +32,7 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
     /// The source columns a query's output column is read from, directly or through a cast, when the project declares something about the source (its `indexes:` or its `grain`) and no declared index leads with the
     /// column: what the slice advice (DDB-239) reports. A computed column, a source with nothing declared and a model (whose indexes are the tool's to create) give nothing.
     /// </summary>
-    public IReadOnlyList<(string Table, string Column)> SourceColumnsWithoutLeadingIndex(string sql, string column)
+    public IReadOnlyList<(string Table, string Column)> MappedColumnsWithoutLeadingIndex(string sql, string column)
     {
         var facts = QueryAnalyzer.Analyze(sql).Facts;
         var projection = facts?.Projections.FirstOrDefault(p => string.Equals(p.Name, column, StringComparison.OrdinalIgnoreCase));
@@ -74,10 +74,10 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
     }
 
     /// <summary>What a query reads after DuckDB has expanded its macros: the tables of the bound plan. Null when the query cannot be lowered (the caller falls back to the names in its text).</summary>
-    public IReadOnlyList<string>? TablesRead(ModelSource source, string authorSql, IReadOnlyList<QueryParameter> parameters)
+    public IReadOnlyList<string>? TablesRead(BuiltModel built, string authorSql, IReadOnlyList<QueryParameter> parameters)
     {
         if (!Enabled) return null;
-        var (lowered, _) = Lower(source, authorSql, parameters);
+        var (lowered, _) = Lower(built, authorSql, parameters);
         return lowered?.Query.Tables;
     }
 
@@ -152,16 +152,16 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
     /// The query as DuckDB must run it to answer as a connection that ignores trailing spaces in a string comparison does (`sample`, `test`): the lowered query with its string operands trimmed where it
     /// matters (see <see cref="PlanLowerer.Lower"/>). Never written to the project and never given to an engine.
     /// </summary>
-    public (string? Sql, string? Error) LowerForDuckDb(ModelSource source, string sql)
+    public (string? Sql, string? Error) LowerForDuckDb(BuiltModel built, string sql)
     {
-        var key = source.Definition.Name + "\0" + sql;
+        var key = built.Definition.Name + "\0" + sql;
         if (duckDbCache.TryGetValue(key, out var hit)) return hit;
-        var upstream = UpstreamFor(source.Definition.Name, sql, restrict: true);
+        var upstream = UpstreamFor(built.Definition.Name, sql, restrict: true);
         var prelude = (macros ?? MacroLibrary.Empty).PreludeFor([sql]);
         var (json, error) = QueryDescriber.SerializePlan(upstream, sql, prelude);
         if (json == null && upstream.Count < models.Count + descriptors.Count - 1)
         {
-            upstream = UpstreamFor(source.Definition.Name, sql, restrict: false);                                  // an error is reported on the whole project's tables
+            upstream = UpstreamFor(built.Definition.Name, sql, restrict: false);                                  // an error is reported on the whole project's tables
             (json, error) = QueryDescriber.SerializePlan(upstream, sql, prelude);
         }
         if (json == null) return duckDbCache[key] = (null, error);
@@ -170,7 +170,7 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
             PlanLowerer.ThrowIfError(json);
             var described = QueryDescriber.Describe(upstream, sql, prelude);
             if (!described.Ok) return duckDbCache[key] = (null, described.Error);
-            var lowered = PlanLowerer.Lower(json, described.Columns!.Select(c => c.Name).ToList(), GrainOf, RewriteCatalog.For(config, source.Definition), ignoreTrailingSpaces: true);
+            var lowered = PlanLowerer.Lower(json, described.Columns!.Select(c => c.Name).ToList(), GrainOf, RewriteCatalog.For(config, built.Definition), ignoreTrailingSpaces: true);
             return duckDbCache[key] = (lowered.Sql, null);
         }
         catch (LoweringException ex) { return duckDbCache[key] = (null, ex.Message.Split('\n')[0]); }
@@ -180,12 +180,12 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
 
     /// <param name="parameters">The parameters the query uses as values (their markers are in <paramref name="authorSql"/>); the committed artifact shows them as the references they stand for.</param>
     /// <param name="variant">Which of several lowerings of one model this is (the first connection of the group that reads this text), when a name it is given differs between its connections; it is part of the artifact's file name.</param>
-    public (LoweredModel? Model, Diagnostic? Error) Lower(ModelSource source, string authorSql, IReadOnlyList<QueryParameter>? parameters = null, string? variant = null)
+    public (LoweredModel? Model, Diagnostic? Error) Lower(BuiltModel built, string authorSql, IReadOnlyList<QueryParameter>? parameters = null, string? variant = null)
     {
-        var key = source.Definition.Name + "\0" + variant + "\0" + authorSql;
+        var key = built.Definition.Name + "\0" + variant + "\0" + authorSql;
         if (cache.TryGetValue(key, out var hit)) return hit;
-        var result = Compute(source, authorSql, parameters ?? [], variant, restrict: true);
-        if (result.Item1 == null) result = Compute(source, authorSql, parameters ?? [], variant, restrict: false);      // a refusal is given on the whole project's tables, so a table the quick way missed cannot cause one
+        var result = Compute(built, authorSql, parameters ?? [], variant, restrict: true);
+        if (result.Item1 == null) result = Compute(built, authorSql, parameters ?? [], variant, restrict: false);      // a refusal is given on the whole project's tables, so a table the quick way missed cannot cause one
         return cache[key] = result;
     }
 
@@ -203,8 +203,8 @@ internal sealed class ModelLowering(IReadOnlyList<ModelDefinition> models, IRead
         return all.Where(t => wanted.Contains((t.SchemaName.ToLowerInvariant(), t.Name.ToLowerInvariant()))).ToList();
     }
 
-    private (LoweredModel?, Diagnostic?) Compute(ModelSource source, string authorSql, IReadOnlyList<QueryParameter> parameters, string? variant, bool restrict) =>
-        Compute(source.Definition.Name, source.QueryFile, source.Definition, authorSql, parameters, variant, restrict);
+    private (LoweredModel?, Diagnostic?) Compute(BuiltModel built, string authorSql, IReadOnlyList<QueryParameter> parameters, string? variant, bool restrict) =>
+        Compute(built.Definition.Name, built.QueryFile, built.Definition, authorSql, parameters, variant, restrict);
 
     /// <summary>
     /// The SELECT of a `target` or `source` resolver of an input, lowered like a model's query (DDB-324 when it cannot be). It is written over the project's models, all of them (a resolver may read the model whose load it

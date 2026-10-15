@@ -45,14 +45,14 @@ internal static class DiffCommand
         }
         if (!across && string.Equals(left.SchemaName, right.SchemaName, StringComparison.OrdinalIgnoreCase) && string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)) { error.WriteLine("Both sides name the same table."); return CliApp.ExitUsage; }
 
-        // the key: given, or the table's own grain (a model's grain or unique key, a source's grain)
+        // the key: given, or the table's own grain (a model's grain or unique key, a mapped model's grain)
         var key = keyArg.SelectMany(k => k.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToList();
         var keySource = "option";
         if (key.Count == 0)
         {
             var qualified = $"{left.SchemaName}.{left.Name}";
-            var model = ctx.Project.Sources.FirstOrDefault(s => string.Equals(s.Definition.Name, qualified, StringComparison.OrdinalIgnoreCase))?.Definition;
-            var descriptor = ctx.Project.Descriptors.FirstOrDefault(d => string.Equals(d.Name, qualified, StringComparison.OrdinalIgnoreCase));
+            var model = ctx.Project.BuiltModels.FirstOrDefault(s => string.Equals(s.Definition.Name, qualified, StringComparison.OrdinalIgnoreCase))?.Definition;
+            var descriptor = ctx.Project.MappedModels.FirstOrDefault(d => string.Equals(d.Name, qualified, StringComparison.OrdinalIgnoreCase));
             if (model is { Grain.Count: > 0 }) (key, keySource) = (model.Grain.ToList(), "grain");
             else if (model is { UniqueKey.Count: > 0 }) (key, keySource) = (model.UniqueKey.ToList(), "unique_key");
             else if (descriptor is { Grain.Count: > 0 }) (key, keySource) = (descriptor.Grain.ToList(), "grain");

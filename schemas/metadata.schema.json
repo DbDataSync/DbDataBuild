@@ -2,13 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:dbdatabuild:schemas:metadata",
   "title": "DbDataBuild metadata documents",
-  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/1`), one per source table the project reads but does not build (`dbdatabuild.source/2`), and one per model (`dbdatabuild.model/2`: version 1 had `kind` as an object with a `type` inside; in version 2 `kind` is the model kind as a plain string and its settings are `kind_settings`). The same documents are printed by `validate` and `metadata` with `--format json`, and stored in the target's tracking tables (`publish-metadata`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
+  "description": "The kinds of metadata document: one per project (`dbdatabuild.project/2`) and one per model (`dbdatabuild.model/3`), of any of the seven model kinds: the five the tool builds (view, full, incremental_by_unique_key, incremental_by_time_range, copy) and the two it declares (mapped, native). `kind` is the model kind as a plain string and its settings are `kind_settings`; a declared model has no query, loads, hooks or lineage, so those properties are left out of its document. The same documents are printed by `project compile` and `project show metadata` with `--format json`, and stored in the target's tracking tables (`connection publish`, views `metadata_current` and `metadata_columns`). Null values are omitted, never written as null. A new optional key is not a version change; a removed or retyped key is.",
   "oneOf": [
     {
       "$ref": "#/$defs/project"
-    },
-    {
-      "$ref": "#/$defs/source"
     },
     {
       "$ref": "#/$defs/model"
@@ -88,7 +85,7 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "dbdatabuild.project/1"
+          "const": "dbdatabuild.project/2"
         },
         "tool_version": {
           "type": "string"
@@ -237,70 +234,6 @@
             }
           }
         },
-        "sources": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "file": {
-                "type": "string"
-              },
-              "definition_hash": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "kind": {
-                "enum": [
-                  "mapped",
-                  "native"
-                ]
-              },
-              "native": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "access": {
-                    "enum": [
-                      "select",
-                      "command"
-                    ]
-                  },
-                  "connections": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "text_hash": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                  },
-                  "reads": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "required": [
-                  "access",
-                  "connections",
-                  "text_hash",
-                  "reads"
-                ]
-              }
-            },
-            "required": [
-              "name",
-              "file",
-              "definition_hash"
-            ]
-          }
-        },
         "models": {
           "type": "array",
           "items": {
@@ -317,7 +250,9 @@
                   "full",
                   "incremental_by_unique_key",
                   "incremental_by_time_range",
-                  "copy"
+                  "copy",
+                  "mapped",
+                  "native"
                 ]
               },
               "connections": {
@@ -329,11 +264,16 @@
               "definition_hash": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
+              },
+              "file": {
+                "description": "The project-relative path of the file that defines the model.",
+                "type": "string"
               }
             },
             "required": [
               "name",
-              "kind"
+              "kind",
+              "file"
             ]
           }
         },
@@ -367,7 +307,6 @@
         "tool_version",
         "matrix_version",
         "config",
-        "sources",
         "models"
       ]
     },
@@ -713,19 +652,21 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "dbdatabuild.model/2"
+          "const": "dbdatabuild.model/3"
         },
         "name": {
           "type": "string"
         },
         "kind": {
-          "description": "The model kind, as a plain string: the model kinds that have a model document. A mapped model and a native model have a source document (`dbdatabuild.source/2`), whose `kind` is `mapped` or `native`. The settings of the kind are in `kind_settings`.",
+          "description": "The model kind, as a plain string: any of the seven. The settings of the kind are in `kind_settings`.",
           "enum": [
             "view",
             "full",
             "incremental_by_unique_key",
             "incremental_by_time_range",
-            "copy"
+            "copy",
+            "mapped",
+            "native"
           ]
         },
         "grain": {
@@ -755,12 +696,12 @@
               "type": "string"
             },
             "query": {
+              "description": "Absent for a model with no query file (a copy, a mapped or native model).",
               "type": "string"
             }
           },
           "required": [
-            "definition",
-            "query"
+            "definition"
           ]
         },
         "inherited": {
@@ -958,7 +899,7 @@
           }
         },
         "kind_settings": {
-          "description": "The settings of the kind, each kind its own, and an empty object for a kind that has none. incremental_by_unique_key: `unique_key`. incremental_by_time_range: `time_column`, `lookback`. copy: `from`, `slice`, `on_mismatch`, `unique_key`, `watermark`.",
+          "description": "The settings of the kind, each kind its own, and an empty object for a kind that has none. incremental_by_unique_key: `unique_key`. incremental_by_time_range: `time_column`, `lookback`. copy: `from`, `slice`, `on_mismatch`, `unique_key`, `watermark`. native: `access`, `connections`, `text_hash`, `reads`; mapped: none.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -1020,53 +961,7 @@
               "required": [
                 "column"
               ]
-            }
-          }
-        }
-      },
-      "required": [
-        "schema",
-        "name",
-        "kind",
-        "kind_settings",
-        "grain",
-        "connections",
-        "files",
-        "inherited",
-        "columns",
-        "loads",
-        "indexes",
-        "hooks"
-      ]
-    },
-    "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "schema": {
-          "const": "dbdatabuild.source/2"
-        },
-        "name": {
-          "type": "string"
-        },
-        "file": {
-          "type": "string"
-        },
-        "definition_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "kind": {
-          "description": "The model kind, as a plain string, in the same words as a model document's `kind`: `mapped` (a table that exists and is not built) or `native` (a table the engine computes from its own text). The settings of the kind are in `kind_settings`.",
-          "enum": [
-            "mapped",
-            "native"
-          ]
-        },
-        "kind_settings": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
+            },
             "access": {
               "enum": [
                 "select",
@@ -1089,120 +984,6 @@
                 "type": "string"
               }
             }
-          },
-          "description": "The settings of the kind, as a model's `kind_settings`: an empty object for a mapped model; for a native model how it is run (`access`), where (`connections`), the hash of its text and the tables it says it reads."
-        },
-        "grain": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "columns": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "logical_type": {
-                "type": "string"
-              },
-              "nullable": {
-                "type": "boolean"
-              },
-              "collation": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "tags": {
-                "description": "Sorted; omitted when there are none.",
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "properties": {
-                "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
-                "type": "object",
-                "additionalProperties": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "name",
-              "logical_type",
-              "nullable"
-            ]
-          }
-        },
-        "indexes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "columns": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "unique": {
-                "type": "boolean"
-              },
-              "include": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "title": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "tags": {
-                "description": "Sorted; omitted when there are none.",
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "properties": {
-                "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
-                "type": "object",
-                "additionalProperties": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "name",
-              "columns",
-              "unique",
-              "include"
-            ]
           }
         },
         "foreign_keys": {
@@ -1246,51 +1027,19 @@
               "references"
             ]
           }
-        },
-        "consumers": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Models whose query reads this table, across the whole project."
-        },
-        "title": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "tags": {
-          "description": "Sorted; omitted when there are none.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "properties": {
-          "description": "Key to value (a string, a number or a boolean), keys sorted; omitted when there are none.",
-          "type": "object",
-          "additionalProperties": {
-            "type": [
-              "string",
-              "number",
-              "boolean"
-            ]
-          }
         }
       },
       "required": [
         "schema",
         "name",
-        "file",
-        "definition_hash",
-        "grain",
-        "columns",
-        "indexes",
-        "foreign_keys",
-        "consumers",
         "kind",
-        "kind_settings"
+        "kind_settings",
+        "grain",
+        "connections",
+        "files",
+        "definition_hash",
+        "columns",
+        "indexes"
       ]
     }
   }

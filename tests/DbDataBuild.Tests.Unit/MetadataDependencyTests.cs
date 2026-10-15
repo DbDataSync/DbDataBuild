@@ -59,33 +59,33 @@ public class MetadataDependencyTests
         var ctx = ProjectContext.Load(Project());
         var docs = MetadataPublisher.Collect(ctx, null, null);
         Assert.Equal("full", MetadataDependencies.ModelKindOf("model", docs.Single(d => d.Subject == "marts.v2").Json));
-        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("source", docs.Single(d => d.Subject == "staging.t").Json));
-        Assert.Equal("native", MetadataDependencies.ModelKindOf("source", docs.Single(d => d.Subject == "staging.ext").Json));
+        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("model", docs.Single(d => d.Subject == "staging.t").Json));
+        Assert.Equal("native", MetadataDependencies.ModelKindOf("model", docs.Single(d => d.Subject == "staging.ext").Json));
         Assert.Contains("\"kind\":\"native\"", docs.Single(d => d.Subject == "staging.ext").Json);
         using (var ext = System.Text.Json.JsonDocument.Parse(docs.Single(d => d.Subject == "staging.ext").Json))
         {
-            Assert.Equal("dbdatabuild.source/2", ext.RootElement.GetProperty("schema").GetString());
+            Assert.Equal("dbdatabuild.model/3", ext.RootElement.GetProperty("schema").GetString());
             Assert.False(ext.RootElement.TryGetProperty("native", out _));                                                           // the native model's settings are kind_settings, as a model's are
             Assert.Equal("select", ext.RootElement.GetProperty("kind_settings").GetProperty("access").GetString());
             Assert.Equal(["staging.t"], ext.RootElement.GetProperty("kind_settings").GetProperty("reads").EnumerateArray().Select(r => r.GetString()));
+            Assert.Equal(["staging.t"], ext.RootElement.GetProperty("upstream").EnumerateArray().Select(u => u.GetProperty("name").GetString()));         // what it reads is its upstream, as a built model's query is
         }
         Assert.Contains("\"kind\":\"mapped\"", docs.Single(d => d.Subject == "staging.t").Json);
         Assert.Contains("\"kind_settings\":{}", docs.Single(d => d.Subject == "staging.t").Json);
-        Assert.Equal("native", MetadataDependencies.ModelKindOf("source", "{\"schema\":\"dbdatabuild.source/1\",\"native\":{\"access\":\"select\"}}"));     // a document of the first version has no kind
-        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("source", "{\"schema\":\"dbdatabuild.source/1\"}"));
+        Assert.Null(MetadataDependencies.ModelKindOf("source", "{\"kind\":\"mapped\"}"));                                                                  // there is no subject kind `source` any more
         Assert.Null(MetadataDependencies.ModelKindOf("project", "{}"));
         Assert.Contains("\"kind\":\"view\"", docs.Single(d => d.Subject == "marts.v1").Json);
         Assert.Contains("\"kind_settings\":{}", docs.Single(d => d.Subject == "marts.v1").Json);
         var fromProject = MetadataBuilder.Dependencies(ctx).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
-        var fromDocuments = MetadataDependencies.FromDocuments(docs.Select(d => (d.Kind, d.Subject, d.Json))).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
+        var fromDocuments = MetadataDependencies.FromDocuments(docs.Select(d => (d.SubjectKind, d.Subject, d.Json))).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
         Assert.Equal(fromProject.Where(r => !r.Contains("staging.ext")), fromDocuments.Where(r => !r.Contains("staging.ext")));       // the documents do not include the native model, so what it reads is "unknown" there
-        using var db = MetadataDatabase.Open(docs.Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
+        using var db = MetadataDatabase.Open(docs.Select(d => new MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
         var run = db.Run("SELECT m.model, m.kind FROM metadata_models m ORDER BY m.model", 10);
-        Assert.Equal(["marts.v1|view", "marts.v2|full"], run.Rows.Select(r => $"{r["model"]}|{r["kind"]}"));
+        Assert.Equal(["marts.v1|view", "marts.v2|full", "staging.ext|native", "staging.t|mapped"], run.Rows.Select(r => $"{r["model"]}|{r["kind"]}"));      // one view of all seven kinds
         var kinds = db.Run("SELECT subject, model_kind FROM metadata_current WHERE model_kind IS NOT NULL ORDER BY subject", 10);
         Assert.Equal(["marts.v1|view", "marts.v2|full", "staging.ext|native", "staging.t|mapped"], kinds.Rows.Select(r => $"{r["subject"]}|{r["model_kind"]}"));      // no model has a null kind
-        var sources = db.Run("SELECT source, kind, native_access, native_reads FROM metadata_sources ORDER BY source", 10);
-        Assert.Equal(["staging.ext|native|select", "staging.t|mapped|"], sources.Rows.Select(r => $"{r["source"]}|{r["kind"]}|{r["native_access"]}"));
+        var declared = db.Run("SELECT model, kind, kind_settings->>'access' AS access FROM metadata_models WHERE kind IN ('mapped', 'native') ORDER BY model", 10);
+        Assert.Equal(["staging.ext|native|select", "staging.t|mapped|"], declared.Rows.Select(r => $"{r["model"]}|{r["kind"]}|{r["access"]}"));
         var up = db.Run("SELECT upstream, upstream_kind FROM metadata_upstream WHERE model = 'marts.v2' ORDER BY upstream", 10);
         Assert.Equal(["marts.v1|model", "staging.t|mapped"], up.Rows.Select(r => $"{r["upstream"]}|{r["upstream_kind"]}"));
         var anc = db.Run("SELECT ancestor, depth FROM metadata_ancestors WHERE model = 'marts.v2' ORDER BY depth, ancestor", 10);
@@ -109,10 +109,12 @@ public class MetadataDependencyTests
     }
 
     [Fact]
-    public void Layout_eight_has_the_kind_column_and_the_dependency_table_and_the_init_script_keeps_the_old_view_until_the_column_is_there()
+    public void Layout_nine_has_the_subject_kind_column_and_the_dependency_table_and_the_init_script_keeps_the_old_view_until_the_column_is_there()
     {
-        Assert.Equal(8, TrackingSchema.Version);
+        Assert.Equal(9, TrackingSchema.Version);
         Assert.Contains(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "model_kind" && c.Nullable);
+        Assert.Contains(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "subject_kind" && !c.Nullable);
+        Assert.DoesNotContain(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "kind");
         Assert.Equal(["connection", "subject", "depends_on", "depends_on_kind", "depth"], TrackingSchema.Table("metadata_dependency").Columns.Select(c => c.Name));
         foreach (var target in new[] { "sqlserver", "postgres" })
         {
@@ -121,6 +123,8 @@ public class MetadataDependencyTests
             Assert.Contains("model_kind", script);
             var upgrade = TrackingDdl.Render(TrackingDdl.For(target).UpgradeScript("dbdatabuild", "c"));
             Assert.Contains("(layout 8)", upgrade);
+            Assert.Contains("(layout 9)", upgrade);
+            Assert.Contains("subject_kind", upgrade);
         }
     }
 }

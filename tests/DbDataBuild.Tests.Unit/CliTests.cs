@@ -54,7 +54,7 @@ public class CliTests
         Assert.Equal(0, exit);
         Assert.Contains("effect: Repo files only", output);
         Assert.Contains("Config: dbdatabuild.yml", output);
-        Assert.Contains("OK: 1 model(s) valid.", output);
+        Assert.Contains("OK: 1 model(s) valid (1 incremental_by_unique_key).", output);
         Assert.Equal("", err);
     }
 
@@ -103,7 +103,7 @@ public class CliTests
         Assert.Equal(CliApp.ExitOk, exit);
         Assert.Contains("warning DDB-302", err);
         Assert.Contains("note DDB-303", err);
-        Assert.Matches(@"OK: 1 model\(s\) valid\. 1 warning\(s\), 1 note\(s\)\.", output);
+        Assert.Matches(@"OK: 2 model\(s\) valid \(1 \w+, 1 mapped\)\. 1 warning\(s\), 1 note\(s\)\.", output);
     }
 
     [Fact]

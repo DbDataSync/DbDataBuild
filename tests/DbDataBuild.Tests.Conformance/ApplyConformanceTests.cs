@@ -1253,8 +1253,8 @@ public partial class ApplyConformanceTests
             // introspection with SQL: the stored document is the one `metadata` prints, and the column view unpacks it
             var printed = Json(run.Cli("project", "show", "metadata", "--format", "json"))["data"]!["models"]!.AsArray().Single(m => (string?)m!["name"] == "marts.fct_orders")!;
             var storedHash = (string?)await engine.ScalarAsync(name == "postgres"
-                ? $"SELECT document ->> 'definition_hash' FROM {meta("metadata_current")} WHERE kind = 'model' AND subject = 'marts.fct_orders'"
-                : $"SELECT JSON_VALUE(document, '$.definition_hash') FROM {meta("metadata_current")} WHERE kind = 'model' AND subject = 'marts.fct_orders'");
+                ? $"SELECT document ->> 'definition_hash' FROM {meta("metadata_current")} WHERE subject_kind = 'model' AND subject = 'marts.fct_orders'"
+                : $"SELECT JSON_VALUE(document, '$.definition_hash') FROM {meta("metadata_current")} WHERE subject_kind = 'model' AND subject = 'marts.fct_orders'");
             Assert.Equal((string?)printed["definition_hash"], storedHash);
             var amount = await engine.RowsAsync($"SELECT {run.Q("logical_type")}, {run.Q(name == "postgres" ? "postgres_type" : "sqlserver_type")}, {run.Q("nullable")} FROM {meta("metadata_columns")} WHERE model = 'marts.fct_orders' AND column_name = 'amount'");
             Assert.Equal(new List<string> { name == "postgres" ? "DECIMAL(14, 2)|numeric(14, 2)|True" : "DECIMAL(14, 2)|decimal(14, 2)|True" }, amount);
@@ -1352,8 +1352,8 @@ public partial class ApplyConformanceTests
 
             // the preview shows the diff and writes nothing
             var preview = Json(run.Cli("project", "import", "staging.imp", "--format", "json"));
-            var imp = preview["data"]!["sources"]!.AsArray().Single()!;
-            Assert.Equal(("staging.imp", "table", "new", "models/staging/imp.yml", "preview"), ((string)imp["name"]!, (string)imp["kind"]!, (string)imp["status"]!, (string)imp["file"]!, (string)preview["data"]!["mode"]!));
+            var imp = preview["data"]!["mapped_models"]!.AsArray().Single()!;
+            Assert.Equal(("staging.imp", "table", "new", "models/staging/imp.yml", "preview"), ((string)imp["name"]!, (string)imp["object_kind"]!, (string)imp["status"]!, (string)imp["file"]!, (string)preview["data"]!["mode"]!));
             Assert.Equal(["id"], imp["grain"]!.AsArray().Select(x => (string)x!));
             Assert.False(File.Exists(file("models/staging/imp.yml")));
             Assert.Equal(["DDB-226"], codes(preview));                                                   // only `odd`: unlimited text and xml/json are text
@@ -1374,18 +1374,18 @@ public partial class ApplyConformanceTests
                 File.ReadAllText(file("models/staging/imp.yml")));
             Ok(run.Cli("project", "compile"), "the exported descriptor is valid");
             var again = Json(run.Cli("project", "import", "staging.imp", "--check", "--format", "json"));
-            Assert.Equal("unchanged", (string?)again["data"]!["sources"]![0]!["status"]);
+            Assert.Equal("unchanged", (string?)again["data"]!["mapped_models"]![0]!["status"]);
 
             // the table changes: --check fails for CI, the preview shows the change, a refresh without arguments takes it
             await engine.ExecAsync(pg ? "ALTER TABLE staging.imp ADD extra integer" : "ALTER TABLE staging.imp ADD extra int");
             await engine.ExecAsync("CREATE INDEX ix_imp_extra ON staging.imp (extra)");
             var stale = Json(run.Cli("project", "import", "--check", "--format", "json"), expectedExit: 1);
             Assert.Contains("DDB-227", codes(stale));
-            var changed = stale["data"]!["sources"]!.AsArray().Single(x => (string?)x!["name"] == "staging.imp")!;
+            var changed = stale["data"]!["mapped_models"]!.AsArray().Single(x => (string?)x!["name"] == "staging.imp")!;
             Assert.Equal("changed", (string?)changed["status"]);
             Assert.Equal(("columnadded", "extra"), ((string)changed["changes"]![0]!["kind"]!, (string)changed["changes"]![0]!["column"]!));
             Assert.Contains(changed["changes"]!.AsArray(), x => (string?)x!["kind"] == "indexadded" && (string?)x["column"] == "ix_imp_extra");
-            Assert.Equal("unchanged", (string?)stale["data"]!["sources"]!.AsArray().Single(x => (string?)x!["name"] == "staging.orders")!["status"]);   // the hand-written descriptor already matched
+            Assert.Equal("unchanged", (string?)stale["data"]!["mapped_models"]!.AsArray().Single(x => (string?)x!["name"] == "staging.orders")!["status"]);   // the hand-written descriptor already matched
 
             // human knowledge survives: a grain, a length put on unlimited text, and a type for a column the catalog cannot type
             var text = File.ReadAllText(file("models/staging/imp.yml")).Replace("grain: [id]", "grain: [id, code]") .Replace("  - name: notes\n    type: VARCHAR\n", "  - name: notes\n    type: VARCHAR(500)\n").Replace("indexes:\n", "  - {name: odd, type: VARCHAR(40)}\nindexes:\n");
@@ -1407,8 +1407,8 @@ public partial class ApplyConformanceTests
             run.Write("models/staging/broken.yml", "name: staging.broken\nkind: mapped\ncolumns: nope\n");
             await engine.ExecAsync("CREATE TABLE staging.broken (id bigint)");
             var all = Json(run.Cli("project", "import", "staging.*", "dbdatabuild.*", "--write", "--format", "json"));
-            var byName = all["data"]!["sources"]!.AsArray().ToDictionary(x => (string)x!["name"]!, x => x!);
-            Assert.Equal(("view", "new"), ((string)byName["staging.imp_view"]["kind"]!, (string)byName["staging.imp_view"]["status"]!));
+            var byName = all["data"]!["mapped_models"]!.AsArray().ToDictionary(x => (string)x!["name"]!, x => x!);
+            Assert.Equal(("view", "new"), ((string)byName["staging.imp_view"]["object_kind"]!, (string)byName["staging.imp_view"]["status"]!));
             Assert.Equal("invalid", (string?)byName["staging.broken"]["status"]);
             Assert.Equal("name: staging.broken\nkind: mapped\ncolumns: nope\n", File.ReadAllText(file("models/staging/broken.yml")));
             Assert.Contains(all["data"]!["skipped"]!.AsArray(), x => (string?)x!["object"] == "dbdatabuild");
@@ -1418,7 +1418,7 @@ public partial class ApplyConformanceTests
             // a descriptor whose table is gone is reported and kept
             run.Write("models/staging/ghost.yml", "name: staging.ghost\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT}\n");
             var ghost = Json(run.Cli("project", "import", "--format", "json"));
-            Assert.Equal("stale", (string?)ghost["data"]!["sources"]!.AsArray().Single(x => (string?)x!["name"] == "staging.ghost")!["status"]);
+            Assert.Equal("stale", (string?)ghost["data"]!["mapped_models"]!.AsArray().Single(x => (string?)x!["name"] == "staging.ghost")!["status"]);
             Assert.Contains("DDB-228", codes(ghost));
             Assert.True(File.Exists(file("models/staging/ghost.yml")));
             File.Delete(file("models/staging/ghost.yml"));
@@ -1426,15 +1426,13 @@ public partial class ApplyConformanceTests
             // published with the rest of the metadata, and queryable next to the models' columns
             Ok(run.Cli("project", "compile"), "render");
             var published = Json(run.Cli("connection", "publish", "--format", "json"));
-            Assert.Contains(published["data"]!["written"]!.AsArray(), d => (string?)d!["kind"] == "source" && (string?)d["subject"] == "staging.imp");
+            Assert.Contains(published["data"]!["written"]!.AsArray(), d => (string?)d!["subject_kind"] == "model" && (string?)d["subject"] == "staging.imp");
             var meta = (string table) => $"{run.Q("dbdatabuild")}.{run.Q(table)}";
-            Assert.Equal(["order_id"], await engine.RowsAsync($"SELECT {run.Q("column_name")} FROM {meta("metadata_columns")} WHERE {run.Q("kind")} = 'source' AND model = 'staging.orders' AND {run.Q("column_name")} = 'order_id'"));
-            Assert.Equal("BIGINT", (await engine.RowsAsync($"SELECT {run.Q("logical_type")} FROM {meta("metadata_columns")} WHERE {run.Q("kind")} = 'source' AND model = 'staging.imp' AND {run.Q("column_name")} = 'id'")).Single());
-            var consumers = (string?)await engine.ScalarAsync(pg
-                ? $"SELECT document -> 'consumers' ->> 0 FROM {meta("metadata_current")} WHERE kind = 'source' AND subject = 'staging.orders'"
-                : $"SELECT JSON_VALUE(document, '$.consumers[0]') FROM {meta("metadata_current")} WHERE kind = 'source' AND subject = 'staging.orders'");
-            Assert.Equal("marts.fct_orders", consumers);
-            Assert.Equal(1, await CountAsync(run, meta("metadata_current"), pg ? "kind = 'source' AND subject = 'staging.imp' AND document::text LIKE '%ix_imp_code%fk_imp_ref%'" : "kind = 'source' AND subject = 'staging.imp' AND document LIKE '%ix_imp_code%fk_imp_ref%'"));   // indexes and foreign keys are published with the source
+            Assert.Equal(["order_id"], await engine.RowsAsync($"SELECT {run.Q("column_name")} FROM {meta("metadata_columns")} WHERE {run.Q("model_kind")} = 'mapped' AND model = 'staging.orders' AND {run.Q("column_name")} = 'order_id'"));
+            Assert.Equal("BIGINT", (await engine.RowsAsync($"SELECT {run.Q("logical_type")} FROM {meta("metadata_columns")} WHERE {run.Q("model_kind")} = 'mapped' AND model = 'staging.imp' AND {run.Q("column_name")} = 'id'")).Single());
+            var readers = await engine.RowsAsync($"SELECT {run.Q("subject")} FROM {meta("metadata_dependency")} WHERE {run.Q("depends_on")} = 'staging.orders' AND {run.Q("depth")} = 1");      // who reads a mapped model is a query on the dependency rows
+            Assert.Equal(["marts.fct_orders"], readers);
+            Assert.Equal(1, await CountAsync(run, meta("metadata_current"), pg ? "subject_kind = 'model' AND model_kind = 'mapped' AND subject = 'staging.imp' AND document::text LIKE '%ix_imp_code%fk_imp_ref%'" : "subject_kind = 'model' AND model_kind = 'mapped' AND subject = 'staging.imp' AND document LIKE '%ix_imp_code%fk_imp_ref%'"));   // indexes and foreign keys are published with the source
         }
         finally { if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
     }
@@ -1597,9 +1595,9 @@ public partial class ApplyConformanceTests
             var applied = run.Cli("connection", "deploy", "--apply-plan", run.PlanFile(plan.Out));
             Ok(applied, "apply");
             Assert.Contains("Metadata stored: 5 document(s) written", applied.Out);       // project, two models, the source they read, the plan
-            Assert.Equal(["model", "model", "plan", "project", "source"], (await engine.RowsAsync($"SELECT kind FROM {T("metadata_document")}")).Order().ToArray());
+            Assert.Equal(["model", "model", "model", "plan", "project"], (await engine.RowsAsync($"SELECT subject_kind FROM {T("metadata_document")}")).Order().ToArray());
             var planId = PlanDocument.Parse(File.ReadAllText(run.PlanFile(plan.Out)), "p", new List<Diagnostic>())!.Id;
-            Assert.Equal(1, await CountAsync(run, T("metadata_document"), $"kind = 'plan' AND subject = '{planId}'"));
+            Assert.Equal(1, await CountAsync(run, T("metadata_document"), $"subject_kind = 'plan' AND subject = '{planId}'"));
         }
         finally { if (Directory.Exists(run.Dir)) Directory.Delete(run.Dir, true); }
     }

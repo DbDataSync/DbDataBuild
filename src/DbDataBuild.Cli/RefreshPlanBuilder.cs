@@ -29,16 +29,16 @@ internal static class RefreshPlanBuilder
 {
     /// <summary>Every model of the project that declares <paramref name="connection"/>, with its query as that connection reads it: what the project hash and the refresh plan are made from.</summary>
     public static List<LoadedModel> ModelsOf(ProjectContext ctx, string connection) =>
-        ctx.Project.Sources.Where(s => ctx.TargetsOf(s.Definition).Contains(connection)).Select(s => new LoadedModel(s, s.ReadQuery(ctx.Root, ctx.Config, connection))).ToList();
+        ctx.Project.BuiltModels.Where(s => ctx.TargetsOf(s.Definition).Contains(connection)).Select(s => new LoadedModel(s, s.ReadQuery(ctx.Root, ctx.Config, connection))).ToList();
 
     /// <summary>The structure the compiled project expects of one connection, as one hash: each table model by the shape its declaration gives it, each view by its definition. A deploy records it.</summary>
     public static string ProjectHash(ProjectContext ctx, string connection, IReadOnlyList<LoadedModel> models)
     {
         var ddl = TargetRegistry.Get(ctx.Config.EngineOf(connection) ?? connection).CreateDdl(ctx.Config.ForConnection(connection));
         var lines = new List<string>();
-        foreach (var m in models.OrderBy(m => m.Source.Definition.Name, StringComparer.Ordinal))
+        foreach (var m in models.OrderBy(m => m.Model.Definition.Name, StringComparer.Ordinal))
         {
-            var def = m.Source.Definition;
+            var def = m.Model.Definition;
             lines.Add(def.Kind == ModelKinds.View ? $"{def.Name}=view:{ctx.DefinitionHashOf(m.Sql)}" : $"{def.Name}={ExpectedShape(ddl, def)}");
         }
         return Hashing.Sha256Hex(string.Join("\n", lines));
@@ -65,7 +65,7 @@ internal static class RefreshPlanBuilder
     /// cannot run unattended because a parameter of its query has no value on the connection.
     /// </summary>
     /// <param name="originEngine">For a copy: the engine of the origin a `source` resolver runs at, which picks the file it was lowered into.</param>
-    internal static (List<RefreshParameter>? Inputs, string? Skip) InputsOf(ProjectContext ctx, ModelSource source, string connection, ModelDefinition def, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? parameterValues, List<Diagnostic> diags, string? originEngine = null)
+    internal static (List<RefreshParameter>? Inputs, string? Skip) InputsOf(ProjectContext ctx, BuiltModel source, string connection, ModelDefinition def, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? parameterValues, List<Diagnostic> diags, string? originEngine = null)
     {
         var declaredOp = LoadPlan.For(def, connection).FirstOrDefault(o => o.Name == op.Operation);
         var inputs = new List<RefreshParameter>();
@@ -89,7 +89,7 @@ internal static class RefreshPlanBuilder
     /// them `provided` and is itself the resolver. The text of a `target` resolver is the file the renderer wrote (named with its hash); an `expression` is the text as written, with the parameters it names and their values.
     /// Returns false (with diagnostics) when it cannot be compiled.
     /// </summary>
-    private static bool DeclareInputs(ProjectContext ctx, ModelSource source, string connection, ModelDefinition def, LoadOperation declared, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? modelValues, List<RefreshParameter> inputs, List<Diagnostic> diags, string? originEngine)
+    private static bool DeclareInputs(ProjectContext ctx, BuiltModel source, string connection, ModelDefinition def, LoadOperation declared, RenderedOperation op, IReadOnlyDictionary<string, ParameterValue>? modelValues, List<RefreshParameter> inputs, List<Diagnostic> diags, string? originEngine)
     {
         var ok = true;
         void Bad(LoadInput i, string found, DiagnosticDescriptor? d = null) { diags.Add(new Diagnostic(d ?? DiagnosticCatalog.InputResolverInvalid, new(source.DefinitionFile, i.Line, 1), $"{def.Name}.{declared.Name}: the input `{i.Name}` {found}.")); ok = false; }
@@ -176,12 +176,12 @@ internal static class RefreshPlanBuilder
         var planned = models.Select(x =>
         {
             var m = x.Model;
-            var bases = m.Source.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Source, m.Sql));
-            return new PlannedModel(m.Source.Definition, "", m.Source.QueryFile, ctx.DefinitionHashOf(m.Sql), bases, HookLoader.Load(m.Source, ctx.Config, connection, root, diags), [],
-                PlanningSession.Merge(m.Source.ParametersFor(ctx.Config, connection), ctx.Lowering.NativeValuesFor(m.Sql, connection)), null);
+            var bases = m.Model.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Model, m.Sql));
+            return new PlannedModel(m.Model.Definition, "", m.Model.QueryFile, ctx.DefinitionHashOf(m.Sql), bases, HookLoader.Load(m.Model, ctx.Config, connection, root, diags), [],
+                PlanningSession.Merge(m.Model.ParametersFor(ctx.Config, connection), ctx.Lowering.NativeValuesFor(m.Sql, connection)), null);
         }).ToList();
-        var renders = models.ToDictionary(x => x.Model.Source.Definition.Name, x => x.Render, StringComparer.Ordinal);
-        var sources = models.ToDictionary(x => x.Model.Source.Definition.Name, x => x.Model.Source, StringComparer.Ordinal);
+        var renders = models.ToDictionary(x => x.Model.Model.Definition.Name, x => x.Render, StringComparer.Ordinal);
+        var sources = models.ToDictionary(x => x.Model.Model.Definition.Name, x => x.Model.Model, StringComparer.Ordinal);
 
         var loads = new List<LoadPlanEntry>();
         var excluded = new List<RefreshExclusion>();

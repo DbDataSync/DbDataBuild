@@ -252,25 +252,25 @@ public class ObjectInfoTests
         var yaml = "name: staging.orders\ntitle: Orders\ndescription: \"From the shop\"\ntags: [raw]\nproperties: {system: shop, rows: 12}\nkind: mapped\ncolumns:\n" +
                    "  - {name: order_id, type: BIGINT, nullable: false, title: Id, properties: {pk: true}}\nindexes:\n  - {name: ix_order, columns: [order_id], title: Key, tags: [pk]}\n";
         var diags = new List<Diagnostic>();
-        var d = SourceDescriptorLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
+        var d = DeclaredModelLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
         Assert.Empty(diags);
         Assert.Equal("Orders", d.Info.Title);
         Assert.Equal(new PropertyValue("number", "12"), d.Info.Properties["rows"]);
         Assert.Equal("Id", d.Columns.Single().Info!.Title);
         Assert.Equal("Key", d.Indexes.Single().Info!.Title);
 
-        var written = SourceDescriptorWriter.Yaml(d);
-        var back = SourceDescriptorLoader.Load(written, "models/staging/orders.yml", "staging.orders", diags)!;
+        var written = DeclaredModelWriter.Yaml(d);
+        var back = DeclaredModelLoader.Load(written, "models/staging/orders.yml", "staging.orders", diags)!;
         Assert.Empty(diags);
         Assert.Equal(d.Info.Title, back.Info.Title);
         Assert.Equal(d.Info.Properties.OrderBy(p => p.Key), back.Info.Properties.OrderBy(p => p.Key));
         Assert.Equal(d.Columns.Single().Info!.Properties, back.Columns.Single().Info!.Properties);
         Assert.Equal(d.Indexes.Single().Info!.Tags, back.Indexes.Single().Info!.Tags);
-        Assert.Equal(written, SourceDescriptorWriter.Yaml(back));                                         // stable
+        Assert.Equal(written, DeclaredModelWriter.Yaml(back));                                         // stable
 
-        Assert.DoesNotContain("title", SourceDescriptorWriter.Yaml(d, withInfo: false));                   // what the hash is made of
-        var plain = SourceDescriptorLoader.Load("name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\nindexes:\n  - {name: ix_order, columns: [order_id]}\n", "models/staging/orders.yml", "staging.orders", diags)!;
-        Assert.Equal(SourceDescriptorWriter.Yaml(plain), SourceDescriptorWriter.Yaml(d, withInfo: false));
+        Assert.DoesNotContain("title", DeclaredModelWriter.Yaml(d, withInfo: false));                   // what the hash is made of
+        var plain = DeclaredModelLoader.Load("name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\nindexes:\n  - {name: ix_order, columns: [order_id]}\n", "models/staging/orders.yml", "staging.orders", diags)!;
+        Assert.Equal(DeclaredModelWriter.Yaml(plain), DeclaredModelWriter.Yaml(d, withInfo: false));
     }
 
     [Fact]
@@ -278,10 +278,10 @@ public class ObjectInfoTests
     {
         var yaml = "name: staging.orders\ntitle: Orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, description: The key}\nindexes:\n  - {name: ix_order, columns: [order_id], tags: [pk]}\n";
         var diags = new List<Diagnostic>();
-        var committed = SourceDescriptorLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
+        var committed = DeclaredModelLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags)!;
         var live = new ImportedObject("staging", "orders", ObjectKind.Table, "models/staging/orders.yml",
-            [new ImportedColumn("order_id", "bigint", "BIGINT", SourceTypeFit.Exact, "", false)], ["order_id"], [new IndexDefinition("ix_order", ["order_id"], false, [], null)], [], []);
-        var refreshed = SourceImport.ToDescriptor(live, committed);
+            [new ImportedColumn("order_id", "bigint", "BIGINT", TypeFit.Exact, "", false)], ["order_id"], [new IndexDefinition("ix_order", ["order_id"], false, [], null)], [], []);
+        var refreshed = MappedModelImport.ToDescriptor(live, committed);
         Assert.Equal("Orders", refreshed.Info.Title);
         Assert.Equal("The key", refreshed.Columns.Single().Info!.Description);
         Assert.Equal(["pk"], refreshed.Indexes.Single().Info!.Tags);
@@ -294,8 +294,8 @@ public class ObjectInfoTests
         var plain = Cli("project", "show", "metadata", "ops.queue", "--project", dir, "--format", "json");
         var ctx = ProjectContext.Load(dir);
         var docs = MetadataPublisher.Collect(ctx, ["finance.revenue", "ops.queue"], null);
-        var revenue = docs.Single(d => d.Kind == "model" && d.Subject == "finance.revenue");
-        var rows = MetadataInfoRows.From(revenue.Kind, revenue.Json);
+        var revenue = docs.Single(d => d.SubjectKind == "model" && d.Subject == "finance.revenue");
+        var rows = MetadataInfoRows.From(revenue.SubjectKind, revenue.Json);
         Assert.Contains(new InfoRow("", "title", "", null, "Revenue"), rows);
         Assert.Contains(new InfoRow("", "description", "", null, "Money in"), rows);
         Assert.Contains(new InfoRow("", "tag", "finance", null, null), rows);
@@ -318,7 +318,7 @@ public class ObjectInfoTests
         {
             Assert.DoesNotContain("\"title\"", d.Json);
             Assert.DoesNotContain("\"properties\"", d.Json);
-            Assert.Empty(MetadataInfoRows.From(d.Kind, d.Json));
+            Assert.Empty(MetadataInfoRows.From(d.SubjectKind, d.Json));
         }
         Assert.Equal(0, plain.Exit);
     }
@@ -332,11 +332,11 @@ public class ObjectInfoTests
             "name: marts.fct_orders\nkind: full\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false, title: Id, properties: {pk: true}}\nindexes:\n  - {name: ix_order, columns: [order_id], description: By id}\n");
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT 1 AS order_id\n");
         var docs = MetadataPublisher.Collect(ProjectContext.Load(dir), null, null);
-        var project = MetadataInfoRows.From("project", docs.Single(d => d.Kind == "project").Json);
+        var project = MetadataInfoRows.From("project", docs.Single(d => d.SubjectKind == "project").Json);
         Assert.Contains(new InfoRow("", "title", "", null, "Sales"), project);
         Assert.Contains(new InfoRow("connection:sqlserver", "title", "", null, "Warehouse"), project);
         Assert.Contains(new InfoRow("connection:sqlserver", "tag", "prod", null, null), project);
-        var model = MetadataInfoRows.From("model", docs.Single(d => d.Kind == "model").Json);
+        var model = MetadataInfoRows.From("model", docs.Single(d => d.SubjectKind == "model").Json);
         Assert.Contains(new InfoRow("column:order_id", "title", "", null, "Id"), model);
         Assert.Contains(new InfoRow("column:order_id", "property", "pk", "boolean", "true"), model);
         Assert.Contains(new InfoRow("index:ix_order", "description", "", null, "By id"), model);
@@ -353,7 +353,7 @@ public class ObjectInfoTests
         File.WriteAllText(Path.Combine(dir, "models/marts/fct_orders.sql"), "SELECT 1 AS order_id\n");
         var ctx = ProjectContext.Load(dir);
         var documents = MetadataPublisher.Collect(ctx, null, null);
-        using var db = DbDataBuild.Targets.DuckDb.MetadataDatabase.Open(documents.Select(d => new DbDataBuild.Targets.DuckDb.MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), "x");
+        using var db = DbDataBuild.Targets.DuckDb.MetadataDatabase.Open(documents.Select(d => new DbDataBuild.Targets.DuckDb.MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), "x");
         var run = db.Run("SELECT subject_kind, subject, element, item, item_key, coalesce(value_type, '-'), coalesce(value, '-') FROM metadata_info ORDER BY ALL", 100);
         Assert.Equal(DbDataBuild.Targets.DuckDb.RuleOutcome.Ran, run.Outcome);
         var rows = run.Rows.Select(r => string.Join("|", r.Values.Select(v => v?.ToString()))).ToList();
@@ -368,14 +368,14 @@ public class ObjectInfoTests
         var models = db.Run("SELECT title, tags FROM metadata_models", 10);
         Assert.Equal("Orders", models.Rows.Single()["title"]);
         // the rows the view shows are the rows the tracking table gets
-        var stored = MetadataInfoRows.From("model", documents.Single(d => d.Kind == "model").Json).Count + MetadataInfoRows.From("project", documents.Single(d => d.Kind == "project").Json).Count;
+        var stored = MetadataInfoRows.From("model", documents.Single(d => d.SubjectKind == "model").Json).Count + MetadataInfoRows.From("project", documents.Single(d => d.SubjectKind == "project").Json).Count;
         Assert.Equal(stored, rows.Count);
     }
 
     [Fact]
     public void The_tracking_layout_has_the_info_table_and_the_init_script_creates_it_and_records_the_layout_only_when_it_is_there()
     {
-        Assert.Equal(8, TrackingSchema.Version);
+        Assert.Equal(9, TrackingSchema.Version);
         var info = TrackingSchema.Table("object_info");
         Assert.Equal(["connection", "subject_kind", "subject", "element", "item", "item_key"], info.PrimaryKey);
         foreach (var target in new[] { "sqlserver", "postgres" })

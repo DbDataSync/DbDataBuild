@@ -6,7 +6,7 @@ using DuckDB.NET.Data;
 namespace DbDataBuild.Targets.DuckDb;
 
 /// <summary>One metadata document to load: what `metadata` prints and `publish-metadata` stores.</summary>
-public sealed record MetadataDocument(string Kind, string Subject, string Json, string Hash);
+public sealed record MetadataDocument(string SubjectKind, string Subject, string Json, string Hash);
 
 public enum RuleOutcome { Ran, NotASelect, CouldNotRun }
 
@@ -21,7 +21,7 @@ public sealed record RuleRun(RuleOutcome Outcome, string? Message, IReadOnlyList
 /// </summary>
 public sealed class MetadataDatabase : IDisposable
 {
-    private const string Table = "CREATE TABLE metadata_current(connection VARCHAR, kind VARCHAR, subject VARCHAR, document JSON, document_hash VARCHAR, recorded_utc TIMESTAMP, tool_version VARCHAR, plan_id VARCHAR, git_commit VARCHAR, model_kind VARCHAR)";
+    private const string Table = "CREATE TABLE metadata_current(connection VARCHAR, subject_kind VARCHAR, subject VARCHAR, document JSON, document_hash VARCHAR, recorded_utc TIMESTAMP, tool_version VARCHAR, plan_id VARCHAR, git_commit VARCHAR, model_kind VARCHAR)";
 
     private const string DependencyTable = "CREATE TABLE metadata_dependency(connection VARCHAR, subject VARCHAR, depends_on VARCHAR, depends_on_kind VARCHAR, depth INTEGER)";
 
@@ -29,9 +29,9 @@ public sealed class MetadataDatabase : IDisposable
 CREATE VIEW metadata_columns AS
 SELECT m.connection AS connection, m.subject AS model, c->>'name' AS column_name, c->>'logical_type' AS logical_type, (c->>'nullable')::BOOLEAN AS nullable, c->>'collation' AS collation,
   c->'native'->'sqlserver'->>'type' AS sqlserver_type, c->'native'->'postgres'->>'type' AS postgres_type, c->'native'->'fabric'->>'type' AS fabric_type,
-  c->'lineage'->>'inferred_nullability' AS inferred_nullability, c->'lineage'->'upstream' AS upstream, m.kind AS kind
+  c->'lineage'->>'inferred_nullability' AS inferred_nullability, c->'lineage'->'upstream' AS upstream, m.model_kind AS model_kind
 FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c)
-WHERE m.kind IN ('model', 'source');
+WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_models AS
 SELECT m.subject AS model, m.model_kind AS kind, m.document->'kind_settings' AS kind_settings,
@@ -40,14 +40,7 @@ SELECT m.subject AS model, m.model_kind AS kind, m.document->'kind_settings' AS 
   m.document->'files'->>'definition' AS definition_file, m.document->'files'->>'query' AS query_file, m.document->>'definition_hash' AS definition_hash,
   json_array_length(m.document->'columns') AS column_count,
   m.document->>'title' AS title, m.document->>'description' AS description, CAST(m.document->'tags' AS VARCHAR[]) AS tags
-FROM metadata_current m WHERE m.kind = 'model';
-
-CREATE VIEW metadata_sources AS
-SELECT m.subject AS source, m.model_kind AS kind, CAST(m.document->'grain' AS VARCHAR[]) AS grain, m.document->>'file' AS file, m.document->>'definition_hash' AS definition_hash,
-  CAST(m.document->'consumers' AS VARCHAR[]) AS consumers, json_array_length(m.document->'columns') AS column_count,
-  m.document->'kind_settings' AS kind_settings, m.document->'kind_settings'->>'access' AS native_access, CAST(m.document->'kind_settings'->'reads' AS VARCHAR[]) AS native_reads,
-  m.document->>'title' AS title, m.document->>'description' AS description, CAST(m.document->'tags' AS VARCHAR[]) AS tags
-FROM metadata_current m WHERE m.kind = 'source';
+FROM metadata_current m WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_upstream AS
 SELECT d.subject AS model, d.depends_on AS upstream, d.depends_on_kind AS upstream_kind FROM metadata_dependency d WHERE d.depth = 1;
@@ -60,47 +53,43 @@ SELECT m.subject AS model, c->>'name' AS column_name, c->'lineage'->>'transform'
   u->>'table' AS upstream_table, u->>'column' AS upstream_column
 FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c),
   unnest(CASE WHEN json_array_length(c->'lineage'->'upstream') > 0 THEN CAST(c->'lineage'->'upstream' AS JSON[]) ELSE [NULL::JSON] END) AS v(u)
-WHERE m.kind = 'model';
+WHERE m.subject_kind = 'model' AND m.model_kind NOT IN ('mapped', 'native');
 
 CREATE VIEW metadata_native_types AS
 SELECT m.subject AS model, c->>'name' AS column_name, k.conn AS connection, json_extract_string(c->'native', '$."' || k.conn || '"."type"') AS native_type,
   json_extract_string(c->'native', '$."' || k.conn || '"."collation"') AS collation, json_extract_string(c->'native', '$."' || k.conn || '"."error"') AS error
 FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c), unnest(json_keys(c->'native')) AS k(conn)
-WHERE m.kind = 'model';
+WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_indexes AS
 SELECT m.subject AS model, i->>'name' AS index_name, CAST(i->'columns' AS VARCHAR[]) AS columns, (i->>'unique')::BOOLEAN AS is_unique,
   CAST(i->'include' AS VARCHAR[]) AS include, CAST(i->'connections' AS VARCHAR[]) AS connections
-FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.kind = 'model';
+FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.subject_kind = 'model';
 
-CREATE VIEW metadata_source_indexes AS
-SELECT m.subject AS source, i->>'name' AS index_name, CAST(i->'columns' AS VARCHAR[]) AS columns, (i->>'unique')::BOOLEAN AS is_unique, CAST(i->'include' AS VARCHAR[]) AS include
-FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.kind = 'source';
-
-CREATE VIEW metadata_source_foreign_keys AS
-SELECT m.subject AS source, f->>'name' AS foreign_key_name, CAST(f->'columns' AS VARCHAR[]) AS columns, f->'references'->>'table' AS referenced_table, CAST(f->'references'->'columns' AS VARCHAR[]) AS referenced_columns
-FROM metadata_current m, unnest(CAST(m.document->'foreign_keys' AS JSON[])) AS t(f) WHERE m.kind = 'source';
+CREATE VIEW metadata_foreign_keys AS
+SELECT m.subject AS model, f->>'name' AS foreign_key_name, CAST(f->'columns' AS VARCHAR[]) AS columns, f->'references'->>'table' AS referenced_table, CAST(f->'references'->'columns' AS VARCHAR[]) AS referenced_columns
+FROM metadata_current m, unnest(CAST(m.document->'foreign_keys' AS JSON[])) AS t(f) WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_loads AS
 SELECT m.subject AS model, l->>'connection' AS connection, l->>'operation' AS operation, l->>'strategy' AS strategy, (l->>'is_default')::BOOLEAN AS is_default,
   l->>'matrix_status' AS matrix_status, CAST(l->'findings' AS VARCHAR[]) AS findings, l->>'script_path' AS script_path, l->>'script_hash' AS script_hash
-FROM metadata_current m, unnest(CAST(m.document->'loads' AS JSON[])) AS t(l) WHERE m.kind = 'model';
+FROM metadata_current m, unnest(CAST(m.document->'loads' AS JSON[])) AS t(l) WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_hooks AS
 SELECT m.subject AS model, k.connection, h->>'name' AS hook_name, h->>'event' AS event, h->>'group' AS hook_group, h->>'script' AS script, h->>'effect' AS effect, h->>'risk' AS risk
 FROM metadata_current m, unnest(json_keys(m.document->'hooks')) AS k(connection),
-  unnest(CAST(json_extract(m.document, '$.hooks."' || k.connection || '"') AS JSON[])) AS t(h) WHERE m.kind = 'model';
+  unnest(CAST(json_extract(m.document, '$.hooks."' || k.connection || '"') AS JSON[])) AS t(h) WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_info AS
 WITH parts AS (
-  SELECT m.kind AS subject_kind, m.subject AS subject, '' AS element, m.document AS d FROM metadata_current m WHERE m.kind IN ('project', 'model', 'source')
+  SELECT m.subject_kind AS subject_kind, m.subject AS subject, '' AS element, m.document AS d FROM metadata_current m WHERE m.subject_kind IN ('project', 'model')
   UNION ALL
-  SELECT m.kind, m.subject, 'column:' || (c->>'name'), c FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c) WHERE m.kind IN ('model', 'source')
+  SELECT m.subject_kind, m.subject, 'column:' || (c->>'name'), c FROM metadata_current m, unnest(CAST(m.document->'columns' AS JSON[])) AS t(c) WHERE m.subject_kind = 'model'
   UNION ALL
-  SELECT m.kind, m.subject, 'index:' || (i->>'name'), i FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.kind IN ('model', 'source')
+  SELECT m.subject_kind, m.subject, 'index:' || (i->>'name'), i FROM metadata_current m, unnest(CAST(m.document->'indexes' AS JSON[])) AS t(i) WHERE m.subject_kind = 'model'
   UNION ALL
-  SELECT m.kind, m.subject, 'connection:' || k.name, json_extract(m.document, '$.config.connections."' || k.name || '"')
-  FROM metadata_current m, unnest(json_keys(m.document->'config'->'connections')) AS k(name) WHERE m.kind = 'project'
+  SELECT m.subject_kind, m.subject, 'connection:' || k.name, json_extract(m.document, '$.config.connections."' || k.name || '"')
+  FROM metadata_current m, unnest(json_keys(m.document->'config'->'connections')) AS k(name) WHERE m.subject_kind = 'project'
 )
 SELECT subject_kind, subject, element, 'title' AS item, '' AS item_key, CAST(NULL AS VARCHAR) AS value_type, d->>'title' AS value FROM parts WHERE d->>'title' IS NOT NULL
 UNION ALL
@@ -116,14 +105,14 @@ FROM parts, unnest(json_keys(d->'properties')) AS k(key);
 CREATE VIEW metadata_index_advice AS
 SELECT m.subject AS model, a->>'code' AS code, a->>'severity' AS severity, a->>'reason' AS reason, CAST(a->'columns' AS VARCHAR[]) AS columns,
   a->>'suggested' AS suggested_name, a->>'existing_index' AS existing_index, (a->>'silenced')::BOOLEAN AS silenced
-FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t(a) WHERE m.kind = 'model';
+FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t(a) WHERE m.subject_kind = 'model';
 """;
 
     /// <summary>The names of the views, for documentation and tests.</summary>
     public static readonly IReadOnlyList<string> Names =
     [
-        "metadata_current", "metadata_dependency", "metadata_columns", "metadata_models", "metadata_sources", "metadata_upstream", "metadata_ancestors", "metadata_lineage",
-        "metadata_native_types", "metadata_indexes", "metadata_source_indexes", "metadata_source_foreign_keys", "metadata_loads", "metadata_hooks", "metadata_index_advice", "metadata_info",
+        "metadata_current", "metadata_dependency", "metadata_columns", "metadata_models", "metadata_upstream", "metadata_ancestors", "metadata_lineage",
+        "metadata_native_types", "metadata_indexes", "metadata_foreign_keys", "metadata_loads", "metadata_hooks", "metadata_index_advice", "metadata_info",
     ];
 
     private readonly DuckDBConnection db;
@@ -144,16 +133,16 @@ FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t
             foreach (var d in all)
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = "INSERT INTO metadata_current VALUES (NULL, $kind, $subject, CAST($document AS JSON), $hash, NULL, $version, NULL, NULL, $model_kind)";
-                cmd.Parameters.Add(new DuckDBParameter("model_kind", MetadataDependencies.ModelKindOf(d.Kind, d.Json)));
-                cmd.Parameters.Add(new DuckDBParameter("kind", d.Kind));
+                cmd.CommandText = "INSERT INTO metadata_current VALUES (NULL, $subject_kind, $subject, CAST($document AS JSON), $hash, NULL, $version, NULL, NULL, $model_kind)";
+                cmd.Parameters.Add(new DuckDBParameter("model_kind", MetadataDependencies.ModelKindOf(d.SubjectKind, d.Json)));
+                cmd.Parameters.Add(new DuckDBParameter("subject_kind", d.SubjectKind));
                 cmd.Parameters.Add(new DuckDBParameter("subject", d.Subject));
                 cmd.Parameters.Add(new DuckDBParameter("document", d.Json));
                 cmd.Parameters.Add(new DuckDBParameter("hash", d.Hash));
                 cmd.Parameters.Add(new DuckDBParameter("version", toolVersion));
                 cmd.ExecuteNonQuery();
             }
-            foreach (var row in dependencies ?? MetadataDependencies.FromDocuments(all.Select(d => (d.Kind, d.Subject, d.Json))))
+            foreach (var row in dependencies ?? MetadataDependencies.FromDocuments(all.Select(d => (d.SubjectKind, d.Subject, d.Json))))
             {
                 using var cmd = db.CreateCommand();
                 cmd.CommandText = "INSERT INTO metadata_dependency VALUES (NULL, $subject, $depends_on, $kind, $depth)";

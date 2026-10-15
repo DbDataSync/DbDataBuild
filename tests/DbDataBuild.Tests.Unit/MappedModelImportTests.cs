@@ -10,7 +10,7 @@ using static DbDataBuild.Tests.Unit.TestSupport;
 namespace DbDataBuild.Tests.Unit;
 
 /// <summary>`import`: native types to logical types, merging with committed descriptors, and source documents in the metadata. The catalog reads are covered against real engines.</summary>
-public class SourceImportTests
+public class MappedModelImportTests
 {
     private static ColumnShape Col(string type, int? length = null, int? precision = null, int? scale = null, bool nullable = true, string name = "c") =>
         new(name, type, length, precision, scale, nullable, null);
@@ -70,10 +70,10 @@ public class SourceImportTests
     [InlineData("postgres", "ARRAY", null, null, null, "", "None")]
     public void Native_types_map_to_logical_types_with_their_fit(string target, string type, int? length, int? precision, int? scale, string logical, string fit)
     {
-        var t = SourceTypes.From(target, Col(type, length, precision, scale));
+        var t = ImportedTypes.From(target, Col(type, length, precision, scale));
         Assert.Equal(logical == "" ? null : logical, t.LogicalType);
-        Assert.Equal(Enum.Parse<SourceTypeFit>(fit), t.Fit);
-        Assert.Equal(t.Fit == SourceTypeFit.Exact, t.Reason.Length == 0);        // anything but exact says why
+        Assert.Equal(Enum.Parse<TypeFit>(fit), t.Fit);
+        Assert.Equal(t.Fit == TypeFit.Exact, t.Reason.Length == 0);        // anything but exact says why
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class SourceImportTests
     {
         foreach (var target in new[] { "sqlserver", "postgres" })
             foreach (var type in new[] { "bigint", "int", "integer", "smallint", "tinyint", "bit", "boolean", "float", "real", "double precision", "date", "datetime", "uniqueidentifier", "uuid", "bytea" })
-                if (SourceTypes.From(target, Col(type)).LogicalType is { } logical)
+                if (ImportedTypes.From(target, Col(type)).LogicalType is { } logical)
                     Assert.Equal(logical, Define.LogicalTypes.Canonical(logical));   // canonical spelling, so `define` compares it as written
     }
 
@@ -91,24 +91,24 @@ public class SourceImportTests
     public void A_new_descriptor_takes_live_columns_nullability_and_the_primary_key_as_grain()
     {
         var shape = Shape("staging", "orders", Col("bigint", nullable: false, name: "order_id"), Col("decimal", precision: 14, scale: 2, name: "amount"), Col("text", name: "notes"));
-        var live = SourceImport.Describe("sqlserver", shape, ["order_id"]);
+        var live = MappedModelImport.Describe("sqlserver", shape, ["order_id"]);
         Assert.Equal("models/staging/orders.yml", live.File);
-        var d = SourceImport.ToDescriptor(live, null);
+        var d = MappedModelImport.ToDescriptor(live, null);
         Assert.Equal("staging.orders", d.Name);
         Assert.Equal(["order_id"], d.Grain);
         Assert.Equal([("order_id", "BIGINT", false), ("amount", "DECIMAL(14, 2)", true), ("notes", "VARCHAR", true)], d.Columns.Select(c => (c.Name, c.Type, c.Nullable)));   // `text` is unlimited text: a bare VARCHAR
-        Assert.Equal([SourceChangeKind.New], SourceImport.Compare(null, d).Select(c => c.Kind));
+        Assert.Equal([MappedModelChangeKind.New], MappedModelImport.Compare(null, d).Select(c => c.Kind));
     }
 
     [Fact]
     public void Written_descriptors_load_back_identically_and_in_canonical_form()
     {
-        var live = SourceImport.Describe("postgres", Shape("sales", "line items", Col("bigint", nullable: false, name: "id"), Col("character varying", 12, name: "Sku Code")), ["id"]);
-        var d = SourceImport.ToDescriptor(live, null);
-        var yaml = SourceDescriptorWriter.Yaml(d);
+        var live = MappedModelImport.Describe("postgres", Shape("sales", "line items", Col("bigint", nullable: false, name: "id"), Col("character varying", 12, name: "Sku Code")), ["id"]);
+        var d = MappedModelImport.ToDescriptor(live, null);
+        var yaml = DeclaredModelWriter.Yaml(d);
         Assert.Equal("name: sales.line items\nkind: mapped\ngrain: [id]\ncolumns:\n  - name: id\n    type: BIGINT\n    nullable: false\n  - name: Sku Code\n    type: VARCHAR(12)\n", yaml);
         var diags = new List<Diagnostic>();
-        var loaded = SourceDescriptorLoader.Load(yaml, "models/sales/line items.yml", "sales.line items", diags);
+        var loaded = DeclaredModelLoader.Load(yaml, "models/sales/line items.yml", "sales.line items", diags);
         Assert.Empty(diags);
         Assert.Equal(d.Columns.Select(c => (c.Name, c.Type, c.Nullable)), loaded!.Columns.Select(c => (c.Name, c.Type, c.Nullable)));
         Assert.Equal(d.Grain, loaded.Grain);
@@ -117,25 +117,25 @@ public class SourceImportTests
     [Fact]
     public void A_committed_grain_and_a_hand_typed_column_survive_a_refresh_and_the_rest_follows_the_table()
     {
-        var committed = new SourceDescriptor("staging.orders", [
+        var committed = new DeclaredModel("staging.orders", [
             new ColumnDefinition("order_id", "INTEGER", true),         // the table says BIGINT NOT NULL now
             new ColumnDefinition("notes", "VARCHAR(500)", true),       // a length a person put on unlimited text: the same type, so kept as written
             new ColumnDefinition("shape", "VARCHAR(40)", true),        // typed by hand: the catalog cannot type a geography column
             new ColumnDefinition("legacy", "INTEGER", true),           // gone from the table
         ], ["order_id", "notes"]);
         var shape = Shape("staging", "orders", Col("bigint", nullable: false, name: "order_id"), Col("text", name: "notes"), Col("date", name: "placed"), Col("geography", name: "shape"));
-        var live = SourceImport.Describe("sqlserver", shape, ["order_id"]);
-        var d = SourceImport.ToDescriptor(live, committed);
+        var live = MappedModelImport.Describe("sqlserver", shape, ["order_id"]);
+        var d = MappedModelImport.ToDescriptor(live, committed);
 
         Assert.Equal(["order_id", "notes"], d.Grain);                                                  // human knowledge wins over the primary key
         Assert.Equal([("order_id", "BIGINT", false), ("notes", "VARCHAR(500)", true), ("placed", "DATE", true), ("shape", "VARCHAR(40)", true)], d.Columns.Select(c => (c.Name, c.Type, c.Nullable)));
-        var changes = SourceImport.Compare(committed, d).Select(c => (c.Kind, c.Column)).ToList();
-        Assert.Contains((SourceChangeKind.TypeChanged, "order_id"), changes);
-        Assert.Contains((SourceChangeKind.NullabilityChanged, "order_id"), changes);
-        Assert.Contains((SourceChangeKind.ColumnAdded, "placed"), changes);
-        Assert.Contains((SourceChangeKind.ColumnRemoved, "legacy"), changes);
+        var changes = MappedModelImport.Compare(committed, d).Select(c => (c.Kind, c.Column)).ToList();
+        Assert.Contains((MappedModelChangeKind.TypeChanged, "order_id"), changes);
+        Assert.Contains((MappedModelChangeKind.NullabilityChanged, "order_id"), changes);
+        Assert.Contains((MappedModelChangeKind.ColumnAdded, "placed"), changes);
+        Assert.Contains((MappedModelChangeKind.ColumnRemoved, "legacy"), changes);
         Assert.DoesNotContain(changes, c => c.Column is "notes" or "shape");
-        Assert.Empty(SourceImport.Compare(d, d));
+        Assert.Empty(MappedModelImport.Compare(d, d));
     }
 
     private static ObjectShape WithIndexes(params PhysicalItem[] physical) =>
@@ -151,57 +151,57 @@ public class SourceImportTests
             new("index", "IX_lower", IndexText.Canonical(false, ["<expression>"], [])),
             new("index", "IX_shape", IndexText.Canonical(false, ["shape"], [])),
             new("compression", "IX_orders_customer", "NONE partitions=1"));
-        var live = SourceImport.Describe("sqlserver", shape, ["id"], [
+        var live = MappedModelImport.Describe("sqlserver", shape, ["id"], [
             new ForeignKeyShape("FK_orders_customer", ["customer_id"], "sales", "customers", ["id"]),
             new ForeignKeyShape("FK_orders_shape", ["shape"], "sales", "shapes", ["id"]),
         ]);
-        var d = SourceImport.ToDescriptor(live, null);
+        var d = MappedModelImport.ToDescriptor(live, null);
         Assert.Equal([("IX_orders_customer", "customer_id,placed", false, "notes"), ("UQ_orders_placed", "placed", true, "")], d.Indexes.Select(i => (i.Name, string.Join(",", i.Columns), i.Unique, string.Join(",", i.Include))));
         Assert.Equal([("FK_orders_customer", "sales.customers")], d.ForeignKeys.Select(f => (f.Name, f.Table)));
         Assert.Equal(3, live.Notes!.Count);                                                        // the expression index, the index and the foreign key on the geography column
         Assert.Contains(live.Notes, n => n.Contains("IX_lower") && n.Contains("expression"));
 
-        var yaml = SourceDescriptorWriter.Yaml(d);
+        var yaml = DeclaredModelWriter.Yaml(d);
         Assert.EndsWith("indexes:\n  - {name: IX_orders_customer, columns: [customer_id, placed], include: [notes]}\n  - {name: UQ_orders_placed, columns: [placed], unique: true}\n" +
                         "foreign_keys:\n  - {name: FK_orders_customer, columns: [customer_id], references: {table: sales.customers, columns: [id]}}\n", yaml);
         var diags = new List<Diagnostic>();
-        var loaded = SourceDescriptorLoader.Load(yaml, "models/sales/orders.yml", "sales.orders", diags)!;
+        var loaded = DeclaredModelLoader.Load(yaml, "models/sales/orders.yml", "sales.orders", diags)!;
         Assert.Empty(diags);
         Assert.Equal(d.Indexes.Select(i => (i.Name, i.Unique)), loaded.Indexes.Select(i => (i.Name, i.Unique)));
         Assert.Equal(d.ForeignKeys.Select(f => (f.Name, f.Table)), loaded.ForeignKeys.Select(f => (f.Name, f.Table)));
-        Assert.Empty(SourceImport.Compare(loaded, d));                                              // what was written is in sync
+        Assert.Empty(MappedModelImport.Compare(loaded, d));                                              // what was written is in sync
     }
 
     [Fact]
     public void A_changed_added_or_dropped_index_or_foreign_key_is_a_difference()
     {
-        var committed = new SourceDescriptor("sales.orders", [new ColumnDefinition("a", "INTEGER"), new ColumnDefinition("b", "INTEGER")], [],
+        var committed = new DeclaredModel("sales.orders", [new ColumnDefinition("a", "INTEGER"), new ColumnDefinition("b", "INTEGER")], [],
             [new IndexDefinition("ix_a", ["a"], false, [], null), new IndexDefinition("ix_gone", ["b"], false, [], null), new IndexDefinition("ix_same", ["a", "b"], true, [], null)],
-            [new SourceForeignKey("fk_a", ["a"], "s.t", ["id"]), new SourceForeignKey("fk_gone", ["b"], "s.t", ["id"])]);
-        var live = new SourceDescriptor("sales.orders", committed.Columns, [],
+            [new ForeignKeyDefinition("fk_a", ["a"], "s.t", ["id"]), new ForeignKeyDefinition("fk_gone", ["b"], "s.t", ["id"])]);
+        var live = new DeclaredModel("sales.orders", committed.Columns, [],
             [new IndexDefinition("ix_a", ["a"], true, [], null), new IndexDefinition("IX_SAME", ["a", "b"], true, [], null), new IndexDefinition("ix_new", ["b"], false, ["a"], null)],
-            [new SourceForeignKey("fk_a", ["a"], "s.t2", ["id"]), new SourceForeignKey("fk_new", ["b"], "s.t", ["id"])]);
-        var changes = SourceImport.Compare(committed, live).Select(c => (c.Kind, c.Column)).ToList();
-        Assert.Equal([(SourceChangeKind.IndexChanged, "ix_a"), (SourceChangeKind.IndexAdded, "ix_new"), (SourceChangeKind.IndexRemoved, "ix_gone"),
-                      (SourceChangeKind.ForeignKeyChanged, "fk_a"), (SourceChangeKind.ForeignKeyAdded, "fk_new"), (SourceChangeKind.ForeignKeyRemoved, "fk_gone")], changes);
-        Assert.Empty(SourceImport.Compare(live, live));
+            [new ForeignKeyDefinition("fk_a", ["a"], "s.t2", ["id"]), new ForeignKeyDefinition("fk_new", ["b"], "s.t", ["id"])]);
+        var changes = MappedModelImport.Compare(committed, live).Select(c => (c.Kind, c.Column)).ToList();
+        Assert.Equal([(MappedModelChangeKind.IndexChanged, "ix_a"), (MappedModelChangeKind.IndexAdded, "ix_new"), (MappedModelChangeKind.IndexRemoved, "ix_gone"),
+                      (MappedModelChangeKind.ForeignKeyChanged, "fk_a"), (MappedModelChangeKind.ForeignKeyAdded, "fk_new"), (MappedModelChangeKind.ForeignKeyRemoved, "fk_gone")], changes);
+        Assert.Empty(MappedModelImport.Compare(live, live));
     }
 
     [Fact]
     public void Synonyms_and_column_order_are_not_differences()
     {
-        var committed = new SourceDescriptor("s.t", [new ColumnDefinition("b", "INT"), new ColumnDefinition("a", "NUMERIC(10,2)")], []);
-        var live = new SourceDescriptor("s.t", [new ColumnDefinition("a", "DECIMAL(10, 2)"), new ColumnDefinition("B", "INTEGER")], []);
-        Assert.Empty(SourceImport.Compare(committed, live));
+        var committed = new DeclaredModel("s.t", [new ColumnDefinition("b", "INT"), new ColumnDefinition("a", "NUMERIC(10,2)")], []);
+        var live = new DeclaredModel("s.t", [new ColumnDefinition("a", "DECIMAL(10, 2)"), new ColumnDefinition("B", "INTEGER")], []);
+        Assert.Empty(MappedModelImport.Compare(committed, live));
     }
 
     [Fact]
     public void Names_that_cannot_be_paths_are_not_importable()
     {
-        Assert.Null(SourceDescriptorWriter.PathFor("sales", "a.b"));
-        Assert.Null(SourceDescriptorWriter.PathFor("s/x", "t"));
-        Assert.Null(SourceImport.Describe("postgres", Shape("sales", "a.b", Col("bigint")), null).File);
-        Assert.Equal("models/sales/orders.yml", SourceDescriptorWriter.PathFor("sales", "orders"));
+        Assert.Null(DeclaredModelWriter.PathFor("sales", "a.b"));
+        Assert.Null(DeclaredModelWriter.PathFor("s/x", "t"));
+        Assert.Null(MappedModelImport.Describe("postgres", Shape("sales", "a.b", Col("bigint")), null).File);
+        Assert.Equal("models/sales/orders.yml", DeclaredModelWriter.PathFor("sales", "orders"));
     }
 
     // ---- the command, without a database ----
@@ -256,10 +256,10 @@ public class SourceImportTests
         Assert.Contains("not `schema_name.table_name`", err);
     }
 
-    // ---- source documents in the metadata ----
+    // ---- declared models in the metadata ----
 
     [Fact]
-    public void Metadata_carries_a_document_per_source_with_the_models_that_read_it()
+    public void Metadata_has_one_document_per_model_and_a_mapped_model_is_one_of_them()
     {
         var dir = Project(withSource: true);
         var o = new StringWriter();
@@ -268,30 +268,37 @@ public class SourceImportTests
         var metadata = SchemaConformanceTests.LoadSchema("metadata");
         bool Valid(JsonNode? n) => metadata.Evaluate(JsonSerializer.SerializeToNode(n), new EvaluationOptions { OutputFormat = OutputFormat.List }).IsValid;
 
-        var source = doc["data"]!["sources"]!.AsArray().Single()!;
-        Assert.True(Valid(source), source.ToJsonString());
-        Assert.Equal("dbdatabuild.source/2", (string?)source["schema"]);
-        Assert.Equal("mapped", (string?)source["kind"]);
-        Assert.Empty(source["kind_settings"]!.AsObject());
-        Assert.Equal("staging.orders", (string?)source["name"]);
-        Assert.Equal("models/staging/orders.yml", (string?)source["file"]);
-        Assert.Equal(["marts.fct_orders"], source["consumers"]!.AsArray().Select(x => (string)x!));
-        Assert.Equal(["order_id"], source["grain"]!.AsArray().Select(x => (string)x!));
-        Assert.Equal("staging.orders", (string?)doc["data"]!["project"]!["sources"]![0]!["name"]);
-        var broken = JsonNode.Parse(source.ToJsonString())!;
-        broken["schema"] = "dbdatabuild.source/3";
+        Assert.Null(doc["data"]!["sources"]);                                                      // one array of models, of every kind
+        var models = doc["data"]!["models"]!.AsArray();
+        Assert.Equal(["marts.fct_orders", "staging.orders"], models.Select(m => (string)m!["name"]!));
+        var mapped = models.Single(m => (string?)m!["name"] == "staging.orders")!;
+        Assert.True(Valid(mapped), mapped.ToJsonString());
+        Assert.Equal("dbdatabuild.model/3", (string?)mapped["schema"]);
+        Assert.Equal("mapped", (string?)mapped["kind"]);
+        Assert.Empty(mapped["kind_settings"]!.AsObject());
+        Assert.Equal("models/staging/orders.yml", (string?)mapped["files"]!["definition"]);
+        Assert.Null(mapped["files"]!["query"]);
+        Assert.Null(mapped["loads"]);                                                              // a declared model has no loads, hooks or lineage
+        Assert.Equal(["order_id"], mapped["grain"]!.AsArray().Select(x => (string)x!));
+        Assert.NotNull(mapped["columns"]![0]!["native"]);                                          // columns carry their native types like a built model's
+        var projectModels = doc["data"]!["project"]!["models"]!.AsArray();
+        Assert.Equal(("mapped", "models/staging/orders.yml"), (projectModels.Single(m => (string?)m!["name"] == "staging.orders")!["kind"]!.ToString(), projectModels.Single(m => (string?)m!["name"] == "staging.orders")!["file"]!.ToString()));
+        Assert.Null(doc["data"]!["project"]!["sources"]);
+        var broken = JsonNode.Parse(mapped.ToJsonString())!;
+        broken["schema"] = "dbdatabuild.source/2";
         Assert.False(Valid(broken));
     }
 
     [Fact]
-    public void Publishing_includes_source_documents_that_do_not_change_with_the_models_selected()
+    public void Publishing_includes_the_declared_models_a_selected_model_reads_and_their_documents_do_not_change()
     {
         var dir = Project(withSource: true);
         var ctx = ProjectContext.Load(dir);
         var all = MetadataPublisher.Collect(ctx, null, null);
-        Assert.Equal(["project", "model", "source"], all.Select(d => d.Kind));
+        Assert.Equal(["project", "model", "model"], all.Select(d => d.SubjectKind));
         var one = MetadataPublisher.Collect(ctx, ["marts.fct_orders"], null);
-        Assert.Equal(all.Single(d => d.Kind == "source").Hash, one.Single(d => d.Kind == "source").Hash);
-        Assert.DoesNotContain(MetadataPublisher.Collect(ctx, [], null), d => d.Kind == "source");   // no model selected, no source it reads
+        Assert.Equal(all.Single(d => d.Subject == "staging.orders").Hash, one.Single(d => d.Subject == "staging.orders").Hash);
+        Assert.DoesNotContain(MetadataPublisher.Collect(ctx, [], null), d => d.Subject == "staging.orders");   // no model selected, nothing it reads
+        Assert.Equal("mapped", MetadataDependencies.ModelKindOf("model", all.Single(d => d.Subject == "staging.orders").Json));
     }
 }

@@ -91,7 +91,7 @@ internal static class InspectCommand
         {
             try
             {
-                var names = ProjectContext.Load(root).Project.Sources.Where(s => s.Definition.Targets?.Contains(connection.Name) ?? config.DefaultConnections.Contains(connection.Name))
+                var names = ProjectContext.Load(root).Project.BuiltModels.Where(s => s.Definition.Targets?.Contains(connection.Name) ?? config.DefaultConnections.Contains(connection.Name))
                     .Select(s => DbDataBuild.Targets.Ddl.DdlGenerator.Split(s.Definition.Name).SchemaName).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
                 var (readLogin, _) = LoginSettings.FromEnvironment(connection, Login.Read, env);
                 if (readLogin!.Dialect.Catalog == CatalogStyle.None) throw new CatalogUnavailableException(readLogin.Dialect.Name);

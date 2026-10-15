@@ -17,9 +17,9 @@ internal static class TrimmedCheck
         var engine = ctx.Config.EngineOf(connection) ?? connection;
         var quote = TrackingDdl.For(engine);
         var work = new List<(string Table, string File, ColumnDefinition Column)>();
-        foreach (var m in ctx.Project.Sources.Where(s => ctx.TargetsOf(s.Definition).Contains(connection) && !s.Definition.IsCopy))
+        foreach (var m in ctx.Project.BuiltModels.Where(s => ctx.TargetsOf(s.Definition).Contains(connection) && !s.Definition.IsCopy))
             work.AddRange(m.Definition.Columns.Where(c => c.Trimmed).Select(c => (m.Definition.Name, m.DefinitionFile, c)));
-        foreach (var d in ctx.Project.Descriptors.Where(d => (d.Connections ?? ctx.Config.DefaultConnections).Contains(connection)))
+        foreach (var d in ctx.Project.MappedModels.Where(d => (d.Connections ?? ctx.Config.DefaultConnections).Contains(connection)))
             work.AddRange(d.Columns.Where(c => c.Trimmed).Select(c => (d.Name, d.File, c)));
         if (work.Count == 0) return [];
         return Task.Run(async () =>

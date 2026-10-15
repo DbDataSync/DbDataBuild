@@ -197,7 +197,7 @@ public class DuckDbOriginTests : IDisposable
         Assert.Equal(("src", "items"), (fk.ReferencedSchema, fk.ReferencedTable));
         Assert.Equal(["id"], fk.ReferencedColumns);
 
-        var items = SourceImport.Describe("duckdb", shapes["src.items"], keys["items"]);
+        var items = MappedModelImport.Describe("duckdb", shapes["src.items"], keys["items"]);
         string Logical(string column) => items.Columns.Single(c => c.Name == column).LogicalType ?? "(none)";
         Assert.Equal(("BIGINT", "SMALLINT", "INTEGER", "DOUBLE", "BOOLEAN", "DATE", "TIMESTAMP"), (Logical("id"), Logical("small"), Logical("n"), Logical("ratio"), Logical("flag"), Logical("born"), Logical("seen")));
         Assert.Equal(("DECIMAL(18, 3)", "DECIMAL(28, 6)", "VARCHAR", "TIMESTAMP WITH TIME ZONE", "TIME", "UUID", "BLOB", "FLOAT"), (Logical("price"), Logical("big"), Logical("code"), Logical("stamp"), Logical("clock"), Logical("token"), Logical("raw"), Logical("real_")));

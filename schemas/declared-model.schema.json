@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "source.schema.json",
+  "$id": "declared-model.schema.json",
   "title": "DbDataBuild mapped or native model",
   "description": "A mapped model: the declaration of a table that exists and that the tool does not build (models/<schema name>/<table>.yml with `kind: mapped` and no .sql). Models refer to it by plain table name, and `dbdatabuild project model update` builds empty DuckDB tables from it. `indexes` and `foreign_keys` are what the table has, as exported by `dbdatabuild project import`; the tool reads them (metadata, advice) and never creates them. In an editor this applies to a file that says `kind: mapped` itself (model.schema.json hands such files to this schema); a file that gets its kind from a folder's _dbdatabuild.yml is read as a model definition. A **native** model (`kind: {native: {access: select, query: ...}}`, or the text in a `.native.sql` file beside the definition) is a table the engine computes from its own query (a table function, an engine-native select); it is bound by queries from its declared columns and inlined into the queries that read it, on its one connection.",
   "type": "object",

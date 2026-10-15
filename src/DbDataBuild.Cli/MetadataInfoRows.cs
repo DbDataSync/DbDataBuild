@@ -10,8 +10,8 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class MetadataInfoRows
 {
-    /// <summary>The kinds of document whose subject has rows. Plans and the recorded definitions of native routines have none.</summary>
-    public static bool HasRows(string kind) => kind is "project" or "model" or "source";
+    /// <summary>The subject kinds whose documents have rows. Plans and the recorded definitions of native routines have none.</summary>
+    public static bool HasRows(string subjectKind) => subjectKind is "project" or "model";
 
     public static List<InfoRow> From(string kind, string json)
     {

@@ -89,9 +89,12 @@ public class JsonOutputTests
         Assert.Equal(0, exit);
         Assert.Equal("", err);                                              // diagnostics are in the document, not on standard error
         var data = doc["data"]!;
-        Assert.Equal(1, data["counts"]!["models"]!.GetValue<int>());
+        Assert.Equal(2, data["counts"]!["models"]!.GetValue<int>());                                                           // the built model and the mapped one it reads
+        Assert.Equal((1, 1, 0), (data["counts"]!["by_kind"]!["incremental_by_unique_key"]!.GetValue<int>(), data["counts"]!["by_kind"]!["mapped"]!.GetValue<int>(), data["counts"]!["by_kind"]!["view"]!.GetValue<int>()));
+        Assert.Null(data["sources"]);                                                                                           // one array, whatever the kind
+        Assert.Equal(["marts.fct_orders", "staging.orders"], data["models"]!.AsArray().Select(m => m!["name"]!.GetValue<string>()));
         var model = data["models"]![0]!;
-        Assert.Equal("dbdatabuild.model/2", model["schema"]!.GetValue<string>());
+        Assert.Equal("dbdatabuild.model/3", model["schema"]!.GetValue<string>());
         Assert.Equal("marts.fct_orders", model["name"]!.GetValue<string>());
         Assert.Equal("incremental_by_unique_key", model["kind"]!.GetValue<string>());                                        // the kind is a plain string, its settings are beside it
         Assert.Equal(["order_id"], model["kind_settings"]!["unique_key"]!.AsArray().Select(k => k!.GetValue<string>()));
@@ -263,15 +266,15 @@ public class JsonOutputTests
     public void Sample_reports_its_tables_rows_and_errors_as_data()
     {
         var dir = Project();
-        var (exit, doc, _, _) = Run("project", "sample", "--project", dir, "--rows", "12", "--limit", "3", "--sources");
+        var (exit, doc, _, _) = Run("project", "sample", "--project", dir, "--rows", "12", "--limit", "3", "--declared");
         Assert.Equal(0, exit);
         var tables = doc["data"]!["tables"]!.AsArray();
-        var model = tables.Single(t => (string?)t!["kind"] == "model")!;
+        var model = tables.Single(t => (string?)t!["kind"] == "incremental_by_unique_key")!;
         Assert.Equal("marts.fct_orders", (string?)model["name"]);
         Assert.Equal(12, (int)model["row_count"]!);
         Assert.Equal(3, model["rows"]!.AsArray().Count);
         Assert.Equal(2, model["rows"]![0]!.AsArray().Count);
-        Assert.Equal(12, (int)tables.Single(t => (string?)t!["kind"] == "source")!["row_count"]!);
+        Assert.Equal(12, (int)tables.Single(t => (string?)t!["kind"] == "mapped")!["row_count"]!);
     }
     [Fact]
     public void Agent_kit_lists_and_installs_its_files_as_data()

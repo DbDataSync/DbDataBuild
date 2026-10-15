@@ -18,9 +18,9 @@ internal static class InputCompiler
     public static readonly IReadOnlyList<string> RunVariables = ["run_started", "plan", "connection"];
 
     /// <summary>The `${scope.name}` references of a resolver text with the value each has on <paramref name="connection"/>; the ones the project does not have, or a scope a resolver may not use, are in <paramref name="problems"/>.</summary>
-    public static IReadOnlyList<RefreshParameterRef> ParametersOf(ModelSource source, ProjectConfig config, string connection, string text, List<string> problems)
+    public static IReadOnlyList<RefreshParameterRef> ParametersOf(BuiltModel built, ProjectConfig config, string connection, string text, List<string> problems)
     {
-        var values = source.ParametersFor(config, connection);
+        var values = built.ParametersFor(config, connection);
         var found = new List<RefreshParameterRef>();
         foreach (var r in InputParameters.Refs(text))
         {
@@ -32,10 +32,10 @@ internal static class InputCompiler
     }
 
     /// <summary>Checks the inputs of every load of the result and adds the rendered resolvers (and their files) to it. A problem is a diagnostic at the input, never an exception.</summary>
-    public static RenderResult Attach(ProjectContext ctx, ModelSource source, RenderResult result)
+    public static RenderResult Attach(ProjectContext ctx, BuiltModel built, RenderResult result)
     {
         if (result.Loads.Count == 0) return result;
-        var def = source.Definition;
+        var def = built.Definition;
         var diags = new List<Diagnostic>(result.Diagnostics);
         var operations = new List<RenderedOperation>();
         foreach (var op in result.Loads)
@@ -44,7 +44,7 @@ internal static class InputCompiler
             if (declared == null || declared.InputList.Count == 0) { operations.Add(op); continue; }
             var rendered = new List<RenderedInput>();
             void Bad(LoadInput input, string why, DiagnosticDescriptor? descriptor = null) =>
-                diags.Add(new Diagnostic(descriptor ?? DiagnosticCatalog.InputResolverInvalid, new(source.DefinitionFile, input.Line, 1), $"{def.Name}.{op.Operation}: the resolver of the input `{input.Name}` {why}."));
+                diags.Add(new Diagnostic(descriptor ?? DiagnosticCatalog.InputResolverInvalid, new(built.DefinitionFile, input.Line, 1), $"{def.Name}.{op.Operation}: the resolver of the input `{input.Name}` {why}."));
 
             // the names an expression may use: every input of the load, what its script binds, and the run variables
             var known = declared.InputList.SelectMany(i => i.Names.Append(i.Name)).Concat(op.Parameters.Select(p => p.Name)).Concat(RunVariables).ToHashSet(StringComparer.Ordinal);
@@ -54,7 +54,7 @@ internal static class InputCompiler
             {
                 var resolver = input.Resolver!;
                 var problems = new List<string>();
-                var parameters = ParametersOf(source, ctx.Config, op.Target, resolver.Text, problems);
+                var parameters = ParametersOf(built, ctx.Config, op.Target, resolver.Text, problems);
                 if (problems.Count > 0) { Bad(input, "names " + string.Join("; ", problems), DiagnosticCatalog.InputResolverInvalid); continue; }
                 var text = InputParameters.Substitute(resolver.Text, k => parameters.Where(p => p.Name == k).Select(p => new ParameterValue(p.Value, p.Type)).FirstOrDefault());
                 switch (resolver.Kind)
@@ -72,7 +72,7 @@ internal static class InputCompiler
                     }
                     case InputResolverKinds.Target:
                     {
-                        var (lowered, error) = ctx.Lowering.LowerResolver(def, source.QueryFile, $"{def.Name}.{op.Operation}.{input.Name}", text);
+                        var (lowered, error) = ctx.Lowering.LowerResolver(def, built.QueryFile, $"{def.Name}.{op.Operation}.{input.Name}", text);
                         if (lowered == null) { Bad(input, $"cannot be lowered: {error?.Found}"); break; }
                         var (rendering, rdiags) = ctx.Renderer.RenderInputQuery(def, op.Operation, input.Name, lowered, op.Target, op.Target, $"rendered/{op.Target}/{LoadsDocument.FileName}");
                         diags.AddRange(rdiags);
@@ -84,7 +84,7 @@ internal static class InputCompiler
                     {
                         var origins = ctx.OriginsOf(def, op.Target);
                         if (origins.Count == 0) { Bad(input, "has no origin to run at: only a copy from another connection has a `source` resolver"); break; }
-                        var (lowered, error) = ctx.Lowering.LowerResolver(def, source.QueryFile, $"{def.Name}.{op.Operation}.{input.Name}", text);
+                        var (lowered, error) = ctx.Lowering.LowerResolver(def, built.QueryFile, $"{def.Name}.{op.Operation}.{input.Name}", text);
                         if (lowered == null) { Bad(input, $"cannot be lowered: {error?.Found}"); break; }
                         foreach (var byEngine in origins.GroupBy(o => o.Engine).OrderBy(g => g.Key, StringComparer.Ordinal))
                         {
@@ -100,7 +100,7 @@ internal static class InputCompiler
             if (Cycle(edges) is { } circle)
             {
                 var at = declared.InputList.First(i => i.Name == circle[0]);
-                diags.Add(new Diagnostic(DiagnosticCatalog.InputsDependOnEachOther, new(source.DefinitionFile, at.Line, 1), $"{def.Name}.{op.Operation}: the inputs {string.Join(" -> ", circle.Append(circle[0]).Select(n => $"`{n}`"))} depend on each other."));
+                diags.Add(new Diagnostic(DiagnosticCatalog.InputsDependOnEachOther, new(built.DefinitionFile, at.Line, 1), $"{def.Name}.{op.Operation}: the inputs {string.Join(" -> ", circle.Append(circle[0]).Select(n => $"`{n}`"))} depend on each other."));
             }
             operations.Add(op with { Inputs = rendered });
         }

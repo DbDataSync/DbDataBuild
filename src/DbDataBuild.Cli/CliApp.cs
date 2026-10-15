@@ -133,15 +133,15 @@ public static class CliApp
                 case "project sample":
                     var sampleModels = new Argument<string[]>("models") { Description = "Model names (marts.fct_orders), model files, or directories (default: every model)", Arity = ArgumentArity.ZeroOrMore };
                     var sampleProject = new Option<DirectoryInfo>("--project") { Description = "Project root (contains models/)", DefaultValueFactory = _ => new DirectoryInfo(".") };
-                    var sampleRows = new Option<int>("--rows") { Description = "Rows generated for each source table", DefaultValueFactory = _ => 50 };
+                    var sampleRows = new Option<int>("--rows") { Description = "Rows generated for each declared model", DefaultValueFactory = _ => 50 };
                     var sampleSeed = new Option<int>("--seed") { Description = "Seed of the generator: the same seed gives the same rows", DefaultValueFactory = _ => 1 };
                     var sampleLimit = new Option<int>("--limit") { Description = "Rows of each result to show (the row count is always complete)", DefaultValueFactory = _ => 20 };
-                    var sampleData = new Option<DirectoryInfo?>("--data") { Description = "A directory of CSV files named after sources (staging.orders.csv) to use instead of generated rows" };
-                    var sampleSources = new Option<bool>("--sources") { Description = "Also show the source tables the models read" };
-                    var sampleScale = new Option<int?>("--scale") { Description = "For sources that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own)" };
+                    var sampleData = new Option<DirectoryInfo?>("--data") { Description = "A directory of CSV files named after declared models (staging.orders.csv) to use instead of generated rows" };
+                    var sampleDeclared = new Option<bool>("--declared") { Description = "Also show the declared (mapped and native) models the models read" };
+                    var sampleScale = new Option<int?>("--scale") { Description = "For declared models that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own)" };
                     cmd.Arguments.Add(sampleModels); cmd.Options.Add(sampleScale);
-                    cmd.Options.Add(sampleProject); cmd.Options.Add(sampleRows); cmd.Options.Add(sampleSeed); cmd.Options.Add(sampleLimit); cmd.Options.Add(sampleData); cmd.Options.Add(sampleSources);
-                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => SampleCommand.Run(spec, pr.GetValue(sampleProject)!.FullName, pr.GetValue(sampleModels) ?? [], pr.GetValue(sampleRows), pr.GetValue(sampleSeed), pr.GetValue(sampleLimit), pr.GetValue(sampleScale), pr.GetValue(sampleData)?.FullName, pr.GetValue(sampleSources), o, e)));
+                    cmd.Options.Add(sampleProject); cmd.Options.Add(sampleRows); cmd.Options.Add(sampleSeed); cmd.Options.Add(sampleLimit); cmd.Options.Add(sampleData); cmd.Options.Add(sampleDeclared);
+                    cmd.SetAction(pr => Reported(pr, spec, (o, e) => SampleCommand.Run(spec, pr.GetValue(sampleProject)!.FullName, pr.GetValue(sampleModels) ?? [], pr.GetValue(sampleRows), pr.GetValue(sampleSeed), pr.GetValue(sampleLimit), pr.GetValue(sampleScale), pr.GetValue(sampleData)?.FullName, pr.GetValue(sampleDeclared), o, e)));
                     break;
                 case "project seed":
                     var seedProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
@@ -167,7 +167,7 @@ public static class CliApp
                     var lsTarget = ConnectionArgument("Connection to load", spec.Name);
                     var lsSeed = new Option<int>("--seed") { Description = "The variable `seed` the seeds read: the same seed and scale give the same rows", DefaultValueFactory = _ => 1 };
                     var lsScale = new Option<int?>("--scale") { Description = "The variable `scale` the seeds read, usually how many of the main entity (default: the project's own)" };
-                    var lsReplace = new Option<bool>("--replace") { Description = "Drop and recreate a source table that already exists (default: stop at the first table that exists)" };
+                    var lsReplace = new Option<bool>("--replace") { Description = "Drop and recreate a seeded table that already exists (default: stop at the first table that exists)" };
                     var lsApply = new Option<bool>("--apply") { Description = "Create and fill the tables on the write login (default: print what would happen and connect to nothing)" };
                     cmd.Arguments.Add(lsTarget); cmd.Options.Add(lsProject); cmd.Options.Add(lsSeed); cmd.Options.Add(lsScale); cmd.Options.Add(lsReplace); cmd.Options.Add(lsApply);
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => LoadSeedsCommand.Run(spec, pr.GetValue(lsProject)!.FullName, pr.GetValue(lsTarget), pr.GetValue(lsSeed), pr.GetValue(lsScale), pr.GetValue(lsReplace), pr.GetValue(lsApply), o, e, environment ?? Environment.GetEnvironmentVariable)));
@@ -265,7 +265,7 @@ public static class CliApp
                     var diffAgainst = new Option<string?>("--against") { Description = "The table or view to compare it with, as schema_name.table_name" };
                     var diffAgainstSchema = new Option<string?>("--against-schema") { Description = "Compare with the table of the same name under this schema name (a development copy, for example)" };
                     var diffAgainstConnection = new Option<string?>("--against-connection") { Description = "Compare with the table on this connection (the same table name unless --against or --against-schema says another); the connections may be on different engines, and only digests of the values are compared" };
-                    var diffKey = new Option<string[]>("--key") { Description = "Columns that identify a row (default: the model's grain or unique key, or a source's grain)", AllowMultipleArgumentsPerToken = true };
+                    var diffKey = new Option<string[]>("--key") { Description = "Columns that identify a row (default: the model's grain or unique key, or a mapped model's grain)", AllowMultipleArgumentsPerToken = true };
                     var diffOnly = new Option<string[]>("--columns") { Description = "Compare only these columns (and the key)", AllowMultipleArgumentsPerToken = true };
                     var diffExcept = new Option<string[]>("--exclude-columns") { Description = "Leave these columns out of the comparison", AllowMultipleArgumentsPerToken = true };
                     var diffValues = new Option<bool>("--show-values") { Description = "Read and show values: the smallest and largest of each column and sample rows of each difference (without it only counts are read)" };
@@ -285,14 +285,14 @@ public static class CliApp
                     cmd.SetAction(pr => Reported(pr, spec, (o, e) => GraphCommand.Run(spec, pr.GetValue(graphProject)!.FullName, pr.GetValue(graphModels) ?? [], pr.GetValue(graphColumns), pr.GetValue(graphColumn), pr.GetValue(graphDiagram), o, e)));
                     break;
                 case "project import":
-                    var impTables = new Argument<string[]>("tables") { Description = "Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the source descriptors the project already has)", Arity = ArgumentArity.ZeroOrMore };
+                    var impTables = new Argument<string[]>("tables") { Description = "Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the mapped models the project already has)", Arity = ArgumentArity.ZeroOrMore };
                     GuardOptionLike(impTables, spec.Name);
                     var impProject = new Option<DirectoryInfo>("--project") { Description = "Project root", DefaultValueFactory = _ => new DirectoryInfo(".") };
                     var impTarget = ConnectionArgument("Connection to read", spec.Name);
                     var impWrite = new Option<bool>("--write") { Description = "Write the new and changed mapped models under models/ (without it the command only shows the diff)" };
                     var impCheck = new Option<bool>("--check") { Description = "CI: fail if a descriptor differs from the table it describes; writes nothing" };
                     cmd.Arguments.Add(impTarget); cmd.Arguments.Add(impTables); cmd.Options.Add(impProject); cmd.Options.Add(impWrite); cmd.Options.Add(impCheck);
-                    cmd.SetAction(pr => { var (impConn, impRest) = SplitConnection(pr.GetValue(impProject)!.FullName, pr.GetValue(impTarget), pr.GetValue(impTables) ?? []); return Reported(pr, spec, (o, e) => ImportSourcesCommand.Run(spec, pr.GetValue(impProject)!.FullName, impConn, impRest, pr.GetValue(impWrite), pr.GetValue(impCheck), o, e, environment ?? Environment.GetEnvironmentVariable)); });
+                    cmd.SetAction(pr => { var (impConn, impRest) = SplitConnection(pr.GetValue(impProject)!.FullName, pr.GetValue(impTarget), pr.GetValue(impTables) ?? []); return Reported(pr, spec, (o, e) => ImportCommand.Run(spec, pr.GetValue(impProject)!.FullName, impConn, impRest, pr.GetValue(impWrite), pr.GetValue(impCheck), o, e, environment ?? Environment.GetEnvironmentVariable)); });
                     break;
                 case "project update":
                     var updSelectors = new Argument<string[]>("selectors") { Description = "What to update (default: every model, mapped model and connection): names, `schema.*` patterns, paths, `+model`, `model+`, `@model`, `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:<git ref>`, `exclude:<selector>`", Arity = ArgumentArity.ZeroOrMore };
@@ -474,9 +474,9 @@ public static class CliApp
         output.WriteLine($"Config: {(configured ? ProductInfo.ConfigFile : "built-in defaults")}");
         output.WriteLine($"Effective: {config.Describe()}");
         // inheritance is never hidden either: what each model took from a project file above it, and from where
-        foreach (var s in result.Sources.Where(s => s.Inherited.Count > 0).OrderBy(s => s.Definition.Name, StringComparer.Ordinal))
+        foreach (var s in result.BuiltModels.Where(s => s.Inherited.Count > 0).OrderBy(s => s.Definition.Name, StringComparer.Ordinal))
             output.WriteLine($"Inherited by {s.Definition.Name}: {string.Join(", ", s.Inherited.Select(o => $"{o.Path} = {o.Value} ({o.File}:{o.Line})"))}");
-        diagnostics.AddRange(ProjectChecks.Run(result.Sources, config, null, projectRoot, new ModelLowering(result.Models, result.AllDescriptors, config, result.Macros)));
+        diagnostics.AddRange(ProjectChecks.Run(result.BuiltModels, config, null, projectRoot, new ModelLowering(result.Models, result.DeclaredModelsAndStaging, config, result.Macros)));
         if (!diagnostics.Any(d => d.Severity == Severity.Error)) diagnostics.AddRange(ProjectChecks.Reachability(ProjectContext.Load(projectRoot), null));
 
         diagnostics = diagnostics.DistinctBy(d => (d.Code, d.Location, d.Found)).ToList();      // one line per finding, however many checks reached it
@@ -485,17 +485,17 @@ public static class CliApp
         var warnings = diagnostics.Count(d => d.Severity == Severity.Warning);
         var notes = diagnostics.Count(d => d.Severity == Severity.Note);
         var tail = $"{warnings} warning(s), {notes} note(s).";
-        output.Payload("counts", new { models = result.Sources.Count, errors, warnings, notes });
+        var allModels = ProjectModels.Of(result, config.DefaultConnections);
+        output.Payload("counts", new { models = allModels.Count, by_kind = ModelKinds.Every.ToDictionary(k => k, k => allModels.Count(m => m.Kind == k)), errors, warnings, notes });
         output.Payload("config", new { file = configured ? ProductInfo.ConfigFile : null, effective = config.Describe() });
         if (output.IsJson() && errors == 0)
         {
             var ctx = ProjectContext.Load(projectRoot);
             output.Payload("project", MetadataBuilder.Project(ctx));
-            output.Payload("sources", MetadataBuilder.Sources(ctx, null));
-            output.Payload("models", ctx.Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).Select(s => MetadataBuilder.Model(ctx, s, s.ReadQuery(projectRoot, config))).ToList());
+            output.Payload("models", MetadataBuilder.Models(ctx).Select(m => m.Document).ToList());
         }
         output.WriteLine(errors == 0
-            ? $"OK: {result.Sources.Count} model(s) valid. {tail}"
+            ? $"OK: {allModels.Count} model(s) valid ({MetadataCommand.KindCounts(allModels)}). {tail}"
             : $"FAILED: {errors} error(s), {tail}");
         return errors == 0 ? ExitOk : ExitFindings;
     }

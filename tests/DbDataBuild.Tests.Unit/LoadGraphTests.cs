@@ -199,8 +199,8 @@ public class LoadGraphTests
             Assert.Equal(0, CliApp.Run(["project", "create", template, dir], o, e));
             Assert.Equal(0, CliApp.Run(["project", "compile", "--project", dir], o, e));
             var ctx = ProjectContext.Load(dir);
-            // publish's rows are the project's rows as `MetadataPublisher.CollectDependencies` hands them to the store
-            var published = MetadataPublisher.CollectDependencies(ctx, null).Rows;
+            // publish's rows are the project's rows as `MetadataPublisher.Prepare` hands them to the store
+            var published = MetadataPublisher.Prepare(ctx, null, plan: null).Dependencies.Rows;
             Assert.Equal(MetadataBuilder.Dependencies(ctx), published);
             var any = false;
             foreach (var path in Directory.EnumerateFiles(Path.Combine(dir, "rendered"), "loads.yml", SearchOption.AllDirectories))
@@ -209,7 +209,7 @@ public class LoadGraphTests
                 var loads = LoadsDocument.Parse(File.ReadAllText(path), path, diags);
                 Assert.True(loads != null, string.Join("\n", diags.Select(DiagnosticFormatter.Format)));
                 Assert.NotNull(loads!.Dependencies);
-                var kinds = loads.Loads.Select(l => l.Model).Distinct().ToDictionary(m => m, m => ctx.Project.Sources.First(s => s.Definition.Name == m).Definition.Kind, StringComparer.OrdinalIgnoreCase);
+                var kinds = loads.Loads.Select(l => l.Model).Distinct().ToDictionary(m => m, m => ctx.Project.BuiltModels.First(s => s.Definition.Name == m).Definition.Kind, StringComparer.OrdinalIgnoreCase);
                 var expected = published.Where(r => kinds.ContainsKey(r.Subject) && kinds.ContainsKey(r.DependsOn)).Select(r => $"{r.Subject}|{r.DependsOn}|{r.Depth}|{kinds[r.Subject]}|{kinds[r.DependsOn]}").ToList();
                 Assert.Equal(expected, loads.Dependencies!.Select(d => $"{d.Model}|{d.DependsOn}|{d.Depth}|{d.ModelKind}|{d.DependsOnKind}"));
                 any |= loads.Dependencies!.Count > 0;

@@ -44,7 +44,7 @@ public class CopyModelTests
         Copy(dir, "warehouse.customers", "crm.customers");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var copy = result.Sources.Single();
+        var copy = result.BuiltModels.Single();
         Assert.Equal((ModelKinds.Copy, "crm.customers"), (copy.Definition.Kind, copy.Definition.From));
         Assert.Equal(["customer_id", "name", "born"], copy.Definition.Columns.Select(c => c.Name));
         Assert.Equal(["customer_id"], copy.Definition.Grain);
@@ -52,8 +52,8 @@ public class CopyModelTests
         Assert.Equal("models/warehouse/customers.yml", copy.QueryFile);                              // no .sql: diagnostics point at the definition
         Assert.Equal("SELECT \"customer_id\", \"name\", \"born\" FROM \"dbdatabuild\".\"stg_warehouse__customers\"\n", copy.GeneratedQuery);
         // the staging table is declared to the project for binding, and is not one of its mapped models
-        Assert.Equal(["crm.customers"], result.Descriptors.Select(d => d.Name));
-        Assert.Contains(result.AllDescriptors, d => d.Name == "dbdatabuild.stg_warehouse__customers" && d.IsGenerated);
+        Assert.Equal(["crm.customers"], result.MappedModels.Select(d => d.Name));
+        Assert.Contains(result.DeclaredModelsAndStaging, d => d.Name == "dbdatabuild.stg_warehouse__customers" && d.IsGenerated);
     }
 
     [Fact]
@@ -81,8 +81,8 @@ public class CopyModelTests
         Copy(dir, "lake.recent", "crm.recent", "connections=: [lake]\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        Assert.Equal(["customer_id", "name", "born"], result.Sources.Single(s => s.Definition.Name == "lake.customers").Definition.Columns.Select(c => c.Name));
-        Assert.Equal(["customer_id"], result.Sources.Single(s => s.Definition.Name == "lake.recent").Definition.Columns.Select(c => c.Name));
+        Assert.Equal(["customer_id", "name", "born"], result.BuiltModels.Single(s => s.Definition.Name == "lake.customers").Definition.Columns.Select(c => c.Name));
+        Assert.Equal(["customer_id"], result.BuiltModels.Single(s => s.Definition.Name == "lake.recent").Definition.Columns.Select(c => c.Name));
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class CopyModelTests
         Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var copy = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
+        var copy = result.BuiltModels.Single(s => s.Definition.Name == "warehouse.orders").Definition;
         Assert.Equal(["order_id", "total", "store_id"], copy.Columns.Select(c => c.Name));              // the origin has no such column, so the copy adds it
         Assert.True(copy.SliceColumnAdded);
         Assert.Equal("VARCHAR(10)", copy.Columns[2].Type);
@@ -145,7 +145,7 @@ public class CopyModelTests
         Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    slice: {column: store_code, value: \"${origin.store_id}\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var copy = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
+        var copy = result.BuiltModels.Single(s => s.Definition.Name == "warehouse.orders").Definition;
         Assert.False(copy.SliceColumnAdded);
         Assert.Equal(["order_id", "total", "store_code"], copy.Columns.Select(c => c.Name));
     }
@@ -260,7 +260,7 @@ public class CopyModelTests
         Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  copy:\n    from: crm.customers\n    unique_key: [customer_id]\n    watermark: {column: born, lookback: 3 days}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var copy = result.Sources.Single().Definition;
+        var copy = result.BuiltModels.Single().Definition;
         Assert.Equal(("born", "3 days"), (copy.Watermark!.Column, copy.Watermark.Lookback));
         var load = Assert.Single(LoadPlan.For(copy, "wh"));
         Assert.Equal($"{LoadStrategies.DeleteInsertByKey} customer_id", $"{load.Strategy} {string.Join(",", load.Key)}");
@@ -288,7 +288,7 @@ public class CopyModelTests
         Write(dir, "models/warehouse/orders.yml", "name: warehouse.orders\nkind:\n  copy:\n    from: pos.orders\n    unique_key: [order_id]\n    watermark: {column: order_id}\n    slice: {column: store_id, value: \"${origin.store_id}\", type: \"VARCHAR(10)\"}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var load = Assert.Single(LoadPlan.For(result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition, "wh"));
+        var load = Assert.Single(LoadPlan.For(result.BuiltModels.Single(s => s.Definition.Name == "warehouse.orders").Definition, "wh"));
         Assert.Equal(["order_id", "store_id"], load.Key);                                                 // two stores may use one order number
     }
 
@@ -300,7 +300,7 @@ public class CopyModelTests
             + "loads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var def = result.Sources.Single(s => s.Definition.Name == "warehouse.orders").Definition;
+        var def = result.BuiltModels.Single(s => s.Definition.Name == "warehouse.orders").Definition;
         var loads = LoadPlan.For(def, "wh");
         var routine = loads.Single(l => l.Name == "default");
         Assert.Equal(["order_id", "store_id"], routine.Key);                                              // the key a copy defaults to leads to the slice, as the implicit load does
@@ -316,7 +316,7 @@ public class CopyModelTests
         Write(dir, "models/warehouse/customers.yml", "name: warehouse.customers\nkind:\n  copy:\n    from: crm.customers\n    unique_key: [customer_id]\n    watermark: {column: born}\nloads:\n  default: {default: true, strategy: delete_insert_by_key}\n  full: {strategy: full_replace}\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var full = LoadPlan.For(result.Sources.Single().Definition, "wh").Single(l => l.Name == "full");
+        var full = LoadPlan.For(result.BuiltModels.Single().Definition, "wh").Single(l => l.Name == "full");
         Assert.Equal((LoadStrategies.FullReplace, true), (full.Strategy, full.ReadsAll));
     }
 
@@ -329,10 +329,10 @@ public class CopyModelTests
         Copy(dir, "crm.snapshot", "crm.customers", "connections=: [crm]\n");
         var (result, text) = Validate(dir);
         Assert.False(result.HasErrors, text);
-        var copy = result.Sources.Single();
+        var copy = result.BuiltModels.Single();
         Assert.True(copy.Definition.LocalCopy);
         Assert.Equal("SELECT \"customer_id\", \"name\", \"born\" FROM \"crm\".\"customers\"\n", copy.GeneratedQuery);      // reads the origin by name
-        Assert.DoesNotContain(result.AllDescriptors, d => d.IsGenerated);                                                  // no staging table
+        Assert.DoesNotContain(result.DeclaredModelsAndStaging, d => d.IsGenerated);                                                  // no staging table
     }
 
     [Fact]

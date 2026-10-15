@@ -20,9 +20,9 @@ public class SchemaConformanceTests
     {
         // output.schema.json refers to metadata.schema.json by its $id, so that one is loaded (and registered) first
         var schema = JsonSchema.FromFile(Path.Combine(RepoRoot(), "schemas", name + ".schema.json"));
-        if (name is "metadata" or "source") SchemaRegistry.Global.Register(schema);
+        if (name is "metadata" or "declared-model") SchemaRegistry.Global.Register(schema);
         if (name == "output") LoadSchema("metadata");
-        if (name == "model") LoadSchema("source");     // a model file that says `kind: mapped` is handed to the source schema
+        if (name == "model") LoadSchema("declared-model");     // a model file that says `kind: mapped` or `kind: native` is handed to the declared-model schema
         return schema;
     }
 
@@ -228,7 +228,7 @@ public class SchemaConformanceTests
     [Fact]
     public void Schemas_are_valid_json_schema_documents_with_descriptions()
     {
-        foreach (var name in new[] { "model", "config", "answers", "source" })
+        foreach (var name in new[] { "model", "config", "answers", "declared-model" })
         {
             var schema = LoadSchema(name);
             Assert.NotNull(schema);
@@ -250,7 +250,7 @@ public class EditorAssociationTests
         var map = doc.RootElement.GetProperty("yaml.schemas").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.ValueKind == System.Text.Json.JsonValueKind.String ? p.Value.GetString()! : "");
         Assert.Equal("models/**/*.yml", map["schemas/model.schema.json"]);
         Assert.Equal(DbDataBuild.Core.ProductInfo.ConfigFile, map["schemas/config.schema.json"]);
-        Assert.False(map.ContainsKey("schemas/source.schema.json"));       // mapped models are in models/ too: model.schema.json hands them to it
+        Assert.False(map.ContainsKey("schemas/declared-model.schema.json"));       // mapped models are in models/ too: model.schema.json hands them to it
         Assert.Contains("answers.yml", doc.RootElement.GetProperty("yaml.schemas").GetProperty("schemas/answers.schema.json").EnumerateArray().Select(e => e.GetString()));
         foreach (var schema in map.Keys) Assert.True(File.Exists(Path.Combine(root, schema)), schema);
     }
@@ -279,12 +279,12 @@ public class DesignDocExampleTests
     }
 
     [Fact]
-    public void Source_descriptor_example_in_section_6_5_1_is_valid_for_the_schema_and_the_loader()
+    public void Declared_model_example_in_section_6_5_1_is_valid_for_the_schema_and_the_loader()
     {
-        var yaml = YamlBlockAfter("**Source descriptors**");
-        Assert.True(SchemaConformanceTests.SchemaAccepts(SchemaConformanceTests.LoadSchema("source"), yaml));
+        var yaml = YamlBlockAfter("**A mapped model**");
+        Assert.True(SchemaConformanceTests.SchemaAccepts(SchemaConformanceTests.LoadSchema("declared-model"), yaml));
         var diags = new List<DbDataBuild.Core.Diagnostic>();
-        var d = DbDataBuild.Models.SourceDescriptorLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags);
+        var d = DbDataBuild.Models.DeclaredModelLoader.Load(yaml, "models/staging/orders.yml", "staging.orders", diags);
         Assert.Empty(diags.Select(DbDataBuild.Core.DiagnosticFormatter.Format));
         Assert.Equal(["order_id", "amount", "customer_id"], d!.Columns.Select(c => c.Name));
         Assert.Equal(["ix_orders_amount"], d.Indexes.Select(i => i.Name));

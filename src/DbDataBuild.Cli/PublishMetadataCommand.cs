@@ -20,7 +20,7 @@ internal static class PublishMetadataCommand
         if (tracking?.Write == null) return CliApp.ExitFindings;
         var read = tracking.Read; var write = tracking.Write;
 
-        var selected = ctx.Select(models, error);
+        var selected = ctx.SelectModels(models, error);
         if (selected == null) return CliApp.ExitUsage;
         var invalid = ctx.Diagnostics.Where(d => d.Severity == Severity.Error && d.Code != DiagnosticCatalog.OrphanFile.Code).ToList();
         foreach (var d in invalid) error.Diag(d);
@@ -31,16 +31,15 @@ internal static class PublishMetadataCommand
         }
 
         var (commit, _) = GitInfo.Read(root);
-        var named = models.Length == 0 ? null : selected.Select(m => m.Source.Definition.Name).ToList();
-        var documents = MetadataPublisher.Collect(ctx, named, plan: null);   // no models named: everything, sources no model reads included
-        var dependencies = MetadataPublisher.CollectDependencies(ctx, named);
+        var named = models.Length == 0 ? null : selected.Select(m => m.Name).ToList();
+        var prepared = MetadataPublisher.Prepare(ctx, named, plan: null);   // no models named: everything, declared models no model reads included
         MetadataPublisher.Result result;
-        try { result = Task.Run(() => MetadataPublisher.PublishAsync(documents, tracking.Scope, read, write, spec.Name, root, null, commit, dependencies)).GetAwaiter().GetResult(); }
+        try { result = Task.Run(() => MetadataPublisher.PublishAsync(prepared.Documents, tracking.Scope, read, write, spec.Name, root, null, commit, prepared.Dependencies)).GetAwaiter().GetResult(); }
         catch (GateRefusedException ex) { error.Diag(ex.Diagnostic); return CliApp.ExitFindings; }
 
         output.Payload("connection", target);
-        output.Payload("written", result.Written.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
-        output.Payload("unchanged", result.Unchanged.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
+        output.Payload("written", result.Written.Select(d => new { subject_kind = d.SubjectKind, subject = d.Subject, hash = d.Hash }).ToList());
+        output.Payload("unchanged", result.Unchanged.Select(d => new { subject_kind = d.SubjectKind, subject = d.Subject, hash = d.Hash }).ToList());
         output.Payload("dependencies", new { rows = result.DependencyRows, subjects_written = result.DependencySubjectsWritten });
         output.WriteLine($"Stored {result.Written.Count} document(s); {result.Unchanged.Count} already up to date; dependencies of {result.DependencySubjectsWritten} model(s) written ({result.DependencyRows} row(s) in the project). Query `{tracking.Scope.SchemaName}.metadata_current` and `{tracking.Scope.SchemaName}.metadata_columns` (and `metadata_dependency`) on `{tracking.Target.Connection}`.");
         return CliApp.ExitOk;

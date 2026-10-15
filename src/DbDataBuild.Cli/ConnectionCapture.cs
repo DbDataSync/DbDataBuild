@@ -19,16 +19,16 @@ internal static class UpdateDefaults
 }
 
 /// <summary>A mapped model compared with its table on one connection.</summary>
-internal sealed record CaptureRow(string Connection, ImportSourcesCommand.Row Row);
+internal sealed record CaptureRow(string Connection, ImportCommand.Row Row);
 
 /// <summary>A connection the capture used or skipped, and why.</summary>
 internal sealed record CaptureConnection(string Connection, string Driver, string Status, string? Reason);
 
-internal sealed record CaptureOutcome(List<CaptureRow> Sources, List<CaptureConnection> Connections, List<string> Notes, List<Diagnostic> Diagnostics, List<(string Name, string Reason)> Skipped);
+internal sealed record CaptureOutcome(List<CaptureRow> MappedModels, List<CaptureConnection> Connections, List<string> Notes, List<Diagnostic> Diagnostics, List<(string Name, string Reason)> Skipped);
 
 /// <summary>
 /// The online part of `project update` and `project model update`, in one piece of code that both call: the metadata of every mapped model of the project (the columns, types, primary key as grain, foreign keys and indexes
-/// `project import` writes), read from the connection it is on, including the mapped models that copies read from. It reuses <see cref="ImportSourcesCommand.GatherAsync"/>; a mapped model is never ignored: if it cannot be
+/// `project import` writes), read from the connection it is on, including the mapped models that copies read from. It reuses <see cref="ImportCommand.GatherAsync"/>; a mapped model is never ignored: if it cannot be
 /// read, the outcome says that and why. A connection whose read login is missing or that cannot be reached is skipped with a plain note, and the rest still updates. A native model has no catalog entry and is said to be skipped.
 /// </summary>
 internal static class ConnectionCapture
@@ -37,8 +37,8 @@ internal static class ConnectionCapture
     {
         var outcome = new CaptureOutcome([], [], [], [], []);
         // a copy that is selected brings the table it reads with it
-        var copyOrigins = ctx.Project.Sources.Where(s => s.Definition.IsCopy && selection.Includes(s.Definition.Name)).Select(s => s.Definition.From).Where(f => f != null).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var wanted = ctx.Project.FileDescriptors.Where(d => selection.Includes(d.Name) || copyOrigins.Contains(d.Name)).OrderBy(d => d.Name, StringComparer.Ordinal).ToList();
+        var copyOrigins = ctx.Project.BuiltModels.Where(s => s.Definition.IsCopy && selection.Includes(s.Definition.Name)).Select(s => s.Definition.From).Where(f => f != null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var wanted = ctx.Project.DeclaredModels.Where(d => selection.Includes(d.Name) || copyOrigins.Contains(d.Name)).OrderBy(d => d.Name, StringComparer.Ordinal).ToList();
         foreach (var native in wanted.Where(d => d.IsNative))
             outcome.Skipped.Add((native.Name, "a native model is computed by a query of the engine, so it has no table in a catalog; its declared columns are checked when it is used"));
         var mapped = wanted.Where(d => !d.IsNative).ToList();
@@ -53,7 +53,7 @@ internal static class ConnectionCapture
             return logins[c.Name] = login != null ? (login, null) : (null, $"its read login is not set ({LoginSettings.VariableName(c.Name, Login.Read)})");
         }
 
-        var byConnection = new Dictionary<string, List<SourceDescriptor>>(StringComparer.Ordinal);
+        var byConnection = new Dictionary<string, List<DeclaredModel>>(StringComparer.Ordinal);
         foreach (var d in mapped)
         {
             var candidates = (d.Connections ?? ctx.Config.DefaultConnections).Where(ctx.Config.Connections.ContainsKey).ToList();
@@ -73,11 +73,11 @@ internal static class ConnectionCapture
         {
             var connection = ctx.Config.Connections[name];
             var login = logins[name].Login!;
-            var patterns = descriptors.Select(d => { var (s, t) = ImportSourcesCommand.Split(d.Name)!.Value; return (ImportSourcesCommand.Glob(s), ImportSourcesCommand.Glob(t), (string?)s); }).ToList();
+            var patterns = descriptors.Select(d => { var (s, t) = ImportCommand.Split(d.Name)!.Value; return (ImportCommand.Glob(s), ImportCommand.Glob(t), (string?)s); }).ToList();
             try
             {
-                var (rows, skipped, diags, notes) = await ImportSourcesCommand.GatherAsync(ctx, ctx.Root, connection, login, patterns, open);
-                outcome.Sources.AddRange(rows.Select(r => new CaptureRow(name, r)));
+                var (rows, skipped, diags, notes) = await ImportCommand.GatherAsync(ctx, ctx.Root, connection, login, patterns, open);
+                outcome.MappedModels.AddRange(rows.Select(r => new CaptureRow(name, r)));
                 outcome.Diagnostics.AddRange(diags);
                 foreach (var n in notes) if (!outcome.Notes.Contains(n)) outcome.Notes.Add(n);
                 foreach (var s in skipped) outcome.Skipped.Add((s.Object, s.Reason));
@@ -100,9 +100,9 @@ internal static class ConnectionCapture
     }
 
     /// <summary>Models the connections gave, as rows of the JSON document.</summary>
-    public static object SourcesPayload(CaptureOutcome o) => o.Sources.OrderBy(r => r.Row.Name, StringComparer.Ordinal).Select(r => (object)new
+    public static object MappedModelsPayload(CaptureOutcome o) => o.MappedModels.OrderBy(r => r.Row.Name, StringComparer.Ordinal).Select(r => (object)new
     {
-        name = r.Row.Name, kind = r.Row.Kind, file = r.Row.File, connection = r.Connection, status = r.Row.Status,
+        name = r.Row.Name, object_kind = r.Row.Kind, file = r.Row.File, connection = r.Connection, status = r.Row.Status,
         changes = r.Row.Changes.Select(c => new { kind = c.Kind.ToString().ToLowerInvariant(), column = c.Column, detail = c.Detail }).ToList(),
     }).Concat(o.Skipped.OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => (object)new { name = s.Name, status = "skipped", reason = s.Reason, changes = new List<object>() })).ToList();
 
@@ -115,18 +115,18 @@ internal static class ConnectionCapture
         output.WriteLine();
         output.WriteLine("Mapped models, compared with their tables:");
         foreach (var c in o.Connections.Where(c => c.Status == "skipped")) output.WriteLine($"  connection `{c.Connection}` was skipped: {c.Reason}");
-        foreach (var r in o.Sources.OrderBy(r => r.Row.Name, StringComparer.Ordinal))
+        foreach (var r in o.MappedModels.OrderBy(r => r.Row.Name, StringComparer.Ordinal))
         {
             output.WriteLine($"  {r.Row.Status,-9} {r.Row.Name}  (on {r.Connection})");
             foreach (var change in r.Row.Changes.Take(8)) output.WriteLine($"            {(change.Column == null ? "" : change.Column + ": ")}{change.Kind.ToString().ToLowerInvariant()} {change.Detail}".TrimEnd());
         }
         foreach (var s in o.Skipped.OrderBy(s => s.Name, StringComparer.Ordinal)) output.WriteLine($"  skipped   {s.Name}: {s.Reason}");
-        if (o.Sources.Count == 0 && o.Skipped.Count == 0) output.WriteLine("  the project has no mapped model in scope");
+        if (o.MappedModels.Count == 0 && o.Skipped.Count == 0) output.WriteLine("  the project has no mapped model in scope");
         foreach (var n in o.Notes) output.WriteLine($"  note: {n}");
         foreach (var d in o.Diagnostics) error.Diag(d);
 
-        var changed = o.Sources.Where(r => r.Row.Status is "new" or "changed").ToList();
-        var stale = o.Sources.Where(r => r.Row.Status is "stale").ToList();
+        var changed = o.MappedModels.Where(r => r.Row.Status is "new" or "changed").ToList();
+        var stale = o.MappedModels.Where(r => r.Row.Status is "stale").ToList();
         foreach (var r in changed) { output.WriteLine(); output.Write(UnifiedDiff.Create(r.Row.OldText, r.Row.NewText!, r.Row.File!)); }
         var written = new List<string>();
         if (check)
@@ -147,7 +147,7 @@ internal static class ConnectionCapture
     {
         var written = new List<string>();
         var failed = false;
-        foreach (var r in o.Sources.Where(r => r.Row.Status is "new" or "changed").OrderBy(r => r.Row.File, StringComparer.Ordinal))
+        foreach (var r in o.MappedModels.Where(r => r.Row.Status is "new" or "changed").OrderBy(r => r.Row.File, StringComparer.Ordinal))
         {
             var path = Path.Combine(root, r.Row.File!);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);

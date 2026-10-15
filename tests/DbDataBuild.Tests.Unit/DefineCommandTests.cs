@@ -403,7 +403,7 @@ public class DefineCommandTests
         Assert.StartsWith("columns:", written);
         Assert.Contains("CREATE TABLE marts.fct_orders AS", File.ReadAllText(stem + ".sql"));                       // the query file is never written
         // the project reads the two together, and define sees them in sync
-        var model = DbDataBuild.Models.ProjectValidator.Validate(dir).Sources.Single(s => s.Definition.Name == "marts.fct_orders");
+        var model = DbDataBuild.Models.ProjectValidator.Validate(dir).BuiltModels.Single(s => s.Definition.Name == "marts.fct_orders");
         Assert.Equal("full", model.Definition.Kind);
         Assert.Equal((CliApp.ExitOk, ""), (Define(dir, "--check").Exit, Define(dir, "--check").Err));
     }
@@ -420,6 +420,6 @@ public class DefineCommandTests
         var (exit, output, err2) = Define(dir, "--write", "--answers", Answers(dir, HeadAnswers.Replace("answers:\n", "answers:\n  - {id: Q-define-marts.fct_orders-grain, choice: candidate_1}\n  - {id: Q-define-marts.fct_orders-indexes, choice: no_indexes}\n")));
         Assert.True(exit == CliApp.ExitOk, output + err2);
         Assert.DoesNotContain("unique_key", File.ReadAllText(stem + ".yml"));
-        Assert.Equal(["order_id"], DbDataBuild.Models.ProjectValidator.Validate(dir).Sources.Single(s => s.Definition.Name == "marts.fct_orders").Definition.UniqueKey);
+        Assert.Equal(["order_id"], DbDataBuild.Models.ProjectValidator.Validate(dir).BuiltModels.Single(s => s.Definition.Name == "marts.fct_orders").Definition.UniqueKey);
     }
 }

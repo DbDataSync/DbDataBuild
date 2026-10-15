@@ -15,26 +15,26 @@ public static class MetadataStore
 {
     private static string C(string target, string n) => TrackingDdl.For(target).Quote(n);
 
-    /// <summary>The hash of the newest document per `kind|subject`.</summary>
+    /// <summary>The hash of the newest document per `subject_kind|subject`.</summary>
     public static async Task<IReadOnlyDictionary<string, string>> LatestHashesAsync(ReadSession read, TrackingScope scope, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
-        var rows = await read.QueryAsync($"SELECT m.{c("kind")}, m.{c("subject")}, m.{c("document_hash")} FROM {c(scope.SchemaName)}.{c("metadata_current")} m WHERE m.{c("connection")} = @connection",
+        var rows = await read.QueryAsync($"SELECT m.{c("subject_kind")}, m.{c("subject")}, m.{c("document_hash")} FROM {c(scope.SchemaName)}.{c("metadata_current")} m WHERE m.{c("connection")} = @connection",
             [new GateParameter("connection", DbType.String, scope.Connection)], ct);
         return rows.ToDictionary(r => $"{((string)r[0]!).Trim()}|{r[1]}", r => ((string)r[2]!).Trim(), StringComparer.Ordinal);
     }
 
-    /// <summary>The text of the newest document of a kind and subject, or null when there is none.</summary>
+    /// <summary>The text of the newest document of a subject kind and subject, or null when there is none.</summary>
     public static async Task<string?> LatestDocumentAsync(ReadSession read, TrackingScope scope, string kind, string subject, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
-        var rows = await read.QueryAsync($"SELECT m.{c("document")} FROM {c(scope.SchemaName)}.{c("metadata_current")} m WHERE m.{c("connection")} = @connection AND m.{c("kind")} = @kind AND m.{c("subject")} = @subject",
-            [new GateParameter("connection", DbType.String, scope.Connection), new GateParameter("kind", DbType.String, kind), new GateParameter("subject", DbType.String, subject)], ct);
+        var rows = await read.QueryAsync($"SELECT m.{c("document")} FROM {c(scope.SchemaName)}.{c("metadata_current")} m WHERE m.{c("connection")} = @connection AND m.{c("subject_kind")} = @subject_kind AND m.{c("subject")} = @subject",
+            [new GateParameter("connection", DbType.String, scope.Connection), new GateParameter("subject_kind", DbType.String, kind), new GateParameter("subject", DbType.String, subject)], ct);
         return rows.Count == 0 ? null : rows[0][0]?.ToString();
     }
 
     /// <summary>
-    /// Replaces the rows of `object_info` for one subject (a project, a model or a source) with <paramref name="rows"/>: the title, description, tags and properties the subject's document says, one row each. The old rows go first and
+    /// Replaces the rows of `object_info` for one subject (a project or a model of any kind) with <paramref name="rows"/>: the title, description, tags and properties the subject's document says, one row each. The old rows go first and
     /// the document is stored after, so an interrupted publish leaves a document that still differs from the latest one and the next publish writes both again.
     /// </summary>
     public static async Task ReplaceInfoAsync(MutationGate gate, TrackingScope scope, string stepId, string kind, string subject, IReadOnlyList<InfoRow> rows, CancellationToken ct = default)
@@ -70,7 +70,7 @@ public static class MetadataStore
         return rows.Select(r => new InfoRow(((string)r[0]!), ((string)r[1]!).Trim(), ((string)r[2]!).Trim(), (r[3] as string)?.Trim(), r[4] as string)).ToList();
     }
 
-    public static string Key(string kind, string subject) => $"{kind}|{subject}";
+    public static string Key(string subjectKind, string subject) => $"{subjectKind}|{subject}";
 
     /// <summary>The rows of `metadata_dependency` for the connection: what the models (and native models) depend on, as last published.</summary>
     public static async Task<IReadOnlyList<DependencyRow>> DependenciesAsync(ReadSession read, TrackingScope scope, CancellationToken ct = default)
@@ -126,17 +126,17 @@ public static class MetadataStore
     }
 
     /// <summary>Stores one document. The JSON is bound as a parameter (cast to jsonb on PostgreSQL), never interpolated.</summary>
-    public static Task StoreAsync(MutationGate gate, TrackingScope scope, string stepId, string kind, string subject, string json, string hash, string toolVersion, string? planId, string? gitCommit, CancellationToken ct = default)
+    public static Task StoreAsync(MutationGate gate, TrackingScope scope, string stepId, string subjectKind, string subject, string json, string hash, string toolVersion, string? planId, string? gitCommit, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
         var document = scope.Engine == "postgres" ? "CAST(@document AS jsonb)" : "@document";
-        var text = $"INSERT INTO {c(scope.SchemaName)}.{c("metadata_document")} ({c("connection")}, {c("kind")}, {c("subject")}, {c("document")}, {c("document_hash")}, {c("recorded_utc")}, {c("tool_version")}, {c("plan_id")}, {c("git_commit")}, {c("model_kind")}) " +
-                   $"VALUES (@connection, @kind, @subject, {document}, @document_hash, @recorded_utc, @tool_version, @plan_id, @git_commit, @model_kind)";
+        var text = $"INSERT INTO {c(scope.SchemaName)}.{c("metadata_document")} ({c("connection")}, {c("subject_kind")}, {c("subject")}, {c("document")}, {c("document_hash")}, {c("recorded_utc")}, {c("tool_version")}, {c("plan_id")}, {c("git_commit")}, {c("model_kind")}) " +
+                   $"VALUES (@connection, @subject_kind, @subject, {document}, @document_hash, @recorded_utc, @tool_version, @plan_id, @git_commit, @model_kind)";
         return gate.ExecuteAsync(GateStatement.Tracking(stepId, text,
         [
-            new("connection", DbType.String, scope.Connection), new("kind", DbType.AnsiString, kind), new("subject", DbType.String, subject), new("document", DbType.String, json), new("document_hash", DbType.AnsiStringFixedLength, hash),
+            new("connection", DbType.String, scope.Connection), new("subject_kind", DbType.AnsiString, subjectKind), new("subject", DbType.String, subject), new("document", DbType.String, json), new("document_hash", DbType.AnsiStringFixedLength, hash),
             new("recorded_utc", DbType.DateTime2, TrackingClock.NextUtc()), new("tool_version", DbType.AnsiString, toolVersion), new("plan_id", DbType.AnsiString, planId), new("git_commit", DbType.AnsiString, gitCommit),
-            new("model_kind", DbType.AnsiString, MetadataDependencies.ModelKindOf(kind, json)),
+            new("model_kind", DbType.AnsiString, MetadataDependencies.ModelKindOf(subjectKind, json)),
         ]), ct);
     }
 }

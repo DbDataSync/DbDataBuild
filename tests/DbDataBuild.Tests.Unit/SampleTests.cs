@@ -8,7 +8,7 @@ namespace DbDataBuild.Tests.Unit;
 /// <summary>Sample data (DESIGN.md 15.2): deterministic, awkward on purpose, and run through models offline.</summary>
 public class SampleTests
 {
-    private static SourceDescriptor Orders(params string[] grain) => new("staging.orders",
+    private static DeclaredModel Orders(params string[] grain) => new("staging.orders",
     [
         new ColumnDefinition("order_id", "BIGINT", false), new ColumnDefinition("customer", "VARCHAR(20)"), new ColumnDefinition("amount", "DECIMAL(14, 2)"),
         new ColumnDefinition("placed", "DATE"), new ColumnDefinition("score", "DOUBLE"), new ColumnDefinition("paid", "BOOLEAN", false), new ColumnDefinition("at", "TIMESTAMP"),
@@ -32,7 +32,7 @@ public class SampleTests
         Assert.Contains(rows, r => r[1] == "NULL");
         Assert.Contains(rows, r => r[2] == "NULL");
 
-        var composite = new SourceDescriptor("s.t", [new ColumnDefinition("a", "INTEGER", false), new ColumnDefinition("b", "INTEGER", false)], ["a", "b"]);
+        var composite = new DeclaredModel("s.t", [new ColumnDefinition("a", "INTEGER", false), new ColumnDefinition("b", "INTEGER", false)], ["a", "b"]);
         var crows = SampleGenerator.Rows(composite, 100, 1);
         Assert.Equal(100, crows.Select(r => r[0] + "," + r[1]).Distinct().Count());
         Assert.True(crows.Select(r => r[0]).Distinct().Count() < 100);                // the first grain column repeats, so groups and joins find matches
@@ -41,11 +41,11 @@ public class SampleTests
     [Fact]
     public void Strings_include_the_cases_the_string_profile_cares_about_and_respect_the_declared_length()
     {
-        var rows = SampleGenerator.Rows(new SourceDescriptor("s.t", [new ColumnDefinition("w", "VARCHAR(3)", false)], []), 300, 1).Select(r => r[0]).ToList();
+        var rows = SampleGenerator.Rows(new DeclaredModel("s.t", [new ColumnDefinition("w", "VARCHAR(3)", false)], []), 300, 1).Select(r => r[0]).ToList();
         Assert.All(rows, r => Assert.True(r[1..^1].Replace("''", "'").Length <= 3));        // the declared length, after unquoting
         Assert.Contains("'Alp'", rows); Assert.Contains("'alp'", rows);                  // differ only by case
         Assert.Contains("''", rows);                                                    // empty
-        var wide = SampleGenerator.Rows(new SourceDescriptor("s.t", [new ColumnDefinition("w", "VARCHAR(50)", false)], []), 300, 1).Select(r => r[0]).ToList();
+        var wide = SampleGenerator.Rows(new DeclaredModel("s.t", [new ColumnDefinition("w", "VARCHAR(50)", false)], []), 300, 1).Select(r => r[0]).ToList();
         Assert.Contains("'alpha '", wide);                                              // trailing space
         Assert.Contains("'été'", wide); Assert.Contains("'ete'", wide);                 // accent
         Assert.Contains("'O''Brien'", wide);                                            // quoting
@@ -54,7 +54,7 @@ public class SampleTests
     [Fact]
     public void A_type_with_no_generator_says_so_and_how_to_supply_rows()
     {
-        var ex = Assert.Throws<SampleException>(() => SampleGenerator.Rows(new SourceDescriptor("s.t", [new ColumnDefinition("p", "GEOMETRY", false)], []), 5, 1));
+        var ex = Assert.Throws<SampleException>(() => SampleGenerator.Rows(new DeclaredModel("s.t", [new ColumnDefinition("p", "GEOMETRY", false)], []), 5, 1));
         Assert.Contains("column `p` of type GEOMETRY", ex.Message);
         Assert.Contains("--data", ex.Message);
     }
@@ -154,14 +154,14 @@ public class SampleTests
         var (exit, output, err) = Cli("project", "sample", "--project", dir, "--rows", "40", "--limit", "5");
         Assert.Equal(0, exit);
         Assert.Contains("effect: Offline only", output);
-        Assert.Contains("marts.by_customer  (model, ", output);
+        Assert.Contains("marts.by_customer  (full, ", output);
         Assert.Contains("customer  n", output);
         Assert.Contains("more row(s)", output);
         Assert.Contains("OK: 1 model(s) ran on sample data (seed 1).", output);
         Assert.Equal("", err);
         Assert.Equal(before, Snapshot(dir));
-        Assert.DoesNotContain("staging.orders  (source", output);
-        Assert.Contains("staging.orders  (source", Cli("project", "sample", "--project", dir, "--sources").Out);
+        Assert.DoesNotContain("staging.orders  (mapped", output);
+        Assert.Contains("staging.orders  (mapped", Cli("project", "sample", "--project", dir, "--declared").Out);
     }
 
     [Fact]

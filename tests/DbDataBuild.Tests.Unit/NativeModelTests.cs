@@ -43,8 +43,8 @@ public class NativeModelTests
         Assert.False(result.HasErrors, Diags(dir));
         Assert.Equal(["src.a", "src.b"], result.NativeModels.Select(n => n.Name).Order());
         Assert.Equal("SELECT 2 AS n", result.NativeModels.Single(n => n.Name == "src.b").Native!.Text);
-        Assert.Empty(result.Descriptors);                                                           // not a mapped model, and not a model
-        Assert.Equal(2, result.AllDescriptors.Count(d => d.IsNative));                              // but a queryable table
+        Assert.Empty(result.MappedModels);                                                           // not a mapped model, and not a model
+        Assert.Equal(2, result.DeclaredModelsAndStaging.Count(d => d.IsNative));                              // but a queryable table
         Assert.Equal(["n"], result.NativeModels[0].Columns.Select(c => c.Name));
     }
 
@@ -113,8 +113,8 @@ public class NativeModelTests
         Write(dir, "models/dst/snap.yml", "name: dst.snap\nkind:\n  copy:\n    from: src.nums\n");                              // remote (the default connection)
         var result = ProjectValidator.Validate(dir);
         Assert.False(result.HasErrors, Diags(dir));
-        Assert.True(result.Sources.Single(s => s.Definition.Name == "pgcopy.snap").Definition.LocalCopy);
-        Assert.False(result.Sources.Single(s => s.Definition.Name == "dst.snap").Definition.LocalCopy);
+        Assert.True(result.BuiltModels.Single(s => s.Definition.Name == "pgcopy.snap").Definition.LocalCopy);
+        Assert.False(result.BuiltModels.Single(s => s.Definition.Name == "dst.snap").Definition.LocalCopy);
     }
 
     [Fact]
@@ -159,12 +159,12 @@ public class NativeModelTests
         Write(dir, "models/marts/top.yml", "name: marts.top\nkind: full\n" + Cols);
         Write(dir, "models/marts/top.sql", "SELECT n FROM src.a\n");
         var metadata = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!;
-        var source = metadata["sources"]!.AsArray().Single()!;
-        Assert.Equal("src.a", (string?)source["name"]);
-        Assert.Equal("models/src/a.yml", (string?)source["file"]);
+        var source = metadata["models"]!.AsArray().Single(m => (string?)m!["name"] == "src.a")!;
+        Assert.Equal("models/src/a.yml", (string?)source["files"]!["definition"]);
         Assert.Equal("native", (string?)source["kind"]);
-        Assert.Equal("dbdatabuild.source/2", (string?)source["schema"]);
+        Assert.Equal("dbdatabuild.model/3", (string?)source["schema"]);
         Assert.Null(source["native"]);
+        Assert.Equal(["marts.stock:view"], source["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["kind"]}").Select(x => x.Replace(":model", ":view")));
         Assert.Equal("select", (string?)source["kind_settings"]!["access"]);
         Assert.Equal(["marts.stock"], source["kind_settings"]!["reads"]!.AsArray().Select(r => (string?)r));
         Assert.Matches("^[0-9a-f]{64}$", (string?)source["kind_settings"]!["text_hash"]);
@@ -172,11 +172,11 @@ public class NativeModelTests
 
         var hash = (string?)source["definition_hash"];
         Write(dir, "models/src/a.yml", "name: src.a\nreads: [marts.stock]\nkind:\n  native:\n    query: SELECT n FROM marts.stock WHERE n > 0\n" + Cols);
-        var changed = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!["sources"]!.AsArray().Single()!;
+        var changed = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!["models"]!.AsArray().Single(m => (string?)m!["name"] == "src.a")!;
         Assert.NotEqual(hash, (string?)changed["definition_hash"]);                                    // the text is part of what the model is
 
         var graph = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "graph", "--project", dir, "--format", "json", "marts.top").Out)!["data"]!;
-        Assert.Equal(["marts.stock:model", "marts.top:model", "src.a:native"], graph["nodes"]!.AsArray().Select(n => $"{(string?)n!["name"]}:{(string?)n["kind"]}").Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.stock:full", "marts.top:full", "src.a:native"], graph["nodes"]!.AsArray().Select(n => $"{(string?)n!["name"]}:{(string?)n["kind"]}").Order(StringComparer.Ordinal));
         Assert.Contains(graph["edges"]!.AsArray(), e => (string?)e!["from"] == "marts.stock" && (string?)e["to"] == "src.a");
     }
 

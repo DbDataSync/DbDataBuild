@@ -16,7 +16,7 @@ public static class SeedRun
 {
     /// <param name="only">Load these sources and the seeds they read; all seeds when null.</param>
     /// <param name="scale">Set as the variable `scale`; null leaves the default the project's macros.sql sets.</param>
-    public static IReadOnlyList<SeededTable> Load(DuckDBConnection db, IReadOnlyList<SourceDescriptor> sources, SeedSet seeds, IReadOnlyCollection<string>? only, int seed, int? scale)
+    public static IReadOnlyList<SeededTable> Load(DuckDBConnection db, IReadOnlyList<DeclaredModel> sources, SeedSet seeds, IReadOnlyCollection<string>? only, int seed, int? scale)
     {
         Exec(db, $"SET VARIABLE seed = {seed.ToString(CultureInfo.InvariantCulture)}");
         if (scale != null) Exec(db, $"SET VARIABLE scale = {scale.Value.ToString(CultureInfo.InvariantCulture)}");
@@ -55,7 +55,7 @@ public static class SeedRun
     }
 
     /// <summary>Creates a fresh DuckDB file at <paramref name="path"/> and runs the seeds into it. External access is switched off once the file is open, so no seed can read files or the network.</summary>
-    public static IReadOnlyList<SeededTable> WriteFile(string path, IReadOnlyList<SourceDescriptor> sources, SeedSet seeds, int seed, int? scale)
+    public static IReadOnlyList<SeededTable> WriteFile(string path, IReadOnlyList<DeclaredModel> sources, SeedSet seeds, int seed, int? scale)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         foreach (var f in new[] { path, path + ".wal" }) if (File.Exists(f)) File.Delete(f);

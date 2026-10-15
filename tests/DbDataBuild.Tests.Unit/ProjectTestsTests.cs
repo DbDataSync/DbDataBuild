@@ -96,7 +96,7 @@ public class ProjectTestsTests
     public void The_views_flatten_the_documents_and_agree_with_the_published_ones()
     {
         var ctx = ProjectContext.Load(Project());
-        using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, null).Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version);
+        using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, null).Select(d => new MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), ProductInfo.Version);
         List<string> Rows(string sql)
         {
             var run = db.Run(sql, 1000);
@@ -106,23 +106,22 @@ public class ProjectTestsTests
         }
 
         foreach (var view in MetadataDatabase.Names) Rows($"SELECT * FROM {view}");                                   // every view runs
-        Assert.Equal(["connection", "model", "column_name", "logical_type", "nullable", "collation", "sqlserver_type", "postgres_type", "fabric_type", "inferred_nullability", "upstream", "kind"],
+        Assert.Equal(["connection", "model", "column_name", "logical_type", "nullable", "collation", "sqlserver_type", "postgres_type", "fabric_type", "inferred_nullability", "upstream", "model_kind"],
             db.Run("SELECT * FROM metadata_columns LIMIT 1", 1).Columns);                                              // the names of the view `init` creates in a target
 
-        Assert.Equal(["project|project", "source|staging.orders", "model|marts.fct_orders"], Rows("SELECT kind, subject FROM metadata_current ORDER BY CASE kind WHEN 'project' THEN 0 WHEN 'source' THEN 1 ELSE 2 END"));
-        Assert.Equal(["marts.fct_orders|note2|VARCHAR|nvarchar(max)|model"], Rows("SELECT model, column_name, logical_type, sqlserver_type, kind FROM metadata_columns WHERE column_name = 'note2'"));
-        Assert.Equal(new[] { "staging.orders|order_id|BIGINT|False|source", "marts.fct_orders|order_id|BIGINT|False|model" }.Order(), Rows("SELECT model, column_name, logical_type, nullable, kind FROM metadata_columns WHERE column_name = 'order_id'").Order());
-        Assert.Equal(["marts.fct_orders|incremental_by_unique_key|[order_id]|[order_id]|[sqlserver]|3"], Rows("SELECT model, kind, unique_key, grain, connections, column_count FROM metadata_models"));
-        Assert.Equal(["staging.orders|[order_id]|[marts.fct_orders]|3"], Rows("SELECT source, grain, consumers, column_count FROM metadata_sources"));
+        Assert.Equal(["project|project|∅", "model|staging.orders|mapped", "model|marts.fct_orders|incremental_by_unique_key"], Rows("SELECT subject_kind, subject, model_kind FROM metadata_current ORDER BY CASE subject_kind WHEN 'project' THEN 0 ELSE 1 END, subject DESC"));
+        Assert.Equal(["marts.fct_orders|note2|VARCHAR|nvarchar(max)|incremental_by_unique_key"], Rows("SELECT model, column_name, logical_type, sqlserver_type, model_kind FROM metadata_columns WHERE column_name = 'note2'"));
+        Assert.Equal(new[] { "staging.orders|order_id|BIGINT|False|mapped", "marts.fct_orders|order_id|BIGINT|False|incremental_by_unique_key" }.Order(), Rows("SELECT model, column_name, logical_type, nullable, model_kind FROM metadata_columns WHERE column_name = 'order_id'").Order());
+        Assert.Equal(["marts.fct_orders|incremental_by_unique_key|[order_id]|[order_id]|[sqlserver]|3", "staging.orders|mapped|∅|[order_id]|[sqlserver]|3"], Rows("SELECT model, kind, unique_key, grain, connections, column_count FROM metadata_models ORDER BY model"));      // one view for the models of every kind
         Assert.Equal(["marts.fct_orders|staging.orders|mapped"], Rows("SELECT model, upstream, upstream_kind FROM metadata_upstream"));
-        Assert.Equal(["staging.orders|IX_orders_amount|[amount]|False|[note]"], Rows("SELECT source, index_name, columns, is_unique, include FROM metadata_source_indexes"));
-        Assert.Equal(["staging.orders|FK_orders_self|[order_id]|staging.orders|[order_id]"], Rows("SELECT source, foreign_key_name, columns, referenced_table, referenced_columns FROM metadata_source_foreign_keys"));
+        Assert.Equal(["staging.orders|IX_orders_amount|[amount]|False|[note]"], Rows("SELECT model, index_name, columns, is_unique, include FROM metadata_indexes WHERE model = 'staging.orders'"));
+        Assert.Equal(["staging.orders|FK_orders_self|[order_id]|staging.orders|[order_id]"], Rows("SELECT model, foreign_key_name, columns, referenced_table, referenced_columns FROM metadata_foreign_keys"));
         Assert.Equal(["marts.fct_orders|note2|expression|staging.orders|note"], Rows("SELECT model, column_name, transform, upstream_table, upstream_column FROM metadata_lineage WHERE column_name = 'note2'"));
-        Assert.Equal(["marts.fct_orders|ux_fct_orders_order_id|[order_id]|True"], Rows("SELECT model, index_name, columns, is_unique FROM metadata_indexes"));
+        Assert.Equal(["marts.fct_orders|ux_fct_orders_order_id|[order_id]|True"], Rows("SELECT model, index_name, columns, is_unique FROM metadata_indexes WHERE model = 'marts.fct_orders'"));
         Assert.Equal(["marts.fct_orders|note2|sqlserver|nvarchar(max)"], Rows("SELECT model, column_name, connection, native_type FROM metadata_native_types WHERE column_name = 'note2'"));
         Assert.Equal(["marts.fct_orders|sqlserver|default|delete_insert_by_key"], Rows("SELECT model, connection, operation, strategy FROM metadata_loads"));
         Assert.Equal(["marts.fct_orders|sqlserver|grant|post_create|hooks/grant.sql"], Rows("SELECT model, connection, hook_name, event, script FROM metadata_hooks"));
-        Assert.Equal([1], Rows("SELECT count(*) FROM metadata_current WHERE kind = 'model' AND document_hash IS NOT NULL").Select(int.Parse));
+        Assert.Equal([1], Rows("SELECT count(*) FROM metadata_current WHERE model_kind = 'incremental_by_unique_key' AND document_hash IS NOT NULL").Select(int.Parse));
     }
 
     // ---- the command ----
@@ -132,7 +131,7 @@ public class ProjectTestsTests
     {
         var dir = Project(
             ("passes.sql", "SELECT model FROM metadata_models WHERE len(grain) = 0\n"),
-            ("naming/no_unlimited.sql", "-- description: Declare a length\n-- severity: warning\n-- tags: naming\nSELECT model, column_name FROM metadata_columns WHERE kind = 'model' AND logical_type = 'VARCHAR'\n"),
+            ("naming/no_unlimited.sql", "-- description: Declare a length\n-- severity: warning\n-- tags: naming\nSELECT model, column_name FROM metadata_columns WHERE model_kind NOT IN ('mapped', 'native') AND logical_type = 'VARCHAR'\n"),
             ("grain_is_the_key.sql", "-- tags: critical\nSELECT model FROM metadata_models WHERE grain <> unique_key\n"));
         var (exit, doc, err) = Test(dir);
         Assert.Equal(0, exit);                                                                                // a warning does not fail the run

@@ -13,7 +13,7 @@ public sealed class ModelGraph
 {
     private readonly Dictionary<string, UpstreamTable> tables = new(StringComparer.OrdinalIgnoreCase);
 
-    public ModelGraph(IEnumerable<ModelDefinition> models, IEnumerable<SourceDescriptor> sources)
+    public ModelGraph(IEnumerable<ModelDefinition> models, IEnumerable<DeclaredModel> sources)
     {
         foreach (var m in models) tables[m.Name] = new UpstreamTable(m.Name, m.Columns, m.Grain, IsModel: true);
         foreach (var s in sources) tables.TryAdd(s.Name, new UpstreamTable(s.Name, s.Columns, s.Grain, IsModel: false));

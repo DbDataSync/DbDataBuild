@@ -4,7 +4,7 @@ using DbDataBuild.Models.Yaml;
 namespace DbDataBuild.Models;
 
 /// <summary>A valid model definition with the project-relative paths of its two files.</summary>
-public sealed record ModelSource(ModelDefinition Definition, string DefinitionFile, string QueryFile)
+public sealed record BuiltModel(ModelDefinition Definition, string DefinitionFile, string QueryFile)
 {
     /// <summary>The query of a model that has none on disk: a copy reads its generated staging table (DuckDB dialect). Null for a model with a `.sql` file.</summary>
     public string? GeneratedQuery { get; init; }
@@ -69,23 +69,23 @@ public sealed record ModelSource(ModelDefinition Definition, string DefinitionFi
 public sealed record SettingOrigin(string Path, string File, int Line, string Value);
 
 public sealed record ProjectValidationResult(
-    IReadOnlyList<ModelSource> Sources, IReadOnlyList<Diagnostic> Diagnostics, IReadOnlyList<SourceDescriptor>? SourceDescriptors = null, MacroLibrary? MacroFiles = null)
+    IReadOnlyList<BuiltModel> BuiltModels, IReadOnlyList<Diagnostic> Diagnostics, IReadOnlyList<DeclaredModel>? DeclaredAndStaging = null, MacroLibrary? MacroFiles = null)
 {
     /// <summary>The macros and types of the project (`macros/`), for every binding of a model's query.</summary>
     public MacroLibrary Macros => MacroFiles ?? MacroLibrary.Empty;
 
     /// <summary>The mapped models of the project, as files (native models are listed apart).</summary>
-    public IReadOnlyList<SourceDescriptor> Descriptors => (SourceDescriptors ?? []).Where(d => !d.IsGenerated && !d.IsNative).ToList();
+    public IReadOnlyList<DeclaredModel> MappedModels => (DeclaredAndStaging ?? []).Where(d => !d.IsGenerated && !d.IsNative).ToList();
 
     /// <summary>The native models of the project: tables computed by an engine-native query.</summary>
-    public IReadOnlyList<SourceDescriptor> NativeModels => (SourceDescriptors ?? []).Where(d => d.IsNative).ToList();
+    public IReadOnlyList<DeclaredModel> NativeModels => (DeclaredAndStaging ?? []).Where(d => d.IsNative).ToList();
 
     /// <summary>Every descriptor that is a file of the project (mapped and native; not a generated staging table).</summary>
-    public IReadOnlyList<SourceDescriptor> FileDescriptors => (SourceDescriptors ?? []).Where(d => !d.IsGenerated).ToList();
+    public IReadOnlyList<DeclaredModel> DeclaredModels => (DeclaredAndStaging ?? []).Where(d => !d.IsGenerated).ToList();
 
     /// <summary>Everything a query binds against: the mapped models and the staging tables that copies read from.</summary>
-    public IReadOnlyList<SourceDescriptor> AllDescriptors => SourceDescriptors ?? [];
-    public IReadOnlyList<ModelDefinition> Models => Sources.Select(s => s.Definition).ToList();
+    public IReadOnlyList<DeclaredModel> DeclaredModelsAndStaging => DeclaredAndStaging ?? [];
+    public IReadOnlyList<ModelDefinition> Models => BuiltModels.Select(s => s.Definition).ToList();
     public bool HasErrors => Diagnostics.Any(d => d.Severity == Severity.Error);
 }
 
@@ -113,8 +113,8 @@ public static class ProjectValidator
         var effectiveConfig = config ?? ProjectConfigLoader.LoadFromProject(projectRoot, new List<Diagnostic>());
         // the connections a model may name come from the project's configuration (a problem in the configuration itself is reported where the configuration is loaded)
         var connections = effectiveConfig.Connections.Keys.ToHashSet(StringComparer.Ordinal);
-        var models = new List<ModelSource>();
-        var descriptors = new List<SourceDescriptor>();
+        var models = new List<BuiltModel>();
+        var descriptors = new List<DeclaredModel>();
         var macros = MacroLibrary.Load(projectRoot, diags);
         if (Directory.Exists(Path.Combine(projectRoot, RetiredSourcesDir)))
             diags.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(RetiredSourcesDir, 0, 0),
@@ -143,7 +143,7 @@ public static class ProjectValidator
         var declared = new List<(string Name, string File)>();               // every model, mapped model and copy by the name its definition gives it
         // the parameters each file sees from the project files above it: the root's, overridden by each folder's, and the connection parameters the folders override
         var parameterFiles = new Dictionary<string, (IReadOnlyDictionary<string, ParameterValue> Project, IReadOnlyDictionary<string, IReadOnlyDictionary<string, ParameterValue>> Connections)>(StringComparer.Ordinal);
-        ModelSource WithParameters(ModelSource s) => parameterFiles.TryGetValue(s.DefinitionFile, out var p) ? s with { ProjectParameters = p.Project, ConnectionParameterOverrides = p.Connections } : s;
+        BuiltModel WithParameters(BuiltModel s) => parameterFiles.TryGetValue(s.DefinitionFile, out var p) ? s with { ProjectParameters = p.Project, ConnectionParameterOverrides = p.Connections } : s;
 
         foreach (var file in files.Where(f => f.EndsWith(".yml", StringComparison.Ordinal)))
         {
@@ -208,12 +208,12 @@ public static class ProjectValidator
                 var merged = YamlMerge.Merge(headLayer == null ? [.. above, new YamlLayer(file, own)] : [.. above, headLayer, new YamlLayer(file, own)], ModelDefinitionLoader.LayeredKeys, diags);
                 if (diags.Count > before) continue;
                 var kindName = ModelKindShape.NameOf(merged.Root.Get("kind"));
-                if (kindName is SourceDescriptorLoader.MappedKind or NativeQuery.Kind)
+                if (kindName is DeclaredModelLoader.MappedKind or NativeQuery.Kind)
                 {
                     mappedStems.Add(stem);
                     if (kindName == NativeQuery.Kind) nativeStems.Add(stem);
                     var nativeFile = set.Contains(stem + ".native.sql") ? File.ReadAllText(Path.Combine(projectRoot, stem + ".native.sql")) : null;
-                    if (SourceDescriptorLoader.LoadMerged(merged, file, expected, diags, connections, nativeFile) is { } mapped)
+                    if (DeclaredModelLoader.LoadMerged(merged, file, expected, diags, connections, nativeFile) is { } mapped)
                     {
                         CheckLayout(effectiveConfig.Layout, file, mapped.Name, diags);
                         WarnOldKindForm(merged, file, oldKindWarned, diags);
@@ -234,7 +234,7 @@ public static class ProjectValidator
                     CheckRefreshPlans(def, file, effectiveConfig, diags);
                     CheckDestinations(def, file, effectiveConfig, diags);
                     if (isCopy) copies.Add((def, file));
-                    else models.Add(WithParameters(new ModelSource(def, file, stem + ".sql") { Inherited = Inherited(merged, file, stem + ".sql"), Head = head }));
+                    else models.Add(WithParameters(new BuiltModel(def, file, stem + ".sql") { Inherited = Inherited(merged, file, stem + ".sql"), Head = head }));
                 }
                 continue;
             }
@@ -284,7 +284,7 @@ public static class ProjectValidator
     /// A copy has the columns (and the grain, unless it names its own) of the model it copies, found among the project's models, mapped models and other copies. The origin must be on one connection and
     /// the copy on others: a copy moves rows between connections. Each resolved copy gets its generated query and the staging table it reads declared as a generated mapped table.
     /// </summary>
-    private static void ResolveCopies(List<(ModelDefinition Definition, string File)> copies, List<ModelSource> models, List<SourceDescriptor> descriptors, ProjectConfig config, List<Diagnostic> diags, Func<ModelSource, ModelSource> withParameters)
+    private static void ResolveCopies(List<(ModelDefinition Definition, string File)> copies, List<BuiltModel> models, List<DeclaredModel> descriptors, ProjectConfig config, List<Diagnostic> diags, Func<BuiltModel, BuiltModel> withParameters)
     {
         var pending = copies.ToDictionary(c => c.Definition.Name, c => c, StringComparer.OrdinalIgnoreCase);
         var done = new Dictionary<string, ModelDefinition>(StringComparer.OrdinalIgnoreCase);
@@ -342,7 +342,7 @@ public static class ProjectValidator
                 problem = $"The slice's value `{def.Slice.Value}` is the same for every origin of `{def.From}`; it has to differ, for example `${{origin.store_id}}`.";
             if (problem == null && def.Slice != null)
             {
-                var seen = withParameters(new ModelSource(def, c.File, c.File));
+                var seen = withParameters(new BuiltModel(def, c.File, c.File));
                 foreach (System.Text.RegularExpressions.Match r in ParameterReferences.Pattern.Matches(def.Slice.Value))
                 {
                     var (scope, pname) = (r.Groups[1].Value, r.Groups[2].Value);
@@ -398,7 +398,7 @@ public static class ProjectValidator
         {
             var resolved = Resolve(c, [c.Definition.Name]);
             if (resolved == null) continue;
-            models.Add(withParameters(new ModelSource(resolved, c.File, c.File) { GeneratedQuery = resolved.LocalCopy ? CopyModels.LocalQuery(resolved) : CopyModels.Query(config, resolved) }));
+            models.Add(withParameters(new BuiltModel(resolved, c.File, c.File) { GeneratedQuery = resolved.LocalCopy ? CopyModels.LocalQuery(resolved) : CopyModels.Query(config, resolved) }));
             if (!resolved.LocalCopy) descriptors.Add(CopyModels.StagingDescriptor(config, resolved, resolved.Columns));
         }
     }
@@ -409,7 +409,7 @@ public static class ProjectValidator
     /// What a native model needs beyond its text: exactly one connection (the text is in that engine's dialect), a form its engine can inline (T-SQL takes no WITH inside a derived table), parameter references
     /// that exist, and the parameters its file sees from the project files above it.
     /// </summary>
-    private static SourceDescriptor CheckNative(SourceDescriptor d, string file, IReadOnlyDictionary<string, ParameterValue> project, Dictionary<string, Dictionary<string, ParameterValue>> overrides, ProjectConfig config, List<Diagnostic> diags)
+    private static DeclaredModel CheckNative(DeclaredModel d, string file, IReadOnlyDictionary<string, ParameterValue> project, Dictionary<string, Dictionary<string, ParameterValue>> overrides, ProjectConfig config, List<Diagnostic> diags)
     {
         var native = d.Native! with { };
         native = native with { };

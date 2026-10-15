@@ -11,7 +11,7 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class SampleCommand
 {
-    public static int Run(CommandSpec spec, string projectRoot, string[] models, int rows, int seed, int limit, int? scale, string? dataDir, bool showSources, TextWriter output, TextWriter error)
+    public static int Run(CommandSpec spec, string projectRoot, string[] models, int rows, int seed, int limit, int? scale, string? dataDir, bool showDeclared, TextWriter output, TextWriter error)
     {
         output.WriteLine($"{ProductInfo.Cli} {spec.Name}  |  effect: {spec.Effect.Describe()}  |  {spec.Marks}  |  connection: none");
         if (rows < 1 || rows > 100_000) { error.WriteLine("--rows must be between 1 and 100000."); return CliApp.ExitUsage; }
@@ -23,13 +23,13 @@ internal static class SampleCommand
         if (selected == null) return CliApp.ExitUsage;
         if (selected.Count == 0) { error.WriteLine("The project has no valid models."); return CliApp.ExitUsage; }
 
-        var plain = ctx.Project.Sources.Select(s =>
+        var plain = ctx.Project.BuiltModels.Select(s =>
         {
             var sql = s.ReadQueryWithValues(projectRoot, ctx.Config, ctx.TargetsOf(s.Definition)[0]);
             return (Source: s, Sql: sql, Upstream: ctx.BaseTablesOf(s, sql).ToList());
         }).ToList();
         // the models the run needs: the selected ones and everything they read
-        var needed = new HashSet<string>(selected.Select(m => m.Source.Definition.Name), StringComparer.OrdinalIgnoreCase);
+        var needed = new HashSet<string>(selected.Select(m => m.Model.Definition.Name), StringComparer.OrdinalIgnoreCase);
         for (var grew = true; grew;)
         {
             grew = false;
@@ -40,15 +40,15 @@ internal static class SampleCommand
         var all = plain.Select(p =>
         {
             var (sql, collation, notes) = needed.Contains(p.Source.Definition.Name) ? ctx.StringEmulation(p.Source, p.Sql) : (p.Sql, null, []);
-            return new SampleModel(p.Source.Definition.Name, p.Source.Definition.Columns, sql, p.Upstream, collation, notes);
+            return new SampleModel(p.Source.Definition.Name, p.Source.Definition.Columns, sql, p.Upstream, collation, notes) { Kind = p.Source.Definition.Kind };
         }).ToList();
 
         SampleResult result;
-        try { result = SampleRun.Run(ctx.Project.AllDescriptors, all, selected.Select(m => m.Source.Definition.Name).ToList(), new SampleOptions(rows, seed, limit, dataDir, SeedLoader.Load(projectRoot), scale, ctx.Project.Macros.PreludeFor(all.Select(m => m.Sql)))); }
+        try { result = SampleRun.Run(ctx.Project.DeclaredModelsAndStaging, all, selected.Select(m => m.Model.Definition.Name).ToList(), new SampleOptions(rows, seed, limit, dataDir, SeedLoader.Load(projectRoot), scale, ctx.Project.Macros.PreludeFor(all.Select(m => m.Sql)))); }
         catch (SampleException ex) { error.WriteLine(ex.Message); return CliApp.ExitFindings; }
 
-        var tables = result.Tables.Where(t => t.Kind == "model" || showSources || t.Error != null).ToList();
-        output.Payload("rows_per_source", rows);
+        var tables = result.Tables.Where(t => ModelKinds.IsBuilt(t.Kind) || showDeclared || t.Error != null).ToList();
+        output.Payload("rows_per_declared_model", rows);
         output.Payload("seed", seed);
         output.Payload("scale", scale);
         output.Payload("limit", limit);
@@ -69,7 +69,7 @@ internal static class SampleCommand
             if (t.RowCount > t.Rows.Count) output.WriteLine($"  ... {t.RowCount - t.Rows.Count} more row(s); --limit shows more.");
         }
         output.WriteLine();
-        output.WriteLine(failed == 0 ? $"OK: {tables.Count(t => t.Kind == "model")} model(s) ran on sample data (seed {seed})." : $"FAILED: {failed} table(s) did not run.");
+        output.WriteLine(failed == 0 ? $"OK: {tables.Count(t => ModelKinds.IsBuilt(t.Kind))} model(s) ran on sample data (seed {seed})." : $"FAILED: {failed} table(s) did not run.");
         return failed == 0 ? CliApp.ExitOk : CliApp.ExitFindings;
     }
 

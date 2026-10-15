@@ -10,6 +10,21 @@ public static class ModelKinds
     /// <summary>A table filled by copying the rows of another model that lives on another connection: no query, the columns are the origin's, always persisted.</summary>
     public const string Copy = "copy";
     public static readonly IReadOnlyList<string> All = [View, Full, IncrementalByUniqueKey, IncrementalByTimeRange, Copy];
+
+    /// <summary>A model that maps a table that exists: the tool declares its columns and never creates it.</summary>
+    public const string Mapped = "mapped";
+
+    /// <summary>A model whose rows an engine-native query computes: declared columns, never built.</summary>
+    public const string Native = "native";
+
+    /// <summary>The two kinds the tool declares and does not build.</summary>
+    public static readonly IReadOnlyList<string> Declared = [Mapped, Native];
+
+    /// <summary>All seven kinds, the built ones first.</summary>
+    public static readonly IReadOnlyList<string> Every = [.. All, .. Declared];
+
+    /// <summary>True for a kind the tool builds (it has a query or an origin to load from).</summary>
+    public static bool IsBuilt(string kind) => All.Contains(kind);
 }
 
 public static class TargetNames

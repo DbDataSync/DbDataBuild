@@ -4,7 +4,7 @@ namespace DbDataBuild.Cli;
 
 /// <summary>
 /// `dbdatabuild project create` (effect: repo files only; DESIGN.md 15.7). Without a template name it lists the project templates built into the executable. With one it writes that project into a directory (default: a
-/// directory named after the template): models, sources, seeds that generate the source data, tests and a README, ready to `validate`, `seed`, `sample` and `test` with nothing else installed. It never overwrites a file.
+/// directory named after the template): models, mapped models, seeds that generate their rows, tests and a README, ready to `validate`, `seed`, `sample` and `test` with nothing else installed. It never overwrites a file.
 /// </summary>
 internal static class NewCommand
 {

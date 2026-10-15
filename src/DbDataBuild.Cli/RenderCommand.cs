@@ -44,8 +44,8 @@ internal static class RenderCommand
         var rendered = new List<(LoadedModel Model, RenderResult Render, IReadOnlyList<string> Targets)>();
         foreach (var m in selected)
         {
-            var modelTargets = ctx.TargetsOf(m.Source.Definition).Where(t => targets.Length == 0 || targets.Contains(t)).ToList();
-            var (result, _) = ctx.RenderModel(m.Source, m.Sql, modelTargets);
+            var modelTargets = ctx.TargetsOf(m.Model.Definition).Where(t => targets.Length == 0 || targets.Contains(t)).ToList();
+            var (result, _) = ctx.RenderModel(m.Model, m.Sql, modelTargets);
             files.AddRange(result.Files);
             diags.AddRange(result.Diagnostics);
             rendered.Add((m, result, modelTargets));
@@ -107,8 +107,8 @@ internal static class RenderCommand
         foreach (var m in selected)
         {
             foreach (var t in connections.Where(t => targets.Length == 0 || targets.Contains(t)))
-                scope.Add($"{t}/{m.Source.Definition.Name}");
-            scope.Add($"lowered/{m.Source.Definition.Name}");
+                scope.Add($"{t}/{m.Model.Definition.Name}");
+            scope.Add($"lowered/{m.Model.Definition.Name}");
         }
         if (whole && Directory.Exists(renderedRoot))
             foreach (var targetDir in Directory.EnumerateDirectories(renderedRoot))
@@ -202,14 +202,14 @@ internal static class RenderCommand
         var diags = new List<Diagnostic>();
         foreach (var m in ctx.Select([], error)!)
         {
-            var def = m.Source.Definition;
+            var def = m.Model.Definition;
             var targets = ctx.TargetsOf(def);
             if (def.Kind == ModelKinds.View)
             {
                 rows.Add([def.Name, string.Join(", ", targets), "-", "-", "-", "view: DDL only"]);
                 continue;
             }
-            var (result, _) = ctx.RenderModel(m.Source, m.Sql, targets);
+            var (result, _) = ctx.RenderModel(m.Model, m.Sql, targets);
             diags.AddRange(result.Diagnostics);
             foreach (var o in result.Operations.OrderBy(o => o.Target, StringComparer.Ordinal).ThenBy(o => o.Operation, StringComparer.Ordinal))
                 rows.Add([o.Model, o.Target, o.Operation, o.Strategy, o.IsDefault ? "default" : "", o.Status + (o.Findings.Count > 0 ? $" ({string.Join(", ", o.Findings)})" : "")]);

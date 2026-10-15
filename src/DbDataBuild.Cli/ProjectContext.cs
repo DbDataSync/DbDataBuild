@@ -6,7 +6,7 @@ using DbDataBuild.Targets.Rendering;
 
 namespace DbDataBuild.Cli;
 
-internal sealed record LoadedModel(ModelSource Source, string Sql);
+internal sealed record LoadedModel(BuiltModel Model, string Sql);
 
 /// <summary>Everything an offline command needs from a project: models, sources, config, the matrix and a renderer.</summary>
 internal sealed class ProjectContext
@@ -31,17 +31,17 @@ internal sealed class ProjectContext
         var matrix = MatrixLoader.LoadEmbedded(matrixDiags);
         if (matrixDiags.Count > 0) throw new InvalidOperationException("The embedded support matrix is invalid: " + string.Join("; ", matrixDiags.Select(d => d.Found)));
         var linter = new MatrixLinter(matrix);
-        return new ProjectContext { Root = root, Project = project, Config = config, Matrix = matrix, Linter = linter, Renderer = new LoadRenderer(matrix, linter, config), Diagnostics = diags, Lowering = new ModelLowering(project.Models, project.AllDescriptors, config, project.Macros) };
+        return new ProjectContext { Root = root, Project = project, Config = config, Matrix = matrix, Linter = linter, Renderer = new LoadRenderer(matrix, linter, config), Diagnostics = diags, Lowering = new ModelLowering(project.Models, project.DeclaredModelsAndStaging, config, project.Macros) };
     }
 
     /// <summary>
     /// Renders a model's load operations. With lowering on, the query is bound by DuckDB and lowered first, the matrix lint and the transpile work on the lowered query,
     /// and the lowered artifact is one of the files; a query that cannot be lowered renders nothing and says why (DDB-324).
     /// </summary>
-    public (RenderResult Result, string BodySql) RenderModel(ModelSource source, string authorSql, IReadOnlyList<string> targets)
+    public (RenderResult Result, string BodySql) RenderModel(BuiltModel built, string authorSql, IReadOnlyList<string> targets)
     {
-        var variants = source.QueryVariants(Root, Config, targets);
-        if (variants.Count == 1) return RenderVariant(source, variants[0].Variant == null ? authorSql : variants[0].Sql, variants[0].Targets, variants[0].Variant);
+        var variants = built.QueryVariants(Root, Config, targets);
+        if (variants.Count == 1) return RenderVariant(built, variants[0].Variant == null ? authorSql : variants[0].Sql, variants[0].Targets, variants[0].Variant);
         // the model names something by a parameter that is not the same on all its connections: each group of connections that reads the same query is lowered and rendered on its own
         var files = new List<RenderedFile>();
         var operations = new List<OperationReport>();
@@ -49,7 +49,7 @@ internal sealed class ProjectContext
         var loads = new List<RenderedOperation>();
         foreach (var v in variants)
         {
-            var (part, _) = RenderVariant(source, v.Sql, v.Targets, v.Variant);
+            var (part, _) = RenderVariant(built, v.Sql, v.Targets, v.Variant);
             files.AddRange(part.Files);
             operations.AddRange(part.Operations);
             diagnostics.AddRange(part.Diagnostics);
@@ -59,18 +59,18 @@ internal sealed class ProjectContext
     }
 
     /// <summary>The distinct texts a model's query has on its connections (one, for a model that names nothing by a parameter).</summary>
-    public IReadOnlyList<string> QueryVariants(ModelSource source) =>
-        source.QueryVariants(Root, Config, TargetsOf(source.Definition)).Select(v => v.Sql).ToList();
+    public IReadOnlyList<string> QueryVariants(BuiltModel built) =>
+        built.QueryVariants(Root, Config, TargetsOf(built.Definition)).Select(v => v.Sql).ToList();
 
-    private (RenderResult Result, string BodySql) RenderVariant(ModelSource source, string authorSql, IReadOnlyList<string> targets, string? variant)
+    private (RenderResult Result, string BodySql) RenderVariant(BuiltModel built, string authorSql, IReadOnlyList<string> targets, string? variant)
     {
-        var parameters = source.QueryParameterList(Root, Config);
-        if (!Lowering.Enabled) return (InputCompiler.Attach(this, source, Renderer.Render(source.Definition, authorSql, source.QueryFile, targets, queryParameters: parameters, natives: Lowering.NativeUsesFor(authorSql))), authorSql);
-        var (lowered, error) = Lowering.Lower(source, authorSql, parameters, variant);
+        var parameters = built.QueryParameterList(Root, Config);
+        if (!Lowering.Enabled) return (InputCompiler.Attach(this, built, Renderer.Render(built.Definition, authorSql, built.QueryFile, targets, queryParameters: parameters, natives: Lowering.NativeUsesFor(authorSql))), authorSql);
+        var (lowered, error) = Lowering.Lower(built, authorSql, parameters, variant);
         if (lowered == null) return (new RenderResult([], [], [error!]), authorSql);
-        var result = Renderer.Render(source.Definition, lowered.Sql, source.QueryFile, targets, bodyFile: $"rendered/{lowered.ArtifactPath}", queryParameters: parameters, natives: Lowering.NativeUsesFor(lowered.Sql));
+        var result = Renderer.Render(built.Definition, lowered.Sql, built.QueryFile, targets, bodyFile: $"rendered/{lowered.ArtifactPath}", queryParameters: parameters, natives: Lowering.NativeUsesFor(lowered.Sql));
         var files = result.Files.Append(new RenderedFile(lowered.ArtifactPath, lowered.ArtifactText)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
-        return (InputCompiler.Attach(this, source, result with { Files = files }), lowered.Sql);
+        return (InputCompiler.Attach(this, built, result with { Files = files }), lowered.Sql);
     }
 
     /// <summary>
@@ -80,14 +80,14 @@ internal sealed class ProjectContext
     public IReadOnlyList<DbDataBuild.Planning.CopyOrigin> OriginsOf(ModelDefinition model, string destination)
     {
         if (!model.IsCopy || model.LocalCopy || model.From == null) return [];
-        var connections = Project.Models.FirstOrDefault(m => string.Equals(m.Name, model.From, StringComparison.OrdinalIgnoreCase)) is { } built
-            ? built.Targets ?? Config.DefaultConnections
-            : Project.FileDescriptors.FirstOrDefault(d => string.Equals(d.Name, model.From, StringComparison.OrdinalIgnoreCase))?.Connections ?? Config.DefaultConnections;
-        var source = Project.Sources.FirstOrDefault(s => s.Definition.Name == model.Name);
-        string? Value(string origin) => model.Slice == null || source == null ? model.Slice?.Value : ParameterReferences.Substitute(model.Slice.Value, (scope, name) => scope switch
+        var connections = Project.Models.FirstOrDefault(m => string.Equals(m.Name, model.From, StringComparison.OrdinalIgnoreCase)) is { } originModel
+            ? originModel.Targets ?? Config.DefaultConnections
+            : Project.DeclaredModels.FirstOrDefault(d => string.Equals(d.Name, model.From, StringComparison.OrdinalIgnoreCase))?.Connections ?? Config.DefaultConnections;
+        var built = Project.BuiltModels.FirstOrDefault(s => s.Definition.Name == model.Name);
+        string? Value(string origin) => model.Slice == null || built == null ? model.Slice?.Value : ParameterReferences.Substitute(model.Slice.Value, (scope, name) => scope switch
         {
-            "origin" => source.ParametersFor(Config, origin).GetValueOrDefault($"connection.{name}")?.Value,
-            _ => source.ParametersFor(Config, destination).GetValueOrDefault($"{scope}.{name}")?.Value,
+            "origin" => built.ParametersFor(Config, origin).GetValueOrDefault($"connection.{name}")?.Value,
+            _ => built.ParametersFor(Config, destination).GetValueOrDefault($"{scope}.{name}")?.Value,
         });
         var native = Project.NativeModels.FirstOrDefault(n => string.Equals(n.Name, model.From, StringComparison.OrdinalIgnoreCase));
         var use = native == null ? null : NativeInline.Prepare(native, Config);
@@ -98,13 +98,13 @@ internal sealed class ProjectContext
     /// The tables a model's query reads. The names in its text, and, when it calls a macro of the project, the tables of the bound plan (DuckDB has expanded the macro by then, so a table that is only
     /// an argument, `snapshot_at('snap.orders', ...)`, is there). The macro's own name is not a table.
     /// </summary>
-    public IReadOnlyList<string> BaseTablesOf(ModelSource source, string sql)
+    public IReadOnlyList<string> BaseTablesOf(BuiltModel built, string sql)
     {
         var macros = Project.Macros;
         var named = (QueryAnalyzer.Analyze(sql).Facts?.BaseTables.Select(t => t.QualifiedName) ?? []).ToList();
         var (called, mentioned) = macros.ReachedBy(sql);
         if (called.Count == 0 && mentioned.Count == 0) return named;
-        var scanned = Lowering.TablesRead(source, sql, source.QueryParameterList(Root, Config)) ?? [];
+        var scanned = Lowering.TablesRead(built, sql, built.QueryParameterList(Root, Config)) ?? [];
         return named.Where(n => !called.Contains(n, StringComparer.OrdinalIgnoreCase)).Concat(scanned).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -112,10 +112,10 @@ internal sealed class ProjectContext
     /// The text lineage and nullability are read from: the query as written, or, for one that calls macros, the lowered query (what DuckDB expanded the macros to), which is plain SQL on real tables, so the
     /// analyzer follows each output column through the macro to the column it comes from. Falls back to the written query when it cannot be lowered (its error is reported where it is lowered).
     /// </summary>
-    public string AnalysisSql(ModelSource source, string sql)
+    public string AnalysisSql(BuiltModel built, string sql)
     {
         if (!Lowering.Enabled || !Lowering.ReachesMacros(sql)) return sql;
-        return Lowering.Lower(source, sql, source.QueryParameterList(Root, Config)).Model?.Sql ?? sql;
+        return Lowering.Lower(built, sql, built.QueryParameterList(Root, Config)).Model?.Sql ?? sql;
     }
 
     private static readonly System.Text.RegularExpressions.Regex SafeCollation = new(@"^[A-Za-z0-9_.\-]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -125,9 +125,9 @@ internal sealed class ProjectContext
     /// profile ignores trailing spaces, the lowered query with `rtrim()` where it matters. What was done is returned as notes, so a run never hides it. Falls back to the query as written, with a note, when it
     /// cannot be lowered.
     /// </summary>
-    public (string Sql, string? Collation, IReadOnlyList<string> Notes) StringEmulation(ModelSource source, string valuesSql)
+    public (string Sql, string? Collation, IReadOnlyList<string> Notes) StringEmulation(BuiltModel built, string valuesSql)
     {
-        var connection = TargetsOf(source.Definition).FirstOrDefault();
+        var connection = TargetsOf(built.Definition).FirstOrDefault();
         if (connection == null) return (valuesSql, null, []);
         var semantics = Config.SemanticsOf(connection);
         var notes = new List<string>();
@@ -140,7 +140,7 @@ internal sealed class ProjectContext
             if (!Lowering.Enabled) notes.Add("trailing spaces are not ignored in this run: lowering is off, so the query is run as written");
             else
             {
-                var (lowered, error) = Lowering.LowerForDuckDb(source, valuesSql);
+                var (lowered, error) = Lowering.LowerForDuckDb(built, valuesSql);
                 if (lowered != null) { sql = lowered; trailing = "; trailing spaces ignored (rtrim in comparisons, joins, GROUP BY, DISTINCT, window partitions; not in set operations, count(DISTINCT) or LIKE)"; }
                 else notes.Add($"trailing spaces are not ignored in this run: the query could not be lowered ({error})");
             }
@@ -150,12 +150,12 @@ internal sealed class ProjectContext
     }
 
     /// <summary>What binding a query that calls macros needs (null for one that does not): the macros it reaches and the tables its bound plan scans.</summary>
-    public DbDataBuild.Define.MacroSupport? MacroSupportFor(ModelSource source, string sql)
+    public DbDataBuild.Define.MacroSupport? MacroSupportFor(BuiltModel built, string sql)
     {
         var (called, mentioned) = Project.Macros.ReachedBy(sql);
         if (called.Count == 0 && mentioned.Count == 0) return null;
-        var scanned = Lowering.TablesRead(source, sql, source.QueryParameterList(Root, Config)) ?? [];
-        return new DbDataBuild.Define.MacroSupport(Project.Macros.PreludeFor([sql]), scanned, called, AnalysisSql(source, sql));
+        var scanned = Lowering.TablesRead(built, sql, built.QueryParameterList(Root, Config)) ?? [];
+        return new DbDataBuild.Define.MacroSupport(Project.Macros.PreludeFor([sql]), scanned, called, AnalysisSql(built, sql));
     }
 
     /// <summary>
@@ -198,97 +198,70 @@ internal sealed class ProjectContext
     /// <summary>Which tables each model reads, from parsing the queries (names only; no DuckDB, no target).</summary>
     public DependencyGraph Graph => graph ??= ProjectGraph.Build(this);
 
+    private IReadOnlyList<ProjectModel>? models;
+
+    /// <summary>Every model of the project, built and declared (all seven kinds), as the selectors, the graph, the counts and the interfaces see them.</summary>
+    public IReadOnlyList<ProjectModel> Models => models ??= ProjectModels.Of(Project, Config.DefaultConnections);
+
+    private ModelSelection? selection;
+
+    private ModelSelection Selection => selection ??= new ModelSelection(Models, Graph, new SelectionHost(Config.Connections.Keys.ToList(), Changed));
+
     /// <summary>
-    /// The models the arguments select, as selectors (DESIGN.md 9.9): a model name, a `.sql` or `.yml` path, or a directory under models/, with the graph operators `+model`, `model+`, `2+model`, `model+1`, `@model`, the filters
-    /// `kind:`, `tag:`, `property:key=value`, `connection:`, `path:` and `changed:<git ref>`, a comma for an intersection, and `exclude:<selector>` to take models out again. Several arguments are a union; every model when none are given.
-    /// Returns null and writes the problem when a term selects nothing.
+    /// The models the arguments select, of all seven kinds, as selectors (DESIGN.md 9.9; the grammar is <see cref="ModelSelection"/>, the one every command uses): a model name or pattern, a `.sql` or `.yml` path, or a
+    /// directory under models/, with the graph operators `+model`, `model+`, `2+model`, `model+1`, `@model`, the filters `kind:`, `tag:`, `property:key=value`, `connection:`, `path:` and `changed:<ref>`, a comma for
+    /// an intersection, and `exclude:<selector>` to take models out again. Several arguments are a union; every model when none are given. Returns null and writes the problem when a term selects nothing.
+    /// </summary>
+    public List<ProjectModel>? SelectModels(IReadOnlyList<string> args, TextWriter error)
+    {
+        var names = Selection.Select(args, error);
+        if (names == null) return null;
+        var byName = Models.ToDictionary(m => m.Name, StringComparer.OrdinalIgnoreCase);
+        return names.Select(n => byName[n]).ToList();
+    }
+
+    /// <summary>
+    /// The built models the arguments select (the same grammar and the same result as <see cref="SelectModels"/>, narrowed to the models the tool builds, with their queries), for the commands that render, plan, run or
+    /// sample. A selection that names only mapped or native models says so rather than doing nothing.
     /// </summary>
     public List<LoadedModel>? Select(IReadOnlyList<string> args, TextWriter error)
     {
-        var all = Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).ToList();
-        var chosen = new List<string>();
-        var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var includes = args.Where(a => !a.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
-        if (includes.Count == 0) chosen.AddRange(all.Select(s => s.Definition.Name));
-        foreach (var arg in includes)
-        {
-            var set = SelectTerm(arg, all, error);
-            if (set == null) return null;
-            foreach (var name in set) if (!chosen.Contains(name, StringComparer.OrdinalIgnoreCase)) chosen.Add(name);
-        }
-        foreach (var arg in args.Where(a => a.StartsWith("exclude:", StringComparison.Ordinal)))
-        {
-            var set = SelectTerm(arg["exclude:".Length..], all, error);
-            if (set == null) return null;
-            excluded.UnionWith(set);
-        }
-        var byName = all.ToDictionary(s => s.Definition.Name, StringComparer.OrdinalIgnoreCase);
-        return chosen.Where(n => !excluded.Contains(n) && byName.ContainsKey(n)).Select(n => byName[n]).DistinctBy(s => s.Definition.Name)
+        var chosen = SelectModels(args, error);
+        if (chosen == null) return null;
+        var built = Project.BuiltModels.ToDictionary(s => s.Definition.Name, StringComparer.OrdinalIgnoreCase);
+        var result = chosen.Where(m => built.ContainsKey(m.Name)).Select(m => built[m.Name]).OrderBy(s => s.Definition.Name, StringComparer.Ordinal)
             .Select(s => new LoadedModel(s, s.ReadQuery(Root, Config))).ToList();
+        if (result.Count == 0 && chosen.Count > 0 && args.Count > 0)
+        {
+            error.WriteLine($"The selection names {chosen.Count} model(s) of the kind {string.Join(", ", chosen.Select(m => m.Kind).Distinct().Order(StringComparer.Ordinal))}, and the tool builds none of them: a mapped or native model is declared, not built.");
+            return null;
+        }
+        return result;
     }
 
-    /// <summary>One argument: terms joined by commas are intersected, each term is an optional operator around a core.</summary>
-    private HashSet<string>? SelectTerm(string arg, List<ModelSource> all, TextWriter error)
+    /// <summary>The `changed:` term: the models whose files changed since a revision, with what reads them. A declared model counts as itself and for what reads it.</summary>
+    private IReadOnlySet<string>? Changed(string revision, TextWriter error)
     {
-        HashSet<string>? result = null;
-        foreach (var part in arg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        var (files, problem) = GitInfo.ChangedFiles(Root, revision);
+        if (files == null) { error.WriteLine(problem); return null; }
+        var built = Project.BuiltModels.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).ToList();
+        var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (files.Contains(ProductInfo.ConfigFile) || files.Contains(ProductInfo.DialectLockFile)) changed.UnionWith(Models.Select(m => m.Name));                    // the project settings reach every model
+        foreach (var s in built.Where(s => files.Contains(s.QueryFile) || files.Contains(s.DefinitionFile))) changed.Add(s.Definition.Name);
+        foreach (var d in Project.DeclaredModels.Where(d => files.Contains(d.File.Length > 0 ? d.File : ModelFilePath(d.Name))))
         {
-            var term = ModelSelector.Parse(part);
-            var core = ResolveCore(term.Core, all, error);
-            if (core == null) return null;
-            var set = term is { Upstream: false, Downstream: false, At: false } ? new HashSet<string>(core, StringComparer.OrdinalIgnoreCase) : ModelSelector.Expand(term, core, Graph);
-            if (result == null) result = set; else result.IntersectWith(set);
+            changed.Add(d.Name);
+            changed.UnionWith(Graph.ReadBy(d.Name));      // a changed declared model changes what reads it
         }
-        return result ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private List<string>? ResolveCore(string core, List<ModelSource> all, TextWriter error)
-    {
-        List<string>? Found(IEnumerable<ModelSource> models, string what)
-        {
-            var names = models.Select(s => s.Definition.Name).ToList();
-            if (names.Count == 0) { error.WriteLine($"`{core}` selects no model ({what})."); return null; }
-            return names;
-        }
-        if (core is "all" or "*") return all.Select(s => s.Definition.Name).ToList();
-        if (core.StartsWith("kind:", StringComparison.Ordinal)) { var k = core[5..]; return Found(all.Where(s => string.Equals(s.Definition.Kind, k, StringComparison.OrdinalIgnoreCase)), $"no model has the kind `{k}`"); }
-        if (core.StartsWith("tag:", StringComparison.Ordinal)) { var t = core[4..]; return Found(all.Where(s => s.Definition.Tags.Contains(t, StringComparer.Ordinal)), $"no model has the tag `{t}`"); }
-        if (core.StartsWith("property:", StringComparison.Ordinal))
-        {
-            // `property:key=value` (the value as text, whatever its type; a comma cannot be in it) or `property:key` (has the property)
-            var spec = core[9..]; var eq = spec.IndexOf('=');
-            var (key, wanted) = eq < 0 ? (spec, null) : (spec[..eq], spec[(eq + 1)..]);
-            return Found(all.Where(s => s.Definition.Info.Properties.TryGetValue(key, out var v) && (wanted == null || v.Text == wanted)), wanted == null ? $"no model has the property `{key}`" : $"no model has the property `{key}` with the value `{wanted}`");
-        }
-        if (core.StartsWith("connection:", StringComparison.Ordinal)) { var t = core[11..]; return Found(all.Where(s => TargetsOf(s.Definition).Contains(t, StringComparer.OrdinalIgnoreCase)), $"no model is built for `{t}`"); }
-        if (core.StartsWith("path:", StringComparison.Ordinal)) { var d = core[5..].Replace('\\', '/').Trim('/'); return Found(all.Where(s => s.QueryFile.StartsWith(d + "/", StringComparison.Ordinal)), $"no model is under `{d}/`"); }
-        if (core.StartsWith("changed:", StringComparison.Ordinal))
-        {
-            var (files, problem) = GitInfo.ChangedFiles(Root, core[8..]);
-            if (files == null) { error.WriteLine(problem); return null; }
-            var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (files.Contains(ProductInfo.ConfigFile) || files.Contains(ProductInfo.DialectLockFile)) changed.UnionWith(all.Select(s => s.Definition.Name));                    // the project settings reach every model
-            foreach (var s in all.Where(s => files.Contains(s.QueryFile) || files.Contains(s.DefinitionFile))) changed.Add(s.Definition.Name);
-            foreach (var d in Project.FileDescriptors.Where(d => files.Contains(d.File.Length > 0 ? d.File : ModelSourcePath(d.Name)))) changed.UnionWith(Graph.ReadBy(d.Name));      // a changed source changes what reads it
-            changed.UnionWith(ChangedThroughOtherFiles(files, all));
-            return changed.OrderBy(n => n, StringComparer.Ordinal).ToList();                                                          // nothing changed is a valid, empty answer
-        }
-
-        var normalized = core.Replace('\\', '/');
-        var byName = all.Where(s => string.Equals(s.Definition.Name, core, StringComparison.OrdinalIgnoreCase)).ToList();
-        var byPath = all.Where(s => normalized.EndsWith(s.QueryFile, StringComparison.Ordinal) || normalized.EndsWith(s.DefinitionFile, StringComparison.Ordinal) ||
-                                    (Path.GetFullPath(Path.Combine(Root, s.QueryFile)) == Path.GetFullPath(core)) || (Path.GetFullPath(Path.Combine(Root, s.DefinitionFile)) == Path.GetFullPath(core))).ToList();
-        var byDir = all.Where(s => normalized.TrimEnd('/') is var d && s.QueryFile.StartsWith(d + "/", StringComparison.Ordinal)).ToList();
-        var found = byName.Count > 0 ? byName : byPath.Count > 0 ? byPath : byDir;
-        if (found.Count == 0) { error.WriteLine($"`{core}` does not name a valid model, a model file, or a directory containing models.{(System.Text.RegularExpressions.Regex.IsMatch(core, "^[A-Za-z][A-Za-z0-9_]*$") ? $" (If it was meant to be a connection: the project's are {string.Join(", ", Config.Connections.Keys.Order(StringComparer.Ordinal))}.)" : "")}"); return null; }
-        return found.Select(s => s.Definition.Name).ToList();
+        changed.UnionWith(ChangedThroughOtherFiles(files, built));
+        return changed;
     }
 
     /// <summary>
     /// The models that a changed file reaches without being the model's own query or definition: a folder file (`_dbdatabuild.yml`: every model beneath it), the text of a native model, a hook script a model runs, a macro file
     /// (the models whose queries reach one of its macros), and a rendered file (the model it was rendered for).
     /// </summary>
-    private HashSet<string> ChangedThroughOtherFiles(HashSet<string> files, List<ModelSource> all)
+    private HashSet<string> ChangedThroughOtherFiles(HashSet<string> files, List<BuiltModel> all)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var folder in files.Where(f => f.StartsWith(ProjectValidator.ModelsDir + "/", StringComparison.Ordinal) && f.EndsWith("/_dbdatabuild.yml", StringComparison.Ordinal)))
@@ -299,7 +272,7 @@ internal sealed class ProjectContext
         foreach (var native in files.Where(f => f.EndsWith(".native.sql", StringComparison.Ordinal)))
         {
             var definition = native[..^".native.sql".Length] + ".yml";
-            foreach (var d in Project.FileDescriptors.Where(d => string.Equals(d.File, definition, StringComparison.Ordinal))) result.UnionWith(Graph.ReadBy(d.Name));
+            foreach (var d in Project.DeclaredModels.Where(d => string.Equals(d.File, definition, StringComparison.Ordinal))) result.UnionWith(Graph.ReadBy(d.Name));
         }
         foreach (var s in all)
         {
@@ -321,5 +294,5 @@ internal sealed class ProjectContext
         return result;
     }
 
-    private static string ModelSourcePath(string name) => $"{ProjectValidator.ModelsDir}/{name.Replace('.', '/')}.yml";
+    private static string ModelFilePath(string name) => $"{ProjectValidator.ModelsDir}/{name.Replace('.', '/')}.yml";
 }

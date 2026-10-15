@@ -88,8 +88,8 @@ public class NativeCommandTests
         Write(dir, "models/marts/nums.yml", "name: marts.nums\nkind:\n  copy:\n    from: erp.nums\n");        // the same connection: not a local copy
         var result = ProjectValidator.Validate(dir);
         Assert.False(result.HasErrors, Diags(dir));
-        Assert.False(result.Sources.Single().Definition.LocalCopy);
-        Assert.Contains(result.AllDescriptors, d => d.IsGenerated);                                          // it has a staging table
+        Assert.False(result.BuiltModels.Single().Definition.LocalCopy);
+        Assert.Contains(result.DeclaredModelsAndStaging, d => d.IsGenerated);                                          // it has a staging table
     }
 
     [Fact]

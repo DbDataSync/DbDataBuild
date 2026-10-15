@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "model.schema.json",
   "title": "DbDataBuild model definition",
-  "description": "A model definition file (models/**/<name>.yml), the companion of the plain DuckDB-dialect <name>.sql body. This schema is for editors; `dbdatabuild project compile` applies the same rules plus semantic checks (name against path, grain against unique_key, column references) with diagnostic codes. The tool reads every scalar as a string, so values here that YAML would type (nullable) accept the quoted and unquoted forms. A file that says `kind: mapped` is a mapped model (or `native`: a table the engine computes from its own query) and is checked against source.schema.json instead.",
+  "description": "A model definition file (models/**/<name>.yml), the companion of the plain DuckDB-dialect <name>.sql body. This schema is for editors; `dbdatabuild project compile` applies the same rules plus semantic checks (name against path, grain against unique_key, column references) with diagnostic codes. The tool reads every scalar as a string, so values here that YAML would type (nullable) accept the quoted and unquoted forms. A file that says `kind: mapped` is a mapped model (or `native`: a table the engine computes from its own query) and is checked against declared-model.schema.json instead.",
   "if": {
     "required": [
       "kind"
@@ -33,7 +33,7 @@
     }
   },
   "then": {
-    "$ref": "source.schema.json"
+    "$ref": "declared-model.schema.json"
   },
   "else": {
     "$ref": "#/$defs/builtModel"

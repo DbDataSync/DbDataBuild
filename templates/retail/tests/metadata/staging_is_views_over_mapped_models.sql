@@ -1,4 +1,4 @@
--- description: Staging models are views, and they read only sources
+-- description: Staging models are views, and they read only mapped models
 -- tags: layers
 SELECT m.model, m.kind, u.upstream
 FROM metadata_models m

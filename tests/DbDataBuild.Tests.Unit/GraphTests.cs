@@ -63,10 +63,10 @@ public class GraphTests
     {
         var g = Chain();
         // m.b: below it are m.c and m.d; m.d also needs m.a and m.c, so m.a comes in; m.island is not connected
-        Assert.Equal(["m.a", "m.b", "m.c", "m.d"], ModelSelector.Expand(ModelSelector.Parse("@m.b"), ["m.b"], g).Order());
-        Assert.Equal(["m.a", "m.b", "m.c"], ModelSelector.Expand(ModelSelector.Parse("+m.c"), ["m.c"], g).Order());
-        Assert.Equal(["m.b", "m.c", "m.d"], ModelSelector.Expand(ModelSelector.Parse("m.b+"), ["m.b"], g).Order());
-        Assert.Equal(["m.b", "m.c"], ModelSelector.Expand(ModelSelector.Parse("m.b+1"), ["m.b"], g).Order());       // m.d reads m.a and m.c, not m.b
+        Assert.Equal(["m.a", "m.b", "m.c", "m.d"], ModelSelector.Expand(ModelSelector.Parse("@m.b"), ["m.b"], g, g.IsModel).Order());
+        Assert.Equal(["m.a", "m.b", "m.c"], ModelSelector.Expand(ModelSelector.Parse("+m.c"), ["m.c"], g, g.IsModel).Order());
+        Assert.Equal(["m.b", "m.c", "m.d"], ModelSelector.Expand(ModelSelector.Parse("m.b+"), ["m.b"], g, g.IsModel).Order());
+        Assert.Equal(["m.b", "m.c"], ModelSelector.Expand(ModelSelector.Parse("m.b+1"), ["m.b"], g, g.IsModel).Order());       // m.d reads m.a and m.c, not m.b
     }
 
     // ---- a project ----
@@ -104,7 +104,7 @@ public class GraphTests
         return (exit, doc, e.ToString());
     }
 
-    private static string[] Models(JsonNode doc) => doc["data"]!["nodes"]!.AsArray().Where(n => (string?)n!["kind"] == "model").Select(n => (string)n!["name"]!).Order().ToArray();
+    private static string[] Models(JsonNode doc) => doc["data"]!["nodes"]!.AsArray().Where(n => (string?)n!["category"] == "model").Select(n => (string)n!["name"]!).Order().ToArray();
 
     [Fact]
     public void Graph_lists_models_and_sources_by_level_with_what_each_model_reads()
@@ -116,30 +116,35 @@ public class GraphTests
         Assert.Equal(new[] { "staging.customers>stg.customers", "staging.orders>stg.orders", "stg.customers>marts.fct_orders", "stg.orders>marts.fct_orders", "marts.fct_orders>marts.big" }.Order(),
             doc["data"]!["edges"]!.AsArray().Select(e => $"{(string)e!["from"]!}>{(string)e["to"]!}").Order());
         var big = nodes.Single(n => (string?)n!["name"] == "marts.big")!;
-        Assert.Equal(("model", "full", "marts/big.sql"), ((string)big["kind"]!, (string)big["model_kind"]!, ((string)big["file"]!).Replace("models/", "")));
+        Assert.Equal(("model", "full", "marts/big.sql"), ((string)big["category"]!, (string)big["kind"]!, ((string)big["file"]!).Replace("models/", "")));
+        Assert.Equal("mapped", (string?)nodes.Single(n => (string?)n!["name"] == "staging.orders")!["kind"]);        // a mapped model is a node of the kind mapped, not a "source"
         Assert.Equal(["sqlserver"], big["connections"]!.AsArray().Select(t => (string)t!));
     }
 
     [Theory]
-    [InlineData("+marts.big", "marts.big,marts.fct_orders,stg.customers,stg.orders")]
+    [InlineData("+marts.big", "marts.big,marts.fct_orders,staging.customers,staging.orders,stg.customers,stg.orders")]       // the mapped models under it are models of the selection
     [InlineData("2+marts.big", "marts.big,marts.fct_orders,stg.customers,stg.orders")]
     [InlineData("1+marts.big", "marts.big,marts.fct_orders")]
     [InlineData("stg.orders+", "marts.big,marts.fct_orders,stg.orders")]
     [InlineData("stg.orders+1", "marts.fct_orders,stg.orders")]
-    [InlineData("@stg.orders", "marts.big,marts.fct_orders,stg.customers,stg.orders")]
+    [InlineData("@stg.orders", "marts.big,marts.fct_orders,staging.customers,staging.orders,stg.customers,stg.orders")]
     [InlineData("kind:full", "marts.big")]
     [InlineData("kind:view,stg.orders+", "marts.fct_orders,stg.orders")]
-    [InlineData("connection:postgres", "marts.fct_orders,stg.customers,stg.orders")]       // marts.big is built for SQL Server only
-    [InlineData("connection:sqlserver", "marts.big,marts.fct_orders,stg.customers,stg.orders")]
+    [InlineData("connection:postgres", "marts.fct_orders,staging.customers,staging.orders,stg.customers,stg.orders")]       // marts.big is built for SQL Server only
+    [InlineData("connection:sqlserver", "marts.big,marts.fct_orders,staging.customers,staging.orders,stg.customers,stg.orders")]
     [InlineData("path:models/stg", "stg.customers,stg.orders")]
     [InlineData("models/marts", "marts.big,marts.fct_orders")]
     [InlineData("stg.customers marts.big", "marts.big,stg.customers")]
     [InlineData("marts.fct_orders+ exclude:marts.big", "marts.fct_orders")]
-    [InlineData("exclude:kind:view", "marts.big")]
-    [InlineData("exclude:stg.orders+", "stg.customers")]
+    [InlineData("exclude:kind:view", "marts.big,staging.customers,staging.orders")]
+    [InlineData("kind:mapped", "staging.customers,staging.orders")]
+    [InlineData("staging.*", "staging.customers,staging.orders")]
+    [InlineData("+stg.orders", "staging.orders,stg.orders")]
+    [InlineData("models/staging", "staging.customers,staging.orders")]
+    [InlineData("exclude:stg.orders+", "staging.customers,staging.orders,stg.customers")]
     public void Selectors_choose_models_by_the_graph_by_kind_target_and_path_and_exclusions_take_models_out(string selectors, string expected)
     {
-        var chosen = Graph(Project(), selectors.Split(' ')).Doc["data"]!["nodes"]!.AsArray().Where(n => (string?)n!["kind"] == "model").Select(n => (string)n!["name"]!).ToHashSet();
+        var chosen = Graph(Project(), selectors.Split(' ')).Doc["data"]!["nodes"]!.AsArray().Where(n => (string?)n!["category"] == "model").Select(n => (string)n!["name"]!).ToHashSet();
         // the graph also shows the tables a chosen model reads; the chosen ones are those the selector named, so compare through metadata, which prints exactly the selection
         var o = new StringWriter();
         var dir = Project();
@@ -245,11 +250,11 @@ public class GraphTests
 
         Git(dir, "stash -u -q");                                                                       // back to the base: now change a source
         File.AppendAllText(Path.Combine(dir, "models/staging/customers.yml"), "# touched\n");
-        Assert.Equal(["stg.customers"], Chosen("changed:HEAD"));                                       // the model that reads the changed source
+        Assert.Equal(["staging.customers", "stg.customers"], Chosen("changed:HEAD"));                // the changed mapped model, and the model that reads it
         Git(dir, "checkout -q -- .");
 
         File.AppendAllText(Path.Combine(dir, "dbdatabuild.yml"), "# touched\n");
-        Assert.Equal(["marts.big", "marts.fct_orders", "stg.customers", "stg.orders"], Chosen("changed:HEAD"));   // the project settings reach every model
+        Assert.Equal(["marts.big", "marts.fct_orders", "staging.customers", "staging.orders", "stg.customers", "stg.orders"], Chosen("changed:HEAD"));   // the project settings reach every model
     }
 
     [Fact]
@@ -296,7 +301,7 @@ public class GraphTests
     public void The_ancestors_view_gives_every_table_a_model_depends_on_with_its_distance()
     {
         var ctx = ProjectContext.Load(Project());
-        using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, null).Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), DbDataBuild.Core.ProductInfo.Version);
+        using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, null).Select(d => new MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), DbDataBuild.Core.ProductInfo.Version);
         var run = db.Run("SELECT ancestor, depth FROM metadata_ancestors WHERE model = 'marts.big' ORDER BY depth, ancestor", 20);
         Assert.Equal(RuleOutcome.Ran, run.Outcome);
         Assert.Equal(["marts.fct_orders:1", "stg.customers:2", "stg.orders:2", "staging.customers:3", "staging.orders:3"], run.Rows.Select(r => $"{r["ancestor"]}:{r["depth"]}"));

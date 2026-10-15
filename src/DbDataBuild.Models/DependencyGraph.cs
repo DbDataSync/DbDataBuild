@@ -2,24 +2,24 @@ namespace DbDataBuild.Models;
 
 /// <summary>
 /// Which tables each model reads (DESIGN.md 9.9). Pure data: names only, so selectors and the `graph` command work on it without parsing anything. An edge runs from the table that is read to the model that
-/// reads it. Sources are nodes that no model builds; a name that is neither a model nor a source is an unknown table (DDB-218 elsewhere) and is kept so the graph still shows it.
+/// reads it. Unbuilt nodes are the ones no model builds (declared models, macros); a name that is neither built nor unbuilt is an unknown table (DDB-218 elsewhere) and is kept so the graph still shows it.
 /// </summary>
 public sealed class DependencyGraph
 {
     private readonly Dictionary<string, HashSet<string>> reads = new(StringComparer.OrdinalIgnoreCase);        // model -> tables it reads
     private readonly Dictionary<string, HashSet<string>> readBy = new(StringComparer.OrdinalIgnoreCase);       // table -> models that read it
 
-    public DependencyGraph(IEnumerable<string> models, IEnumerable<string> sources, IEnumerable<(string Model, string Reads)> edges)
+    public DependencyGraph(IEnumerable<string> models, IEnumerable<string> unbuilt, IEnumerable<(string Model, string Reads)> edges)
     {
         Models = models.OrderBy(m => m, StringComparer.Ordinal).ToList();
-        Sources = sources.OrderBy(s => s, StringComparer.Ordinal).ToList();
+        Unbuilt = unbuilt.OrderBy(s => s, StringComparer.Ordinal).ToList();
         foreach (var (model, table) in edges)
         {
             if (string.Equals(model, table, StringComparison.OrdinalIgnoreCase)) continue;
             Add(reads, model, table);
             Add(readBy, table, model);
         }
-        var known = Models.Concat(Sources).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var known = Models.Concat(Unbuilt).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Unknown = reads.Values.SelectMany(v => v).Where(t => !known.Contains(t)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
     }
 
@@ -30,7 +30,7 @@ public sealed class DependencyGraph
     }
 
     public IReadOnlyList<string> Models { get; }
-    public IReadOnlyList<string> Sources { get; }
+    public IReadOnlyList<string> Unbuilt { get; }
     public IReadOnlyList<string> Unknown { get; }
 
     public bool IsModel(string name) => Models.Contains(name, StringComparer.OrdinalIgnoreCase);
@@ -62,7 +62,7 @@ public sealed class DependencyGraph
         return seen;
     }
 
-    /// <summary>The length of the longest chain from a source to each model: sources are level 0, a model that reads only sources is level 1.</summary>
+    /// <summary>The length of the longest chain from an unbuilt node to each model: declared models and macros are level 0, a model that reads only sources is level 1.</summary>
     public IReadOnlyDictionary<string, int> Levels()
     {
         var level = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -103,20 +103,20 @@ public static class ModelSelector
         return new SelectorTerm(text, up, upDepth, down, downDepth, at);
     }
 
-    /// <summary>The set a term selects, given the models its core names.</summary>
-    public static HashSet<string> Expand(SelectorTerm term, IEnumerable<string> core, DependencyGraph graph)
+    /// <summary>The set a term selects, given the models its core names. <paramref name="isModel"/> says which names of the graph are models of the project (all seven kinds; macros and unknown tables are not).</summary>
+    public static HashSet<string> Expand(SelectorTerm term, IEnumerable<string> core, DependencyGraph graph, Func<string, bool> isModel)
     {
         var result = new HashSet<string>(core, StringComparer.OrdinalIgnoreCase);
         var start = result.ToList();
         if (term.At)
         {
-            var below = start.SelectMany(m => graph.Descendants(m).Keys).Where(graph.IsModel).ToList();
+            var below = start.SelectMany(m => graph.Descendants(m).Keys).Where(isModel).ToList();
             result.UnionWith(below);
-            foreach (var m in result.ToList()) result.UnionWith(graph.Ancestors(m).Keys.Where(graph.IsModel));
+            foreach (var m in result.ToList()) result.UnionWith(graph.Ancestors(m).Keys.Where(isModel));
             return result;
         }
-        if (term.Upstream) foreach (var m in start) result.UnionWith(graph.Ancestors(m, term.UpstreamDepth).Keys.Where(graph.IsModel));
-        if (term.Downstream) foreach (var m in start) result.UnionWith(graph.Descendants(m, term.DownstreamDepth).Keys.Where(graph.IsModel));
+        if (term.Upstream) foreach (var m in start) result.UnionWith(graph.Ancestors(m, term.UpstreamDepth).Keys.Where(isModel));
+        if (term.Downstream) foreach (var m in start) result.UnionWith(graph.Descendants(m, term.DownstreamDepth).Keys.Where(isModel));
         return result;
     }
 }

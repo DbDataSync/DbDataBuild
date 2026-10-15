@@ -24,7 +24,7 @@ public static class SampleGenerator
     private static readonly decimal[] Decimals = [0m, 0.005m, 0.015m, 1.005m, 2.675m, -2.5m, 99.995m, 1234.5m];
 
     /// <summary>Rows of text literals ready for an INSERT: SQL literal strings, one per column, in column order.</summary>
-    public static IReadOnlyList<string[]> Rows(SourceDescriptor source, int count, int seed)
+    public static IReadOnlyList<string[]> Rows(DeclaredModel source, int count, int seed)
     {
         var rng = new Random(HashCode(source.Name, seed));
         var grain = source.Grain.Select(g => g.ToLowerInvariant()).ToList();

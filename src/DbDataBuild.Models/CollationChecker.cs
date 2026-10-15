@@ -75,7 +75,7 @@ public static class CollationChecker
 {
     public const string DefaultLogicalName = "default";
 
-    public static IReadOnlyList<Diagnostic> Check(ProjectConfig config, IReadOnlyList<ModelSource> sources)
+    public static IReadOnlyList<Diagnostic> Check(ProjectConfig config, IReadOnlyList<BuiltModel> models)
     {
         var diags = new List<Diagnostic>();
         var cfgFile = ProductInfo.ConfigFile;
@@ -83,7 +83,7 @@ public static class CollationChecker
 
         // Connections in play: every model's connections (or the project defaults) plus DuckDB, which runs the offline emulation. The project's default connections count only when a model relies on them,
         // or when there are no models yet. Each connection is held to its own profile (the project's, with what the connection says over it); DuckDB to the project's.
-        var used = sources.SelectMany(s => s.Definition.Targets ?? config.DefaultConnections).Concat(sources.Count == 0 ? config.DefaultConnections : [])
+        var used = models.SelectMany(s => s.Definition.Targets ?? config.DefaultConnections).Concat(models.Count == 0 ? config.DefaultConnections : [])
             .Distinct(StringComparer.Ordinal).OrderBy(c => c, StringComparer.Ordinal).ToList();
         var checks = used.Select(c => (Connection: (string?)c, Engine: config.EngineOf(c) ?? c, Semantics: config.SemanticsOf(c))).ToList();
         checks.Add((null, CollationTraitsParser.DuckDb, config.StringSemantics));
@@ -113,12 +113,12 @@ public static class CollationChecker
             diags.AddRange(CheckProfile(config with { StringSemantics = semantics }, engine, name, new SourceLocation(cfgFile, at, 1)).Select(d => own ? d with { Found = $"{d.Found} (the connection `{connection}`)" } : d));
         }
 
-        foreach (var source in sources)
+        foreach (var built in models)
         {
-            var modelConnections = (source.Definition.Targets ?? config.DefaultConnections).Select(c => (Connection: (string?)c, Engine: config.EngineOf(c) ?? c, Semantics: config.SemanticsOf(c))).Append((null, CollationTraitsParser.DuckDb, config.StringSemantics)).ToList();
-            foreach (var column in source.Definition.Columns.Where(c => c.Collation != null))
+            var modelConnections = (built.Definition.Targets ?? config.DefaultConnections).Select(c => (Connection: (string?)c, Engine: config.EngineOf(c) ?? c, Semantics: config.SemanticsOf(c))).Append((null, CollationTraitsParser.DuckDb, config.StringSemantics)).ToList();
+            foreach (var column in built.Definition.Columns.Where(c => c.Collation != null))
             {
-                var loc = new SourceLocation(source.DefinitionFile, column.CollationLine, 1);
+                var loc = new SourceLocation(built.DefinitionFile, column.CollationLine, 1);
                 if (!collations.ContainsKey(column.Collation!) && !modelConnections.All(c => c.Semantics.Collations.ContainsKey(column.Collation!)))
                 {
                     diags.Add(new Diagnostic(DiagnosticCatalog.CollationNotConfigured, loc,

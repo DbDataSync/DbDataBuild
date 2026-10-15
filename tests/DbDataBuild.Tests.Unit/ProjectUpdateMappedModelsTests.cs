@@ -12,13 +12,13 @@ namespace DbDataBuild.Tests.Unit;
 /// The online part of `project update` and `project model update`: the metadata of every mapped model (and of the tables copies read) is compared with its table and written as `project import` would, on a DuckDB file
 /// (no docker). Both commands run the same code; a mapped model is never ignored; a connection that cannot be read is said and skipped.
 /// </summary>
-public class ProjectUpdateSourcesTests : IDisposable
+public class ProjectUpdateMappedModelsTests : IDisposable
 {
     private static readonly JsonSchema Schema = SchemaConformanceTests.LoadSchema("output");
     private readonly string dir = NewProjectDir();
     private readonly string files = Path.Combine(Path.GetTempPath(), "ddb-update-files-" + Guid.NewGuid().ToString("N")[..10]);
 
-    public ProjectUpdateSourcesTests() => Directory.CreateDirectory(files);
+    public ProjectUpdateMappedModelsTests() => Directory.CreateDirectory(files);
     public void Dispose() { foreach (var d in new[] { dir, files }) try { Directory.Delete(d, true); } catch (IOException) { } }
 
     private string Db => Path.Combine(files, "analytics.duckdb").Replace('\\', '/');
@@ -62,7 +62,7 @@ public class ProjectUpdateSourcesTests : IDisposable
         return (exit, doc, string.Join('\n', doc["messages"]!.AsArray().Select(m => (string)m!)) + "\n" + string.Join('\n', doc["errors"]!.AsArray().Select(m => (string)m!)));
     }
 
-    private static JsonNode Source(JsonNode doc, string name) => doc["data"]!["sources"]!.AsArray().Single(s => (string)s!["name"]! == name)!;
+    private static JsonNode Source(JsonNode doc, string name) => doc["data"]!["mapped_models"]!.AsArray().Single(s => (string)s!["name"]! == name)!;
 
     [Fact]
     public void Update_brings_the_table_into_the_mapped_model_columns_keys_and_indexes_and_a_second_run_is_quiet()
@@ -121,7 +121,7 @@ public class ProjectUpdateSourcesTests : IDisposable
         var (exit, doc, text) = Cli("project", "update", "--offline");
         Assert.Equal(0, exit);
         Assert.False((bool)doc["data"]!["online"]!);
-        Assert.Null(doc["data"]!["sources"]);
+        Assert.Null(doc["data"]!["mapped_models"]);
         Assert.Contains("Offline", text);
         Assert.Equal(before, Snapshot(dir));
     }
@@ -133,7 +133,7 @@ public class ProjectUpdateSourcesTests : IDisposable
         var (exit, doc, _) = Cli("project", "update", "dst.events");
         Assert.Equal(0, exit);
         Assert.Equal("changed", (string)Source(doc, "src.events")["status"]!);                      // the copy's origin
-        Assert.DoesNotContain(doc["data"]!["sources"]!.AsArray(), s => (string)s!["name"]! == "src.elsewhere");
+        Assert.DoesNotContain(doc["data"]!["mapped_models"]!.AsArray(), s => (string)s!["name"]! == "src.elsewhere");
         var (bad, _, _) = Cli("project", "update", "nothing.like.this");
         Assert.Equal(2, bad);
     }
@@ -162,6 +162,6 @@ public class ProjectUpdateSourcesTests : IDisposable
         MakeDb(); Project();
         var (exit, doc, _) = Cli("project", "model", "update", "--check", "models/src/events.yml");
         Assert.Equal(1, exit);
-        Assert.DoesNotContain(doc["data"]!["sources"]!.AsArray(), s => (string)s!["name"]! == "src.elsewhere");
+        Assert.DoesNotContain(doc["data"]!["mapped_models"]!.AsArray(), s => (string)s!["name"]! == "src.elsewhere");
     }
 }

@@ -122,28 +122,28 @@ internal sealed class PlanningSession
         var selected = ctx.Select(models, error);
         if (selected == null) return (null, CliApp.ExitUsage);
         foreach (var named in (operations ?? new Dictionary<string, string>()).Keys.Concat(backfills ?? new HashSet<string>()))
-            if (!ctx.Project.Sources.Any(m => m.Definition.Name == named)) { error.WriteLine($"`{named}` is not a model of this project."); return (null, CliApp.ExitUsage); }
+            if (!ctx.Project.BuiltModels.Any(m => m.Definition.Name == named)) { error.WriteLine($"`{named}` is not a model of this project."); return (null, CliApp.ExitUsage); }
         // each model's query as this connection reads it (a name given by a parameter may be another on another connection)
-        var mine = selected.Where(m => ctx.TargetsOf(m.Source.Definition).Contains(target)).Select(m => m with { Sql = m.Source.ReadQuery(root, ctx.Config, target) }).ToList();
-        foreach (var skipped in selected.Except(mine)) output.WriteLine($"note: {skipped.Source.Definition.Name} does not declare target `{target}` and is not planned.");
+        var mine = selected.Where(m => ctx.TargetsOf(m.Model.Definition).Contains(target)).Select(m => m with { Sql = m.Model.ReadQuery(root, ctx.Config, target) }).ToList();
+        foreach (var skipped in selected.Except(mine)) output.WriteLine($"note: {skipped.Model.Definition.Name} does not declare target `{target}` and is not planned.");
 
         // ---- offline preflight: nothing is planned from a project that does not validate (DESIGN.md 11) ----
         var findings = new List<Diagnostic>(ctx.Diagnostics.Where(d => d.Code != DiagnosticCatalog.OrphanFile.Code));
-        var sources = mine.Select(m => m.Source).ToList();
+        var sources = mine.Select(m => m.Model).ToList();
         findings.AddRange(ProjectChecks.Run(sources, ctx.Config, [target], root, ctx.Lowering));
         findings.AddRange(ProjectChecks.Reachability(ctx, [target]));
-        var defineTargets = mine.Select(m => new DefineTarget(m.Source.Definition.Name, m.Source.DefinitionFile, m.Source.QueryFile, m.Sql,
-            File.ReadAllText(Path.Combine(root, m.Source.DefinitionFile)), m.Source.Definition, [], ctx.MacroSupportFor(m.Source, m.Sql))).ToList();
-        var graph = new ModelGraph(ctx.Project.Models, ctx.Project.AllDescriptors);
+        var defineTargets = mine.Select(m => new DefineTarget(m.Model.Definition.Name, m.Model.DefinitionFile, m.Model.QueryFile, m.Sql,
+            File.ReadAllText(Path.Combine(root, m.Model.DefinitionFile)), m.Model.Definition, [], ctx.MacroSupportFor(m.Model, m.Sql))).ToList();
+        var graph = new ModelGraph(ctx.Project.Models, ctx.Project.DeclaredModelsAndStaging);
         findings.AddRange(new DefineEngine(graph, ctx.Config, ctx.Linter).Check(defineTargets));
 
         // an origin of a copy is checked against its declaration (DDB-230) by the apply, just before that origin's own transfer
-        findings.AddRange(NativeShapeCheck.Run(ctx, mine.SelectMany(m => ctx.BaseTablesOf(m.Source, m.Sql)), target, env));
+        findings.AddRange(NativeShapeCheck.Run(ctx, mine.SelectMany(m => ctx.BaseTablesOf(m.Model, m.Sql)), target, env));
 
         var renderedOps = new List<RenderedOperation>();
         foreach (var m in mine)
         {
-            var (result, _) = ctx.RenderModel(m.Source, m.Sql, [target]);
+            var (result, _) = ctx.RenderModel(m.Model, m.Sql, [target]);
             renderedOps.AddRange(result.Loads);
             foreach (var file in result.Files)
             {
@@ -190,10 +190,10 @@ internal sealed class PlanningSession
         {
             var hash = ctx.DefinitionHashOf(m.Sql);
             // a copy reads its staging table, which the plan's own transfer step creates: it has no base table to wait for
-            var bases = m.Source.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Source, m.Sql));
+            var bases = m.Model.Definition is { IsCopy: true, LocalCopy: false } ? [] : ctx.WithNativeReads(ctx.BaseTablesOf(m.Model, m.Sql));
             // views are transpiled from the lowered query too (errors were reported in the preflight, so a failed lowering here is not reachable)
-            var body = ctx.Lowering.Enabled && ctx.Lowering.Lower(m.Source, m.Sql, m.Source.QueryParameterList(root, ctx.Config)).Model is { } lowered ? lowered.Sql : m.Sql;
-            return new PlannedModel(m.Source.Definition, body, m.Source.QueryFile, hash, bases, HookLoader.Load(m.Source, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Source.Definition, target).ToList(), Merge(m.Source.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
+            var body = ctx.Lowering.Enabled && ctx.Lowering.Lower(m.Model, m.Sql, m.Model.QueryParameterList(root, ctx.Config)).Model is { } lowered ? lowered.Sql : m.Sql;
+            return new PlannedModel(m.Model.Definition, body, m.Model.QueryFile, hash, bases, HookLoader.Load(m.Model, ctx.Config, target, root, new List<Diagnostic>()), ctx.OriginsOf(m.Model.Definition, target).ToList(), Merge(m.Model.ParametersFor(ctx.Config, target), ctx.Lowering.NativeValuesFor(m.Sql, target)), ctx.Lowering.NativeUsesFor(m.Sql));
         }).ToList();
 
         // where the records about this connection are kept: itself, another connection (its read login is needed), or nowhere (a warning, unless that was chosen)
@@ -210,7 +210,7 @@ internal sealed class PlanningSession
         DbDataBuild.State.TrackingScope? trackingScope = trackingResolution.Target is { } ts ? new DbDataBuild.State.TrackingScope(ts.Engine, ts.SchemaName, target) : null;
 
         // the routines native models list under `track_definition`, against the last record in the tracking tables
-        var watched = NativeDefinitions.InPlay(ctx, mine.Select(m => (m.Source, m.Sql)), target);
+        var watched = NativeDefinitions.InPlay(ctx, mine.Select(m => (m.Model, m.Sql)), target);
         if (watched.Count > 0)
         {
             var definitionFindings = new List<Diagnostic>();

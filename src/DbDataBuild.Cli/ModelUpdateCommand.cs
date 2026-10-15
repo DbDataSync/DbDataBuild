@@ -20,8 +20,8 @@ internal static class ModelUpdateCommand
         if (paths.Length > 0 && online)
         {
             var known = ProjectContext.Load(root);
-            foreach (var d in known.Project.FileDescriptors.Where(d => d.File.Length > 0)) tablePaths.Add(d.File);
-            foreach (var c in known.Project.Sources.Where(s => s.Definition.IsCopy)) tablePaths.Add(c.DefinitionFile);
+            foreach (var d in known.Project.DeclaredModels.Where(d => d.File.Length > 0)) tablePaths.Add(d.File);
+            foreach (var c in known.Project.BuiltModels.Where(s => s.Definition.IsCopy)) tablePaths.Add(c.DefinitionFile);
         }
         var definitionPaths = paths.Where(p => !tablePaths.Contains(Relative(p))).ToArray();
         int exit;
@@ -46,7 +46,7 @@ internal static class ModelUpdateCommand
         var selection = UpdateSelection.Resolve(ctx, selectors, TextWriter.Null) ?? new UpdateSelection(false, new HashSet<string>());
         var outcome = ConnectionCapture.GatherAsync(ctx, selection, env, open ?? ProjectUpdateCommand.TestOpener.Value ?? ReadSession.OpenAsync).GetAwaiter().GetResult();
         output.Payload("connections", outcome.Connections.Select(c => new { connection = c.Connection, driver = c.Driver, status = c.Status, reason = c.Reason }).ToList());
-        output.Payload("sources", ConnectionCapture.SourcesPayload(outcome));
+        output.Payload("mapped_models", ConnectionCapture.MappedModelsPayload(outcome));
         output.Payload("catalog_notes", outcome.Notes);
         Func<int, bool>? confirm = write || check || !interactive ? null : n =>
         {

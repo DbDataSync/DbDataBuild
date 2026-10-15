@@ -12,7 +12,7 @@ namespace DbDataBuild.Tests.Unit;
 
 /// <summary>
 /// `project update`, the dialect part (docs/research/read-origins.md section 10): a Flight SQL server is asked what it is (a fake that answers `GetSqlInfo`), the answer is committed in dialects.lock.yml, compile and the
-/// plans carry it, and the origin check of a refresh fails when the server stops agreeing. The metadata part is in ProjectUpdateSourcesTests.
+/// plans carry it, and the origin check of a refresh fails when the server stops agreeing. The metadata part is in ProjectUpdateMappedModelsTests.
 /// </summary>
 public class ProjectUpdateDialectTests : IDisposable
 {

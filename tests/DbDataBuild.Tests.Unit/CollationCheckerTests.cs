@@ -66,16 +66,16 @@ public class CollationCheckerTests
         return cfg!;
     }
 
-    private static ModelSource Model(string targets, string columns = "  - {name: a, type: INT}")
+    private static BuiltModel Model(string targets, string columns = "  - {name: a, type: INT}")
     {
         var diags = new List<Diagnostic>();
         var yaml = $"name: marts.fct_orders\nkind: full\n{(targets == "" ? "" : $"connections: {targets}\n")}columns:\n{columns}\n";
         var def = ModelDefinitionLoader.Load(yaml, "models/marts/fct_orders.yml", "marts.fct_orders", diags);
         Assert.Empty(diags.Select(DiagnosticFormatter.Format));
-        return new ModelSource(def!, "models/marts/fct_orders.yml", "models/marts/fct_orders.sql");
+        return new BuiltModel(def!, "models/marts/fct_orders.yml", "models/marts/fct_orders.sql");
     }
 
-    private static IReadOnlyList<Diagnostic> Check(ProjectConfig cfg, params ModelSource[] models) => CollationChecker.Check(cfg, models);
+    private static IReadOnlyList<Diagnostic> Check(ProjectConfig cfg, params BuiltModel[] models) => CollationChecker.Check(cfg, models);
 
     [Fact]
     public void Built_in_defaults_satisfy_the_profile_for_sqlserver_and_duckdb()

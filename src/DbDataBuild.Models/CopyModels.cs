@@ -25,7 +25,7 @@ public static class CopyModels
     public static string StagingName(ProjectConfig config, string modelName) => $"{StagingSchema(config)}.{StagingTable(modelName)}";
 
     /// <summary>The staging table as a mapped table with the copy's columns, for the queries that bind against it.</summary>
-    public static SourceDescriptor StagingDescriptor(ProjectConfig config, ModelDefinition copy, IReadOnlyList<ColumnDefinition> columns) =>
+    public static DeclaredModel StagingDescriptor(ProjectConfig config, ModelDefinition copy, IReadOnlyList<ColumnDefinition> columns) =>
         new(StagingName(config, copy.Name), columns.Select(c => c with { Line = 0, CollationLine = 0 }).ToList(), [], DeclaredConnections: copy.Targets ?? config.DefaultConnections, Generated: true);
 
     /// <summary>The query of a copy in DuckDB dialect: every column of the origin from the staging table, in the origin's order.</summary>

@@ -124,7 +124,7 @@ internal static class ReportCommand
             var live = new Dictionary<string, ObjectShape>();
             foreach (var s in schemas) foreach (var (k, v) in await CatalogReader.ReadObjectsAsync(read, engine, s)) live[k] = v;
             var drifted = new List<string>();
-            var projectModels = ProjectContext.Load(root).Project.Sources.Select(s => s.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var projectModels = ProjectContext.Load(root).Project.BuiltModels.Select(s => s.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var accepted = (await TargetSnapshotReader.ReadAsync(read, trackRead, scope, engine, schemas)).Acknowledged;        // drift an operator has accepted (`ack drift`) is shown, but is not something that needs attention
             bool Accepted(string name) => live.TryGetValue(name, out var l) && accepted.Contains(Acknowledgements.Key(DiagnosticCatalog.ObjectChangedOutsideTool.Code, name, l.ShapeHash));
             Table("objects", "Objects the tool has recorded", ["object", "shapes recorded", "last recorded (UTC)", "now"], versions.Select(r =>

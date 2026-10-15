@@ -101,6 +101,17 @@ internal sealed class TSqlTrackingDdl(string target, bool unverified) : ITrackin
             list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 8) when it is not there",
                 $"IF OBJECT_ID({TrackingDdl.Literal(schema + "." + table)}, N'U') IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + table)}, {TrackingDdl.Literal(column)}) IS NULL\n  ALTER TABLE {s}.{Quote(table)} ADD {Quote(column)} {Native(c.Type)} NULL;"));
         }
+        {
+            var r = TrackingSchema.RenamedInLayout9;
+            var md = TrackingDdl.Literal(schema + "." + r.Table);
+            var oi = TrackingDdl.Literal(schema + ".object_info");
+            list.Add(new($"upgrade-{++n:00}", $"table {r.Table}: rename `{r.OldColumn}` to `{r.Column}` (layout 9) when it is not done",
+                $"IF OBJECT_ID({md}, N'U') IS NOT NULL AND COL_LENGTH({md}, {TrackingDdl.Literal(r.OldColumn)}) IS NOT NULL AND COL_LENGTH({md}, {TrackingDdl.Literal(r.Column)}) IS NULL\n  EXEC sp_rename {TrackingDdl.Literal(s + "." + Quote(r.Table) + "." + Quote(r.OldColumn))}, {TrackingDdl.Literal(r.Column)}, N'COLUMN';"));
+            list.Add(new($"upgrade-{++n:00}", "tables metadata_document and object_info: a mapped or native model is subject kind `model`, not `source` (layout 9)",
+                $"IF OBJECT_ID({md}, N'U') IS NOT NULL AND COL_LENGTH({md}, {TrackingDdl.Literal(r.Column)}) IS NOT NULL\n  EXEC({TrackingDdl.Literal($"UPDATE {s}.{Quote(r.Table)} SET {Quote(r.Column)} = 'model' WHERE {Quote(r.Column)} = 'source'")});\n" +
+                $"IF OBJECT_ID({oi}, N'U') IS NOT NULL\nBEGIN\n  EXEC({TrackingDdl.Literal($"DELETE o FROM {s}.[object_info] o WHERE o.[subject_kind] = 'source' AND EXISTS (SELECT 1 FROM {s}.[object_info] m WHERE m.[connection] = o.[connection] AND m.[subject_kind] = 'model' AND m.[subject] = o.[subject])")});\n" +
+                $"  EXEC({TrackingDdl.Literal($"UPDATE {s}.[object_info] SET [subject_kind] = 'model' WHERE [subject_kind] = 'source'")});\nEND;"));
+        }
         list.Add(new($"upgrade-{++n:00}", "drop the views of the older layout (the init script creates them again)",
             $"IF OBJECT_ID({TrackingDdl.Literal(schema + ".metadata_columns")}, N'V') IS NOT NULL DROP VIEW {s}.[metadata_columns];\nIF OBJECT_ID({TrackingDdl.Literal(schema + ".metadata_current")}, N'V') IS NOT NULL DROP VIEW {s}.[metadata_current];"));
         return list;
@@ -133,7 +144,7 @@ internal sealed class TSqlTrackingDdl(string target, bool unverified) : ITrackin
         var layout8 = TrackingSchema.AddedInLayout8[^1];
         var layout5 = TrackingSchema.AddedInLayout5[^1];
         list.Add(new($"init-{n}", "record the layout version",
-            $"IF NOT EXISTS (SELECT 1 FROM {v} WHERE [version] = {TrackingSchema.Version}) AND COL_LENGTH({TrackingDdl.Literal(schema + "." + last.Table)}, {TrackingDdl.Literal(last.Column)}) IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + layout8.Table)}, {TrackingDdl.Literal(layout8.Column)}) IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + layout5.Table)}, {TrackingDdl.Literal(layout5.Column)}) IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}, N'U') IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.TableAddedInLayout8)}, N'U') IS NOT NULL\nINSERT INTO {v} ([version], [tool_version], [applied_utc]) VALUES ({TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, SYSUTCDATETIME());"));
+            $"IF NOT EXISTS (SELECT 1 FROM {v} WHERE [version] = {TrackingSchema.Version}) AND COL_LENGTH({TrackingDdl.Literal(schema + "." + last.Table)}, {TrackingDdl.Literal(last.Column)}) IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + layout8.Table)}, {TrackingDdl.Literal(layout8.Column)}) IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + layout5.Table)}, {TrackingDdl.Literal(layout5.Column)}) IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}, N'U') IS NOT NULL AND OBJECT_ID({TrackingDdl.Literal(schema + "." + TrackingSchema.TableAddedInLayout8)}, N'U') IS NOT NULL AND COL_LENGTH({TrackingDdl.Literal(schema + "." + TrackingSchema.RenamedInLayout9.Table)}, {TrackingDdl.Literal(TrackingSchema.RenamedInLayout9.Column)}) IS NOT NULL\nINSERT INTO {v} ([version], [tool_version], [applied_utc]) VALUES ({TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, SYSUTCDATETIME());"));
         return list;
     }
 }
@@ -193,6 +204,16 @@ internal sealed class PostgresTrackingDdl : ITrackingDdl
             list.Add(new($"upgrade-{++n:00}", $"table {table}: add `{column}` (layout 8) when it is not there",
                 $"ALTER TABLE IF EXISTS {s}.{Quote(table)} ADD COLUMN IF NOT EXISTS {Quote(column)} {Native(c.Type)} NULL;"));
         }
+        {
+            var r = TrackingSchema.RenamedInLayout9;
+            string Has(string table, string column) => $"EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(table)} AND column_name = {TrackingDdl.Literal(column)})";
+            list.Add(new($"upgrade-{++n:00}", $"table {r.Table}: rename `{r.OldColumn}` to `{r.Column}` (layout 9) when it is not done",
+                $"DO $$\nBEGIN\n  IF {Has(r.Table, r.OldColumn)} AND NOT {Has(r.Table, r.Column)} THEN\n    ALTER TABLE {s}.{Quote(r.Table)} RENAME COLUMN {Quote(r.OldColumn)} TO {Quote(r.Column)};\n  END IF;\nEND $$;"));
+            list.Add(new($"upgrade-{++n:00}", "tables metadata_document and object_info: a mapped or native model is subject kind `model`, not `source` (layout 9)",
+                $"DO $$\nBEGIN\n  IF {Has(r.Table, r.Column)} THEN\n    UPDATE {s}.{Quote(r.Table)} SET {Quote(r.Column)} = 'model' WHERE {Quote(r.Column)} = 'source';\n  END IF;\n" +
+                $"  IF {Has("object_info", "subject_kind")} THEN\n    DELETE FROM {s}.\"object_info\" o WHERE o.\"subject_kind\" = 'source' AND EXISTS (SELECT 1 FROM {s}.\"object_info\" m WHERE m.\"connection\" = o.\"connection\" AND m.\"subject_kind\" = 'model' AND m.\"subject\" = o.\"subject\");\n" +
+                $"    UPDATE {s}.\"object_info\" SET \"subject_kind\" = 'model' WHERE \"subject_kind\" = 'source';\n  END IF;\nEND $$;"));
+        }
         list.Add(new($"upgrade-{++n:00}", "drop the views of the older layout (the init script creates them again)",
             $"DROP VIEW IF EXISTS {s}.\"metadata_columns\";\nDROP VIEW IF EXISTS {s}.\"metadata_current\";"));
         return list;
@@ -218,42 +239,43 @@ internal sealed class PostgresTrackingDdl : ITrackingDdl
         var layout5 = TrackingSchema.AddedInLayout5[^1];
         list.Add(new($"init-{n}", "record the layout version",
             $"INSERT INTO {v} (\"version\", \"tool_version\", \"applied_utc\")\nSELECT {TrackingSchema.Version}, {TrackingDdl.Literal(toolVersion)}, (now() AT TIME ZONE 'utc')\n" +
-            $"WHERE NOT EXISTS (SELECT 1 FROM {v} WHERE \"version\" = {TrackingSchema.Version}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(last.Table)} AND column_name = {TrackingDdl.Literal(last.Column)}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(layout5.Table)} AND column_name = {TrackingDdl.Literal(layout5.Column)}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(layout8.Table)} AND column_name = {TrackingDdl.Literal(layout8.Column)}) AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}) IS NOT NULL AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.TableAddedInLayout8)}) IS NOT NULL;"));
+            $"WHERE NOT EXISTS (SELECT 1 FROM {v} WHERE \"version\" = {TrackingSchema.Version}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(last.Table)} AND column_name = {TrackingDdl.Literal(last.Column)}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(layout5.Table)} AND column_name = {TrackingDdl.Literal(layout5.Column)}) AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(layout8.Table)} AND column_name = {TrackingDdl.Literal(layout8.Column)}) AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.AddedInLayout6)}) IS NOT NULL AND to_regclass({TrackingDdl.Literal(schema + "." + TrackingSchema.TableAddedInLayout8)}) IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schema)} AND table_name = {TrackingDdl.Literal(TrackingSchema.RenamedInLayout9.Table)} AND column_name = {TrackingDdl.Literal(TrackingSchema.RenamedInLayout9.Column)});"));
         return list;
     }
 }
 
-/// <summary>The introspection views over `metadata_document`: the latest document per subject, and the model and source columns unpacked into rows (`kind` says which; a source has no native types or lineage).</summary>
+/// <summary>
+/// The introspection views over `metadata_document`: the latest document per subject, and the columns of every model unpacked into rows (`model_kind` says which sort of model; a declared model has no lineage). They are made
+/// only when the table has `subject_kind` (layout 9): a store of an older layout keeps the views it has until `init --upgrade` has renamed the column.
+/// </summary>
 internal static class TrackingViews
 {
     public static IEnumerable<(string Description, string Text)> TSql(string schema, string schemaName, bool fabric)
     {
-        // the view has `model_kind` once the table has it (layout 8). A store of layout 7 that `init` meets keeps the view it had: init alters no table, and `init --upgrade` adds the column
-        string Current(bool withModelKind) =>
-            $"CREATE OR ALTER VIEW {schema}.[metadata_current] AS SELECT m.[connection], m.[kind], m.[subject], m.[document], m.[document_hash], m.[recorded_utc], m.[tool_version], m.[plan_id], m.[git_commit]{(withModelKind ? ", m.[model_kind]" : "")} " +
-            $"FROM {schema}.[metadata_document] m WHERE m.[recorded_utc] = (SELECT MAX(x.[recorded_utc]) FROM {schema}.[metadata_document] x WHERE x.[connection] = m.[connection] AND x.[kind] = m.[kind] AND x.[subject] = m.[subject])";
-        yield return ("view metadata_current: the latest document per connection, kind and subject",
-            $"IF COL_LENGTH({TrackingDdl.Literal(schemaName + ".metadata_document")}, 'model_kind') IS NOT NULL\n  EXEC({TrackingDdl.Literal(Current(true))});\nELSE\n  EXEC({TrackingDdl.Literal(Current(false))});");
+        string Guarded(string create) => $"IF COL_LENGTH({TrackingDdl.Literal(schemaName + ".metadata_document")}, 'subject_kind') IS NOT NULL\n  EXEC({TrackingDdl.Literal(create)});";
+        yield return ("view metadata_current: the latest document per connection, subject kind and subject",
+            Guarded($"CREATE OR ALTER VIEW {schema}.[metadata_current] AS SELECT m.[connection], m.[subject_kind], m.[subject], m.[document], m.[document_hash], m.[recorded_utc], m.[tool_version], m.[plan_id], m.[git_commit], m.[model_kind] " +
+            $"FROM {schema}.[metadata_document] m WHERE m.[recorded_utc] = (SELECT MAX(x.[recorded_utc]) FROM {schema}.[metadata_document] x WHERE x.[connection] = m.[connection] AND x.[subject_kind] = m.[subject_kind] AND x.[subject] = m.[subject])"));
         if (fabric) yield break; // OPENJSON on Fabric is not verified
-        yield return ("view metadata_columns: one row per model or source column, from the latest documents",
-            $"CREATE OR ALTER VIEW {schema}.[metadata_columns] AS\nSELECT m.[connection], m.[subject] AS [model], c.[name] AS [column_name], c.[logical_type], c.[nullable], c.[collation],\n" +
+        yield return ("view metadata_columns: one row per column of a model of any kind, from the latest documents",
+            Guarded($"CREATE OR ALTER VIEW {schema}.[metadata_columns] AS\nSELECT m.[connection], m.[subject] AS [model], c.[name] AS [column_name], c.[logical_type], c.[nullable], c.[collation],\n" +
             "  JSON_VALUE(c.[native], '$.sqlserver.type') AS [sqlserver_type], JSON_VALUE(c.[native], '$.postgres.type') AS [postgres_type], JSON_VALUE(c.[native], '$.fabric.type') AS [fabric_type],\n" +
-            "  JSON_VALUE(c.[lineage], '$.inferred_nullability') AS [inferred_nullability], JSON_QUERY(c.[lineage], '$.upstream') AS [upstream], m.[kind]\n" +
+            "  JSON_VALUE(c.[lineage], '$.inferred_nullability') AS [inferred_nullability], JSON_QUERY(c.[lineage], '$.upstream') AS [upstream], m.[model_kind]\n" +
             $"FROM {schema}.[metadata_current] m\nCROSS APPLY OPENJSON(m.[document], '$.columns') WITH (\n  [name] nvarchar(256) '$.name', [logical_type] nvarchar(128) '$.logical_type', [nullable] bit '$.nullable', [collation] nvarchar(128) '$.collation',\n" +
-            "  [native] nvarchar(max) '$.native' AS JSON, [lineage] nvarchar(max) '$.lineage' AS JSON) c\nWHERE m.[kind] IN ('model', 'source');");
+            "  [native] nvarchar(max) '$.native' AS JSON, [lineage] nvarchar(max) '$.lineage' AS JSON) c\nWHERE m.[subject_kind] = 'model'"));
     }
 
     public static IEnumerable<(string Description, string Text)> Postgres(string schema, string schemaName)
     {
-        string Current(bool withModelKind) =>
-            $"CREATE OR REPLACE VIEW {schema}.\"metadata_current\" AS SELECT m.\"connection\", m.\"kind\", m.\"subject\", m.\"document\", m.\"document_hash\", m.\"recorded_utc\", m.\"tool_version\", m.\"plan_id\", m.\"git_commit\"{(withModelKind ? ", m.\"model_kind\"" : "")} " +
-            $"FROM {schema}.\"metadata_document\" m WHERE m.\"recorded_utc\" = (SELECT MAX(x.\"recorded_utc\") FROM {schema}.\"metadata_document\" x WHERE x.\"connection\" = m.\"connection\" AND x.\"kind\" = m.\"kind\" AND x.\"subject\" = m.\"subject\");";
-        yield return ("view metadata_current: the latest document per connection, kind and subject",
-            $"DO $$\nBEGIN\n  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schemaName)} AND table_name = 'metadata_document' AND column_name = 'model_kind') THEN\n    {Current(true)}\n  ELSE\n    {Current(false)}\n  END IF;\nEND $$;");
-        yield return ("view metadata_columns: one row per model or source column, from the latest documents",
-            $"CREATE OR REPLACE VIEW {schema}.\"metadata_columns\" AS\nSELECT m.\"connection\", m.\"subject\" AS \"model\", c ->> 'name' AS \"column_name\", c ->> 'logical_type' AS \"logical_type\", (c ->> 'nullable')::boolean AS \"nullable\", c ->> 'collation' AS \"collation\",\n" +
+        string Guarded(string create) =>
+            $"DO $$\nBEGIN\n  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = {TrackingDdl.Literal(schemaName)} AND table_name = 'metadata_document' AND column_name = 'subject_kind') THEN\n    EXECUTE {TrackingDdl.Literal(create)};\n  END IF;\nEND $$;";
+        yield return ("view metadata_current: the latest document per connection, subject kind and subject",
+            Guarded($"CREATE OR REPLACE VIEW {schema}.\"metadata_current\" AS SELECT m.\"connection\", m.\"subject_kind\", m.\"subject\", m.\"document\", m.\"document_hash\", m.\"recorded_utc\", m.\"tool_version\", m.\"plan_id\", m.\"git_commit\", m.\"model_kind\" " +
+            $"FROM {schema}.\"metadata_document\" m WHERE m.\"recorded_utc\" = (SELECT MAX(x.\"recorded_utc\") FROM {schema}.\"metadata_document\" x WHERE x.\"connection\" = m.\"connection\" AND x.\"subject_kind\" = m.\"subject_kind\" AND x.\"subject\" = m.\"subject\")"));
+        yield return ("view metadata_columns: one row per column of a model of any kind, from the latest documents",
+            Guarded($"CREATE OR REPLACE VIEW {schema}.\"metadata_columns\" AS\nSELECT m.\"connection\", m.\"subject\" AS \"model\", c ->> 'name' AS \"column_name\", c ->> 'logical_type' AS \"logical_type\", (c ->> 'nullable')::boolean AS \"nullable\", c ->> 'collation' AS \"collation\",\n" +
             "  c -> 'native' -> 'sqlserver' ->> 'type' AS \"sqlserver_type\", c -> 'native' -> 'postgres' ->> 'type' AS \"postgres_type\", c -> 'native' -> 'fabric' ->> 'type' AS \"fabric_type\",\n" +
-            "  c -> 'lineage' ->> 'inferred_nullability' AS \"inferred_nullability\", c -> 'lineage' -> 'upstream' AS \"upstream\", m.\"kind\"\n" +
-            $"FROM {schema}.\"metadata_current\" m\nCROSS JOIN LATERAL jsonb_array_elements(m.\"document\" -> 'columns') AS c\nWHERE m.\"kind\" IN ('model', 'source');");
+            "  c -> 'lineage' ->> 'inferred_nullability' AS \"inferred_nullability\", c -> 'lineage' -> 'upstream' AS \"upstream\", m.\"model_kind\"\n" +
+            $"FROM {schema}.\"metadata_current\" m\nCROSS JOIN LATERAL jsonb_array_elements(m.\"document\" -> 'columns') AS c\nWHERE m.\"subject_kind\" = 'model'"));
     }
 }

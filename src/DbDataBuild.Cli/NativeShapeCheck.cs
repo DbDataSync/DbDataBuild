@@ -15,7 +15,7 @@ namespace DbDataBuild.Cli;
 internal static class NativeShapeCheck
 {
     /// <summary>What differs (empty when the shape agrees), or null when the engine could not say.</summary>
-    public static async Task<IReadOnlyList<string>?> DifferencesAsync(ProjectConfig config, SourceDescriptor native, string connection, LoginSettings login)
+    public static async Task<IReadOnlyList<string>?> DifferencesAsync(ProjectConfig config, DeclaredModel native, string connection, LoginSettings login)
     {
         var use = NativeInline.Prepare(native, config);
         var values = NativeInline.Values(native, use, config, connection);
@@ -27,11 +27,11 @@ internal static class NativeShapeCheck
         await using var read = await ReadSession.OpenAsync(login);
         var columns = await read.DescribeAsync(text, engine, parameters);
         if (columns == null) return null;
-        var live = SourceImport.Describe(engine, new ObjectShape("native", native.Name, ObjectKind.Table, columns, []), null, dialect: login.Dialect);
-        var now = SourceImport.ToDescriptor(live, native);
-        return SourceImport.Compare(native, now)
-            .Where(c => c.Kind is SourceChangeKind.ColumnRemoved or SourceChangeKind.TypeChanged)       // not nullability: an engine calls any computed column nullable, so a declared NOT NULL is the author's assertion
-            .Select(c => c.Kind == SourceChangeKind.ColumnRemoved ? $"column `{c.Column}` is not returned" : $"column `{c.Column}` is returned as another type ({c.Detail})").ToList();
+        var live = MappedModelImport.Describe(engine, new ObjectShape("native", native.Name, ObjectKind.Table, columns, []), null, dialect: login.Dialect);
+        var now = MappedModelImport.ToDescriptor(live, native);
+        return MappedModelImport.Compare(native, now)
+            .Where(c => c.Kind is MappedModelChangeKind.ColumnRemoved or MappedModelChangeKind.TypeChanged)       // not nullability: an engine calls any computed column nullable, so a declared NOT NULL is the author's assertion
+            .Select(c => c.Kind == MappedModelChangeKind.ColumnRemoved ? $"column `{c.Column}` is not returned" : $"column `{c.Column}` is returned as another type ({c.Detail})").ToList();
     }
 
     /// <summary>The native selects the plan's models read on <paramref name="target"/> (inlined, or landed by a local copy), each against the engine.</summary>
@@ -50,7 +50,7 @@ internal static class NativeShapeCheck
         return findings;
     }
 
-    internal static Diagnostic Finding(SourceDescriptor native, string text, bool warning)
+    internal static Diagnostic Finding(DeclaredModel native, string text, bool warning)
     {
         var d = new Diagnostic(DiagnosticCatalog.CopyOriginDiffers, new(native.Native?.File ?? native.Name, native.Native?.Line ?? 0, 0), text);
         return warning ? d with { SeverityOverride = Severity.Warning } : d;

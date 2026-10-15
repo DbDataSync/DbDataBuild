@@ -11,8 +11,8 @@ using DbDataBuild.Targets.Ddl;
 namespace DbDataBuild.Cli;
 
 /// <summary>
-/// `dbdatabuild connection seed` (effect: target writes; DESIGN.md 15.6). Runs the project's seeds in DuckDB, then creates each seeded source table on a target and fills it. It is how a sandbox database gets the
-/// data of a template (or of any project that keeps its source data as DuckDB queries). Without `--apply` it prints what it would do and connects to nothing. It writes only the tables the sources describe, and
+/// `dbdatabuild connection seed` (effect: target writes; DESIGN.md 15.6). Runs the project's seeds in DuckDB, then creates each seeded table (a mapped model) on a target and fills it. It is how a sandbox database gets the
+/// data of a template (or of any project that keeps the rows of its mapped models as DuckDB queries). Without `--apply` it prints what it would do and connects to nothing. It writes only the tables the mapped models describe, and
 /// stops at the first table that already exists unless `--replace` says to drop and recreate it, so it cannot touch a table the project does not name. Rows travel as bound parameters in batches through the mutation gate;
 /// the statement log has the statements and the number of values, not the values.
 /// </summary>
@@ -48,17 +48,17 @@ internal static class LoadSeedsCommand
 
         var ctx = ProjectContext.Load(root);
         var seeds = SeedLoader.Load(root);
-        if (seeds.Seeds.Count == 0) { error.WriteLine($"The project has no seeds: put a DuckDB query per source in {SeedLoader.Directory}/<schema name>/<table>.sql."); return CliApp.ExitUsage; }
+        if (seeds.Seeds.Count == 0) { error.WriteLine($"The project has no seeds: put a DuckDB query per mapped model in {SeedLoader.Directory}/<schema name>/<table>.sql."); return CliApp.ExitUsage; }
 
         var ddl = TargetRegistry.Get(engine).CreateDdl(config.ForConnection(target));
         SeededData data;
-        try { data = SeededData.Run(ctx.Project.Descriptors, seeds, seed, scale); }
+        try { data = SeededData.Run(ctx.Project.MappedModels, seeds, seed, scale); }
         catch (SampleException ex) { error.WriteLine(ex.Message); return CliApp.ExitFindings; }
 
         using (data)
         {
-            var bySource = ctx.Project.Descriptors.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
-            var tables = new List<(SeededTable Seeded, SourceDescriptor Source, IReadOnlyList<NativeColumn> Columns)>();
+            var bySource = ctx.Project.MappedModels.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
+            var tables = new List<(SeededTable Seeded, DeclaredModel Source, IReadOnlyList<NativeColumn> Columns)>();
             try
             {
                 foreach (var t in data.Tables)
@@ -121,7 +121,7 @@ internal static class LoadSeedsCommand
     }
 
     private static async Task<List<SeededTable>> LoadAsync(LoginSettings write, string command, DdlGenerator ddl, SeededData data,
-        List<(SeededTable Seeded, SourceDescriptor Source, IReadOnlyList<NativeColumn> Columns)> tables, bool replace, IStatementLog log, Guid runId)
+        List<(SeededTable Seeded, DeclaredModel Source, IReadOnlyList<NativeColumn> Columns)> tables, bool replace, IStatementLog log, Guid runId)
     {
         await using var gate = await MutationGate.OpenAsync(write, command, StatementKind.Ddl | StatementKind.Data, log, runId);
         var done = new List<SeededTable>();
@@ -155,7 +155,7 @@ internal static class LoadSeedsCommand
     internal static int Statements(long rows, int columns) => (int)((rows + RowsPerStatement(columns) - 1) / RowsPerStatement(columns));
 
     /// <summary>One INSERT of a batch of rows, a bound parameter for every value.</summary>
-    internal static GateStatement Insert(string stepId, DdlGenerator ddl, string schema, string name, SourceDescriptor source, IReadOnlyList<NativeColumn> columns, IReadOnlyList<object?[]> rows)
+    internal static GateStatement Insert(string stepId, DdlGenerator ddl, string schema, string name, DeclaredModel source, IReadOnlyList<NativeColumn> columns, IReadOnlyList<object?[]> rows)
     {
         var types = source.Columns.Select(c => DbTypeOf(c.Type)).ToList();
         var parameters = new List<GateParameter>(rows.Count * columns.Count);

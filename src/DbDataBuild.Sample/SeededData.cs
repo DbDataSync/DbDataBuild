@@ -16,7 +16,7 @@ public sealed class SeededData : IDisposable
 
     private SeededData(DuckDBConnection db, IReadOnlyList<SeededTable> tables) { this.db = db; Tables = tables; }
 
-    public static SeededData Run(IReadOnlyList<SourceDescriptor> sources, SeedSet seeds, int seed, int? scale)
+    public static SeededData Run(IReadOnlyList<DeclaredModel> sources, SeedSet seeds, int seed, int? scale)
     {
         var db = new DuckDBConnection("DataSource=:memory:");
         db.Open();

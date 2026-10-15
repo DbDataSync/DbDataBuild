@@ -61,7 +61,7 @@ public class LoadSeedsTests
     {
         var config = ProjectConfigLoader.Load("defaults: {connections: [sqlserver]}\nstring_semantics:\n  case: sensitive\n  trailing_space: ignored\n  collations:\n    default: { duckdb: NFC, sqlserver: Latin1_General_100_CS_AS, postgres: C }\n", "dbdatabuild.yml", []);
         var ddl = TargetRegistry.Get(target).CreateDdl(config!);
-        var source = new SourceDescriptor("raw.customers", [new ColumnDefinition("id", "INTEGER", false), new ColumnDefinition("name", "VARCHAR(20)")], []);
+        var source = new DeclaredModel("raw.customers", [new ColumnDefinition("id", "INTEGER", false), new ColumnDefinition("name", "VARCHAR(20)")], []);
         var native = source.Columns.Select(c => ddl.Map(source.Name, c)).ToList();
         var statement = LoadSeedsCommand.Insert("s", ddl, "raw", "customers", source, native, [[1, "Ann'; DROP TABLE x;--"], [2, null]]);
         Assert.Equal($"INSERT INTO {table} ({columns}) VALUES\n(@p0, @p1),\n(@p2, @p3);", statement.Text);

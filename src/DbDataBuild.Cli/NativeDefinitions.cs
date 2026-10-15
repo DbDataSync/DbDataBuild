@@ -19,13 +19,13 @@ internal static class NativeDefinitions
     public const string DocumentKind = "native_definition";
 
     /// <summary>A native model used on a connection: read by a model built there (inlined, or landed by a local copy) or the origin of a copy.</summary>
-    public sealed record Use(SourceDescriptor Native, string Connection)
+    public sealed record Use(DeclaredModel Native, string Connection)
     {
         public string Subject => $"{Native.Name}@{Connection}";
     }
 
     /// <summary>The native models with something to watch that the given models use on <paramref name="target"/>.</summary>
-    public static IReadOnlyList<Use> InPlay(ProjectContext ctx, IEnumerable<(ModelSource Source, string Sql)> models, string target)
+    public static IReadOnlyList<Use> InPlay(ProjectContext ctx, IEnumerable<(BuiltModel Source, string Sql)> models, string target)
     {
         var uses = new Dictionary<string, Use>(StringComparer.Ordinal);
         void Add(string? name, string connection)

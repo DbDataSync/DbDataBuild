@@ -75,8 +75,8 @@ a.link:hover, .link:hover { text-decoration: underline; }
 .graph { overflow: auto; max-height: calc(100vh - 190px); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .graph svg text { font: 12px system-ui, sans-serif; fill: var(--ink); pointer-events: none; }
 .graph .node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; rx: 5; cursor: pointer; }
-.graph .node.source rect { stroke: var(--src); }
-.graph .node.model rect { stroke: var(--accent); }
+.graph .node.mapped rect, .graph .node.native rect { stroke: var(--src); }
+.graph .node.built rect { stroke: var(--accent); }
 .graph .node.sel rect { fill: var(--accent); }
 .graph .node.sel text { fill: var(--accent-ink); }
 .graph .node.dim { opacity: .18; }
@@ -255,6 +255,8 @@ async function openExplain(code) {
 const sevClass = { error: "bad", warning: "warn", note: "note" };
 const statusClass = { pass: "ok", fail: "bad", warn: "warn", error: "bad" };
 function badge(text, cls) { return h("span", { class: "badge " + (cls || "") }, text); }
+// the five kinds the tool builds; mapped and native models it only declares
+function isBuilt(kind) { return kind !== "mapped" && kind !== "native"; }
 function modelLink(name) { return h("a", { class: "link", href: "#/models/" + encodeURIComponent(name) }, name); }
 function fileLink(file, line) { return h("span", { class: "link", onclick: () => openFile(file, line) }, file + (line ? ":" + line : "")); }
 function loading() { return h("div", { class: "spin" }, "Running the commands…"); }
@@ -279,7 +281,7 @@ async function healthView() {
     const place = (d) => { const m = /^rendered\/lowered\/([^/]+)\//.exec(d.location.file || ""); return m ? m[1] : d.location.file || "(project)"; };
     const byFile = Map.groupBy(shown, place);
     holder.replaceChildren(...[...byFile].sort((a, b) => a[0].localeCompare(b[0])).map(([file, ds]) => h("div", { class: "panel" },
-      h("h2", null, /^(models|sources|tests)\//.test(file) ? fileLink(file) : /^[a-z_]+\.[A-Za-z0-9_]+$/.test(file) ? [modelLink(file), h("span", { class: "muted" }, " (lowered query)")] : file, " ", h("span", { class: "muted" }, `(${ds.length})`)),
+      h("h2", null, /^(models|tests)\//.test(file) ? fileLink(file) : /^[a-z_]+\.[A-Za-z0-9_]+$/.test(file) ? [modelLink(file), h("span", { class: "muted" }, " (lowered query)")] : file, " ", h("span", { class: "muted" }, `(${ds.length})`)),
       h("table", null, h("tbody", null, ds.map((d) => h("tr", null,
         h("td", null, badge(d.severity, sevClass[d.severity])),
         h("td", { style: "white-space:nowrap" }, h("span", { class: "link", onclick: () => openExplain(d.code) }, d.code)),
@@ -323,11 +325,11 @@ async function lineageView(selected) {
   for (const n of nodes) {
     const p = pos.get(n.name);
     const label = n.name.length > 31 ? n.name.slice(0, 30) + "…" : n.name;
-    const el = s("g", { class: "node " + n.kind, transform: `translate(${p.x},${p.y})` }, s("rect", { width: W, height: H }), s("text", { x: 8, y: 17 }, document.createTextNode(label)));
+    const el = s("g", { class: "node " + (n.kind == null ? n.category : isBuilt(n.kind) ? "built " + n.kind : n.kind), transform: `translate(${p.x},${p.y})` }, s("rect", { width: W, height: H }), s("text", { x: 8, y: 17 }, document.createTextNode(label)));
     el.append(s("title", {}, document.createTextNode(n.name + (n.connections?.length ? "  (" + n.connections.join(", ") + ")" : ""))));
     el.addEventListener("click", () => select(selectedName === n.name ? null : n.name));
     makeKeyboardOperable(el);
-    el.setAttribute("aria-label", n.name + " (" + n.kind + ")");
+    el.setAttribute("aria-label", n.name + " (" + (n.kind ?? n.category) + ")");
     svg.append(el); nodeEls.set(n.name, el);
   }
   const side = h("div", { class: "panel" });
@@ -343,10 +345,10 @@ async function lineageView(selected) {
     if (name) nodeEls.get(name).scrollIntoView({ block: "nearest", inline: "center" });
   }
   function describe(name, keep) {
-    if (!name) return [h("h2", null, "Lineage"), h("div", { class: "muted" }, `${nodes.filter((n) => n.kind === "source").length} sources, ${nodes.filter((n) => n.kind === "model").length} models, ${g.edges.length} dependencies. Click a table to follow what it reads and what reads it; click it again to clear.`)];
+    if (!name) return [h("h2", null, "Lineage"), h("div", { class: "muted" }, `${nodes.filter((n) => n.kind && !isBuilt(n.kind)).length} declared models, ${nodes.filter((n) => n.kind && isBuilt(n.kind)).length} built models, ${g.edges.length} dependencies. Click a table to follow what it reads and what reads it; click it again to clear.`)];
     const n = byName.get(name);
     const into = g.column_edges.filter((c) => c.to_model === name), outOf = g.column_edges.filter((c) => c.from_table === name);
-    return [h("h2", null, n.kind === "model" ? modelLink(name) : name, " ", badge(n.kind, n.kind === "model" ? "note" : "")),
+    return [h("h2", null, n.kind ? modelLink(name) : name, " ", badge(n.kind ?? n.category, n.kind && isBuilt(n.kind) ? "note" : "")),
       h("div", { class: "muted" }, `${keep.size - 1} connected: ${reach(name, up).size} upstream, ${reach(name, down).size} downstream`), n.file ? h("div", null, fileLink(n.file)) : null,
       into.length ? [h("h3", null, "Columns read from upstream"), colTable(into, (c) => `${c.from_table}.${c.from_column}`, (c) => c.to_column)] : null,
       outOf.length ? [h("h3", null, "Columns used downstream"), colTable(outOf, (c) => `${c.to_model}.${c.to_column}`, (c) => c.from_column)] : null];
@@ -369,43 +371,37 @@ async function lineageView(selected) {
 
 async function modelsView(name, tab) {
   const meta = (await run("project_show_metadata")).data;
-  const models = meta.models, sources = meta.sources;
-  const filter = h("input", { type: "search", placeholder: "Filter…", "aria-label": "Filter models and sources", oninput: () => drawList() });
+  const models = meta.models;
+  const filter = h("input", { type: "search", placeholder: "Filter…", "aria-label": "Filter models", oninput: () => drawList() });
   const list = h("div", { class: "list" });
   function drawList() {
     const q = filter.value.trim().toLowerCase();
     const layers = Map.groupBy(models.filter((m) => m.name.toLowerCase().includes(q)), (m) => m.name.split(".")[0]);
-    const srcs = sources.filter((s) => s.name.toLowerCase().includes(q));
-    list.replaceChildren(...[
-      ...[...layers].map(([layer, ms]) => [h("h3", null, layer), ms.map((m) => h("div", { class: m.name === name ? "on" : null, onclick: () => go("models", m.name) }, m.name.slice(layer.length + 1)))]),
-      srcs.length ? [h("h3", null, "sources"), srcs.map((s) => h("div", { class: s.name === name ? "on" : null, onclick: () => go("models", s.name) }, s.name))] : null].flat(Infinity).filter(Boolean));
+    list.replaceChildren(...[...layers].map(([layer, ms]) => [h("h3", null, layer),
+      ms.map((m) => h("div", { class: m.name === name ? "on" : null, onclick: () => go("models", m.name) }, m.name.slice(layer.length + 1), isBuilt(m.kind) ? null : h("span", { class: "muted" }, "  " + m.kind)))]).flat(Infinity).filter(Boolean));
   }
   drawList();
   const detail = h("div");
-  const model = models.find((m) => m.name === name), source = sources.find((s) => s.name === name);
+  const model = models.find((m) => m.name === name);
   if (model) await modelDetail(detail, model, tab || "columns");
-  else if (source) detail.append(sourceDetail(source));
-  else detail.append(h("div", { class: "empty" }, `${models.length} models and ${sources.length} sources. Choose one.`));
+  else detail.append(h("div", { class: "empty" }, `${models.length} models (${Object.entries(Object.groupBy(models, (m) => m.kind)).map(([k, v]) => v.length + " " + k).join(", ")}). Choose one.`));
   return h("div", { class: "split" }, h("div", null, h("div", { class: "bar" }, filter), list), detail);
-}
-
-function sourceDetail(s) {
-  return h("div", { class: "panel" }, h("h2", null, s.name, " ", badge(s.kind || "source", "")), h("pre", null, JSON.stringify(s, null, 2)));
 }
 
 async function modelDetail(root, m, tab) {
   const targets = m.connections || [];
-  const tabs = [["columns", "Columns"], ["sql", "Query"], ["lowered", "Lowered"], ...targets.map((t) => ["connection:" + t, t])];
+  const tabs = isBuilt(m.kind) ? [["columns", "Columns"], ["sql", "Query"], ["lowered", "Lowered"], ...targets.map((t) => ["connection:" + t, t])] : [["columns", "Columns"], ["definition", "Definition"]];
   const body = h("div");
   root.append(
     h("div", { class: "panel" }, h("h2", null, m.name, " ", badge(m.kind, "note")),
       h("div", null, h("span", { class: "muted" }, "grain "), (m.grain || []).length ? m.grain.map((g) => h("span", { class: "tag" }, g)) : h("span", { class: "warn" }, "not declared")),
       h("div", null, h("span", { class: "muted" }, "connections "), targets.map((t) => h("span", { class: "tag" }, t))),
-      h("div", null, h("span", { class: "muted" }, "reads "), (m.upstream || []).map((u) => [h("span", { class: "tag" }, u.kind === "model" ? modelLink(u.name) : h("a", { class: "link", href: "#/models/" + encodeURIComponent(u.name) }, u.name)), " "])),
+      h("div", null, h("span", { class: "muted" }, "reads "), (m.upstream || []).map((u) => [h("span", { class: "tag" }, h("a", { class: "link", href: "#/models/" + encodeURIComponent(u.name) }, u.name), u.kind && isBuilt(u.kind) ? null : h("span", { class: "muted" }, " " + u.kind)), " "])),
       (m.rewrites_off || []).length ? h("div", null, h("span", { class: "muted" }, "rewrites off "), m.rewrites_off.map((r) => h("span", { class: "tag" }, r))) : null),
     h("div", { class: "panel" }, h("div", { class: "tabs" }, tabs.map(([id, label]) => h("a", { class: id === tab ? "on" : null, href: "#/models/" + encodeURIComponent(m.name) + "/" + id, "aria-current": id === tab ? "page" : null }, label))), body));
   if (tab === "columns") body.append(columnsTable(m, targets));
   else if (tab === "sql") await showFile(body, m.files?.query);
+  else if (tab === "definition") await showFile(body, m.files?.definition);
   else if (tab === "lowered") {
     if (m.lowered?.rules?.length) body.append(h("div", null, h("span", { class: "muted" }, "type rules that fired "), m.lowered.rules.map((r) => h("span", { class: "tag" }, r))));
     await showRendered(body, m.name, (f) => f.path.startsWith("rendered/lowered/"));
@@ -722,27 +718,27 @@ async function sampleView() {
   const list = h("datalist", { id: "sample-models" }, meta.models.map((m) => h("option", { value: m.name })));
   const models = h("input", { type: "text", list: "sample-models", placeholder: "model names or selectors (default: every model)", "aria-label": "Models", style: "min-width:360px" });
   const num = (label, value, min) => { const i = h("input", { type: "text", value, "aria-label": label, size: 6 }); i.dataset.min = min; return i; };
-  const rows = num("Rows per source", "50", 1), seed = num("Seed", "1", 0), limit = num("Rows to show", "20", 1), scale = num("Scale", "", 1);
-  const sources = h("input", { type: "checkbox", "aria-label": "Also show the sources" });
+  const rows = num("Rows per declared model", "50", 1), seed = num("Seed", "1", 0), limit = num("Rows to show", "20", 1), scale = num("Scale", "", 1);
+  const declared = h("input", { type: "checkbox", "aria-label": "Also show the declared models" });
   async function go1() {
     out.replaceChildren(h("div", { class: "spin" }, "Running the models in DuckDB…"));
     try {
       const args = {};
       if (models.value.trim()) args.models = models.value.trim().split(/\s+/);
       for (const [name, el] of [["rows", rows], ["seed", seed], ["limit", limit], ["scale", scale]]) if (el.value.trim() !== "") { const n = Number(el.value); if (!Number.isInteger(n) || n < +el.dataset.min) throw new Error(`${name} must be a whole number from ${el.dataset.min}`); args[name] = n; }
-      if (sources.checked) args.sources = true;
+      if (declared.checked) args.declared = true;
       const doc = await run("project_sample", args, true);
       out.replaceChildren(doc.data?.tables ? sampleResult(doc.data) : outcome(doc));
     } catch (e) { out.replaceChildren(h("div", { class: "err" }, e.message)); }
   }
   return h("div", null, list, h("div", { class: "panel" }, h("h2", null, "Run models on sample data"),
     h("div", { class: "muted" }, "Offline, in DuckDB, on generated rows: nothing is read from a target. The rows are made up by the project's seeds."),
-    h("div", { class: "bar", style: "margin-top:8px" }, models, h("label", null, "rows ", rows), h("label", null, "seed ", seed), h("label", null, "show ", limit), h("label", null, "scale ", scale), h("label", null, sources, " sources too"), h("button", { onclick: go1 }, "Run"))), out);
+    h("div", { class: "bar", style: "margin-top:8px" }, models, h("label", null, "rows ", rows), h("label", null, "seed ", seed), h("label", null, "show ", limit), h("label", null, "scale ", scale), h("label", null, declared, " declared models too"), h("button", { onclick: go1 }, "Run"))), out);
 }
 
 function sampleResult(d) {
   return h("div", null, d.tables.map((t) => h("div", { class: "panel" },
-    h("h2", null, t.kind === "model" ? modelLink(t.name) : t.name, " ", badge(t.kind, t.kind === "model" ? "note" : ""), " ", h("span", { class: "muted" }, `${t.row_count.toLocaleString()} row${t.row_count === 1 ? "" : "s"}` + (t.row_count > t.rows.length ? `, first ${t.rows.length}` : ""))),
+    h("h2", null, modelLink(t.name), " ", badge(t.kind, isBuilt(t.kind) ? "note" : ""), " ", h("span", { class: "muted" }, `${t.row_count.toLocaleString()} row${t.row_count === 1 ? "" : "s"}` + (t.row_count > t.rows.length ? `, first ${t.rows.length}` : ""))),
     t.error ? h("div", { class: "err" }, t.error) : null, (t.warnings || []).map((w) => h("div", { class: "warn" }, w)),
     t.rows.length ? h("div", { style: "overflow:auto;max-height:420px" }, h("table", null, h("thead", null, h("tr", null, t.columns.map((c) => h("th", { title: c.type }, c.name)))),
       h("tbody", null, t.rows.map((r) => h("tr", null, r.map((v) => h("td", null, v == null ? h("span", { class: "muted" }, "∅") : v))))))) : (t.error ? null : h("div", { class: "muted" }, "No rows.")))));

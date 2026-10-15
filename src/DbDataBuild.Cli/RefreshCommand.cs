@@ -407,7 +407,7 @@ internal static class RefreshCommand
                 {
                     ctx = ProjectContext.Load(root);
                     var chosen = ctx.Select(positives, error);
-                    picked = chosen?.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    picked = chosen?.Select(p => p.Model.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 }
                 if (picked == null) return null;
                 models = picked;
@@ -421,7 +421,7 @@ internal static class RefreshCommand
                 {
                     ctx ??= ProjectContext.Load(root);
                     var kept = ctx.Select(excludes, error);
-                    keptNames = kept?.Select(p => p.Source.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    keptNames = kept?.Select(p => p.Model.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 }
                 if (keptNames == null) return null;
                 models = models == null ? keptNames : models.Where(keptNames.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);

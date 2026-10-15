@@ -90,10 +90,10 @@ public class StringProfileLintTests
     public void A_column_says_it_is_trimmed_and_the_file_it_is_written_to_keeps_that()
     {
         var dir = Project(Join, trimmed: true);
-        var descriptor = ProjectValidator.Validate(dir).Descriptors.First(d => d.Name == "src.a");
+        var descriptor = ProjectValidator.Validate(dir).MappedModels.First(d => d.Name == "src.a");
         Assert.True(descriptor.Columns.First(c => c.Name == "code").Trimmed);
         Assert.False(descriptor.Columns.First(c => c.Name == "label").Trimmed);
-        Assert.Contains("    trimmed: true\n", SourceDescriptorWriter.Yaml(descriptor));
+        Assert.Contains("    trimmed: true\n", DeclaredModelWriter.Yaml(descriptor));
         Write(dir, "models/src/a.yml", "name: src.a\nkind: mapped\ncolumns:\n  - {name: code, type: \"VARCHAR(10)\", trimmed: maybe}\n");
         Assert.Contains("trimmed is `maybe`", Validate(dir));
     }

@@ -9,13 +9,13 @@ namespace DbDataBuild.Cli;
 
 /// <summary>
 /// `dbdatabuild project import` (effect: target read-only; with --write it also writes mapped models under `models/`). Reads the columns, types, nullability and primary key of tables and views in the
-/// target through the read login and exports them as source descriptors (DESIGN.md 6.5.1), so models over those tables bind offline against what the tables really are. It never
+/// target through the read login and exports them as mapped models (DESIGN.md 6.5.1), so models over those tables bind offline against what the tables really are. It never
 /// runs a query against the data and never changes the target. Without arguments it refreshes the descriptors the project already has.
-/// The live table wins for columns, types and nullability; a committed grain and a column the catalog cannot type are kept (SourceImport).
+/// The live table wins for columns, types and nullability; a committed grain and a column the catalog cannot type are kept (MappedModelImport).
 /// </summary>
-internal static class ImportSourcesCommand
+internal static class ImportCommand
 {
-    internal sealed record Row(string Name, string Kind, string? File, string Status, IReadOnlyList<SourceChange> Changes, ImportedObject? Live, SourceDescriptor? Descriptor, string? NewText, string? OldText, string? ExpectedHash);
+    internal sealed record Row(string Name, string Kind, string? File, string Status, IReadOnlyList<MappedModelChange> Changes, ImportedObject? Live, DeclaredModel? Descriptor, string? NewText, string? OldText, string? ExpectedHash);
     internal sealed record Skipped(string Object, string Reason);
 
     public static int Run(CommandSpec spec, string root, string? targetArg, string[] patterns, bool write, bool check, TextWriter output, TextWriter error, Func<string, string?> env)
@@ -27,7 +27,7 @@ internal static class ImportSourcesCommand
         var target = connection.Name; var engine = connection.Engine;
         var (login, missing) = LoginSettings.FromEnvironment(connection, Login.Read, env);
 
-        var committed = ctx.Project.Descriptors.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
+        var committed = ctx.Project.MappedModels.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
         var models = ctx.Project.Models.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // what to look at: the patterns, or (none given) every descriptor the project has
@@ -53,7 +53,7 @@ internal static class ImportSourcesCommand
         if (missing != null) { error.Diag(missing); return CliApp.ExitFindings; }
         if (login!.Dialect.Catalog == CatalogStyle.None)
         {
-            error.WriteLine($"`{target}` has the dialect `{login.Dialect.Name}`, which says `catalog: none`: its tables and columns are not read from a catalog, so they are not guessed. Declare each table by hand as a mapped model (its columns and types in a source descriptor).");
+            error.WriteLine($"`{target}` has the dialect `{login.Dialect.Name}`, which says `catalog: none`: its tables and columns are not read from a catalog, so they are not guessed. Declare each table by hand as a mapped model (its columns and types in a mapped model).");
             return CliApp.ExitFindings;
         }
 
@@ -67,9 +67,9 @@ internal static class ImportSourcesCommand
 
         output.Payload("connection", target);
         output.Payload("mode", write ? "write" : check ? "check" : "preview");
-        output.Payload("sources", rows.Select(r => new
+        output.Payload("mapped_models", rows.Select(r => new
         {
-            name = r.Name, kind = r.Kind, file = r.File, status = r.Status, grain = r.Descriptor?.Grain ?? [],
+            name = r.Name, object_kind = r.Kind, file = r.File, status = r.Status, grain = r.Descriptor?.Grain ?? [],
             indexes = (r.Descriptor?.Indexes ?? []).Select(i => new { name = i.Name, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
             foreign_keys = (r.Descriptor?.ForeignKeys ?? []).Select(f => new { name = f.Name, columns = f.Columns, references = new { table = f.Table, columns = f.ReferencedColumns } }).ToList(),
             notes = r.Live?.Notes ?? [],
@@ -92,7 +92,7 @@ internal static class ImportSourcesCommand
             output.WriteLine($"{r.Status,-9} {r.Name}  ({r.Kind}{(r.Live != null ? $", {r.Live.Columns.Count} column(s)" : "")})");
             foreach (var note in r.Live?.Notes ?? []) output.WriteLine($"          note: {note}");
             foreach (var c in r.Live?.Columns ?? [])
-                if (c.Fit != SourceTypeFit.Exact)
+                if (c.Fit != TypeFit.Exact)
                     output.WriteLine($"          {c.Name}: {c.NativeType} -> {c.LogicalType ?? "no logical type"}{(c.Reason.Length > 0 ? " (" + c.Reason + ")" : "")}");
         }
         foreach (var s in skipped) output.WriteLine($"skipped   {s.Object}: {s.Reason}");
@@ -106,7 +106,7 @@ internal static class ImportSourcesCommand
         if (check)
         {
             if (changed.Count == 0 && stale == 0) { output.WriteLine($"{rows.Count} mapped model(s) match {target}."); return CliApp.ExitOk; }
-            foreach (var r in changed) error.Diag(new Diagnostic(DiagnosticCatalog.SourceOutOfSync, new(r.File!, 0, 0), $"`{r.File}` differs from {target}: {string.Join("; ", r.Changes.Select(c => c.Column == null ? c.Kind.ToString().ToLowerInvariant() : $"{c.Kind.ToString().ToLowerInvariant()} {c.Column} ({c.Detail})"))}."));
+            foreach (var r in changed) error.Diag(new Diagnostic(DiagnosticCatalog.MappedModelOutOfSync, new(r.File!, 0, 0), $"`{r.File}` differs from {target}: {string.Join("; ", r.Changes.Select(c => c.Column == null ? c.Kind.ToString().ToLowerInvariant() : $"{c.Kind.ToString().ToLowerInvariant()} {c.Column} ({c.Detail})"))}."));
             output.WriteLine($"{changed.Count} descriptor(s) differ from {target}{(stale > 0 ? $", {stale} describe(s) no table" : "")}.");
             return CliApp.ExitFindings;
         }
@@ -137,7 +137,7 @@ internal static class ImportSourcesCommand
         List<(Regex SchemaName, Regex Table, string? LiteralSchema)> wanted, SessionOpener? open)
     {
         var target = connection.Name; var engine = connection.Engine;
-        var committed = ctx.Project.Descriptors.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
+        var committed = ctx.Project.MappedModels.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
         var models = ctx.Project.Models.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var rows = new List<Row>();
         var catalogNotes = new List<string>();
@@ -160,13 +160,13 @@ internal static class ImportSourcesCommand
                 var shape = indexes != null && indexes.TryGetValue(shape0.Name, out var found) ? shape0 with { Physical = shape0.Physical.Concat(found).ToList() } : shape0;
                 if (!wanted.Any(w => w.SchemaName.IsMatch(shape.SchemaName) && w.Table.IsMatch(shape.Name))) continue;
                 seen.Add(qualified);
-                if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a model, not a source")); continue; }
-                var live = SourceImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout, login.Dialect);
+                if (models.Contains(qualified)) { skipped.Add(new(qualified, "it is a built model, not a table to map")); continue; }
+                var live = MappedModelImport.Describe(engine, shape, keys.GetValueOrDefault(shape.Name), foreignKeys.GetValueOrDefault(shape.Name), ctx.Config.Layout, login.Dialect);
                 // a table the project already has a mapped model for is written where that model's file is, whatever the layout says
                 if (committed.TryGetValue(qualified, out var existing) && existing.File.Length > 0) live = live with { File = existing.File };
                 if (live.File == null)
                 {
-                    diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(qualified, 0, 0), $"`{qualified}` has a dot, slash or backslash in its schema name or table name, so it cannot be a path under models/."));
+                    diags.Add(new Diagnostic(DiagnosticCatalog.MappedModelNotImportable, new(qualified, 0, 0), $"`{qualified}` has a dot, slash or backslash in its schema name or table name, so it cannot be a path under models/."));
                     skipped.Add(new(qualified, "its name cannot be a file name"));
                     continue;
                 }
@@ -179,14 +179,14 @@ internal static class ImportSourcesCommand
         {
             var (s, _) = Split(d.Name)!.Value;
             if (seen.Contains(d.Name) || models.Contains(d.Name)) continue;
-            var file = d.File.Length > 0 ? d.File : SourceDescriptorWriter.PathFor(s, d.Name[(s.Length + 1)..], ctx.Config.Layout);
-            diags.Add(new Diagnostic(DiagnosticCatalog.SourceNotImportable, new(file ?? d.Name, 0, 0), $"`{d.Name}` has a mapped model, but {target} shows no table or view of that name.", Fix: "Delete the descriptor or restore the table. The tool never deletes it for you."));
+            var file = d.File.Length > 0 ? d.File : DeclaredModelWriter.PathFor(s, d.Name[(s.Length + 1)..], ctx.Config.Layout);
+            diags.Add(new Diagnostic(DiagnosticCatalog.MappedModelNotImportable, new(file ?? d.Name, 0, 0), $"`{d.Name}` has a mapped model, but {target} shows no table or view of that name.", Fix: "Delete the descriptor or restore the table. The tool never deletes it for you."));
             rows.Add(new Row(d.Name, "unknown", file, "stale", [], null, d, null, null, null));
         }
         return (rows, skipped, diags, catalogNotes);
     }
 
-    private static Row Compare(string root, string connection, ImportedObject live, SourceDescriptor? committed, List<Diagnostic> diags)
+    private static Row Compare(string root, string connection, ImportedObject live, DeclaredModel? committed, List<Diagnostic> diags)
     {
         var path = Path.Combine(root, live.File!);
         var exists = File.Exists(path);
@@ -200,16 +200,16 @@ internal static class ImportSourcesCommand
         foreach (var c in live.Columns.Where(c => c.LogicalType == null))
         {
             var kept = committed?.Columns.Any(x => string.Equals(x.Name, c.Name, StringComparison.OrdinalIgnoreCase)) == true;
-            diags.Add(new Diagnostic(DiagnosticCatalog.SourceColumnNoLogicalType, new(live.File!, 0, 0),
+            diags.Add(new Diagnostic(DiagnosticCatalog.MappedColumnNoLogicalType, new(live.File!, 0, 0),
                 $"`{live.QualifiedName}.{c.Name}` is {c.NativeType}: {c.Reason}. {(kept ? "The committed declaration was kept." : "The column was left out of the descriptor.")}"));
         }
         // a new mapped model says which connection it exists on; a refresh keeps what the file already said
-        var descriptor = SourceImport.ToDescriptor(live, committed) with { DeclaredConnections = committed == null ? [connection] : committed.Connections };
-        var changes = SourceImport.Compare(committed, descriptor);
+        var descriptor = MappedModelImport.ToDescriptor(live, committed) with { DeclaredConnections = committed == null ? [connection] : committed.Connections };
+        var changes = MappedModelImport.Compare(committed, descriptor);
         var oldText = exists ? File.ReadAllText(path) : null;
         var hash = exists ? DefinitionFile.Hash(File.ReadAllBytes(path)) : null;
         var status = committed == null ? "new" : changes.Count == 0 ? "unchanged" : "changed";
-        return new Row(live.QualifiedName, kind, live.File, status, changes, live, descriptor, status is "new" or "changed" ? SourceDescriptorWriter.Yaml(descriptor) : null, oldText, hash);
+        return new Row(live.QualifiedName, kind, live.File, status, changes, live, descriptor, status is "new" or "changed" ? DeclaredModelWriter.Yaml(descriptor) : null, oldText, hash);
     }
 
     internal static (string SchemaName, string Table)? Split(string name)

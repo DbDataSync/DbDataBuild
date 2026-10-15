@@ -67,14 +67,14 @@ public class ParametersTests
         var result = ProjectValidator.Validate(dir);
         Assert.False(result.HasErrors, string.Join("\n", result.Diagnostics.Select(DiagnosticFormatter.Format)));
         var cfg = ProjectConfigLoader.LoadFromProject(dir, []);
-        string Seen(string model, string key) => result.Sources.Single(s => s.Definition.Name == model).ParametersFor(cfg, "wh")[key].Value;
+        string Seen(string model, string key) => result.BuiltModels.Single(s => s.Definition.Name == model).ParametersFor(cfg, "wh")[key].Value;
         Assert.Equal("eu", Seen("root.c", "project.region"));                 // the root's
         Assert.Equal("eu-west", Seen("eu.a", "project.region"));               // a folder overrides it for what is beneath
         Assert.Equal("uk", Seen("eu.uk.b", "project.region"));                 // the nearest wins
         Assert.Equal("main", Seen("root.c", "connection.site"));
         Assert.Equal("branch", Seen("eu.a", "connection.site"));               // a folder may override a connection's parameter
         Assert.Equal("loud", Seen("eu.uk.b", "model.tone"));
-        Assert.DoesNotContain("model.tone", result.Sources.Single(s => s.Definition.Name == "eu.a").ParametersFor(cfg, "wh").Keys);   // a model's parameters are its own
+        Assert.DoesNotContain("model.tone", result.BuiltModels.Single(s => s.Definition.Name == "eu.a").ParametersFor(cfg, "wh").Keys);   // a model's parameters are its own
         Assert.Equal("2024-01-01", Seen("eu.a", "project.cutoff"));            // untouched ones come through
     }
 

@@ -33,8 +33,8 @@ public class ModelLayoutTests
         Assert.Contains("name is `marts.other`, but the path implies `marts.fct`", Problems(Project("folder", ("marts/fct", "marts.other"))));
         Assert.Equal("", Problems(Project("none", ("anywhere/at/all", "marts.fct"))));
         var result = ProjectValidator.Validate(Project("none", ("anywhere/at/all", "marts.fct")));
-        Assert.Equal("marts.fct", result.Sources.Single().Definition.Name);
-        Assert.Equal("models/anywhere/at/all.sql", result.Sources.Single().QueryFile);                 // the query is the file beside the definition
+        Assert.Equal("marts.fct", result.BuiltModels.Single().Definition.Name);
+        Assert.Equal("models/anywhere/at/all.sql", result.BuiltModels.Single().QueryFile);                 // the query is the file beside the definition
     }
 
     [Fact]
@@ -71,17 +71,17 @@ public class ModelLayoutTests
         Directory.CreateDirectory(Path.Combine(dir, "models", "elsewhere"));
         File.WriteAllText(Path.Combine(dir, "models", "elsewhere", "orders.yml"), "name: erp.orders\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
         var ctx = ProjectContext.Load(dir);
-        Assert.Equal("models/elsewhere/orders.yml", ctx.Project.Descriptors.Single().File);
-        Assert.Equal("models/elsewhere/orders.yml", MetadataBuilder.SourceFile(ctx.Project.Descriptors.Single()));
+        Assert.Equal("models/elsewhere/orders.yml", ctx.Project.MappedModels.Single().File);
+        Assert.Equal("models/elsewhere/orders.yml", MetadataBuilder.ModelFile(ctx.Project.MappedModels.Single()));
     }
 
     [Fact]
     public void Import_writes_a_new_mapped_model_where_the_layout_puts_it()
     {
-        Assert.Equal("models/erp/orders.yml", SourceDescriptorWriter.PathFor("erp", "orders"));
-        Assert.Equal("models/erp.orders.yml", SourceDescriptorWriter.PathFor("erp", "orders", ModelLayout.Dotted));
-        Assert.Equal("models/orders.yml", SourceDescriptorWriter.PathFor("erp", "orders", ModelLayout.Object));
-        Assert.Null(SourceDescriptorWriter.PathFor("er.p", "orders", ModelLayout.Dotted));
+        Assert.Equal("models/erp/orders.yml", DeclaredModelWriter.PathFor("erp", "orders"));
+        Assert.Equal("models/erp.orders.yml", DeclaredModelWriter.PathFor("erp", "orders", ModelLayout.Dotted));
+        Assert.Equal("models/orders.yml", DeclaredModelWriter.PathFor("erp", "orders", ModelLayout.Object));
+        Assert.Null(DeclaredModelWriter.PathFor("er.p", "orders", ModelLayout.Dotted));
     }
 
     [Fact]

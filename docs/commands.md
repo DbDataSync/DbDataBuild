@@ -11,7 +11,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`project tests run`](#project-tests-run) | `P→` | Offline only | Run the project's tests: metadata rules (DuckDB SQL over the metadata views) in tests/metadata/ and model tests (given rows, expected rows) in tests/models/ |
 | [`project tests list`](#project-tests-list) | `P→` | Offline only | List the project's tests with their kind, severity and tags (nothing is run) |
 | [`project sample`](#project-sample) | `P→` | Offline only | Run models on generated or supplied sample data, offline |
-| [`project seed`](#project-seed) | `P⇒P` | Repo files only (no target connection) | Run the seeds (DuckDB queries that generate the source data) into a DuckDB file |
+| [`project seed`](#project-seed) | `P⇒P` | Repo files only (no target connection) | Run the seeds (DuckDB queries that generate the rows of the mapped models) into a DuckDB file |
 | [`project import`](#project-import) | `C→P` | Target read-only | Export tables and views from a connection as mapped models (models/), so models over them bind offline (writes files only with --write) |
 | [`project update`](#project-update) | `C→P` | Target read-only | Bring in everything that comes from connections: the definitions of the models, the metadata of the mapped models and of the tables copies read (columns, types, keys, indexes), and the dialect each Flight SQL server reports, committed in dialects.lock.yml; --offline reads no connection, --check writes nothing |
 | [`project show loads`](#project-show-loads) | `P→` | Offline only | Print the model x connection x operation pairing table |
@@ -27,7 +27,7 @@ Generated from the command tree of `dbdatabuild` (`UPDATE_GOLDEN=1 dotnet test t
 | [`connection refresh`](#connection-refresh) | `P⇒D` | Target writes (data only) | Run the loads of a refresh plan that project compile wrote (the plan default unless one is named, all of it or the members the selectors choose), or one load named model.load, as an event of its own: it checks what refresh.check says first, never changes structure, and leaves what a refresh cannot run to a deploy |
 | [`connection monitor`](#connection-monitor) | `C→` | Target read-only | The events (deploys and refreshes), DDL and load history, recorded shapes, and what needs attention; with a refresh plan named, that plan's runs and each member's last success and failure |
 | [`connection compare`](#connection-compare) | `C→` | Target read-only | Compare the data of two tables, of one connection or across connections and engines (by digests): schemas, row counts and a key-based row diff (values are read only with --show-values) |
-| [`connection seed`](#connection-seed) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Create the seeded source tables on a connection and fill them from the seeds (prints what it would do unless --apply) |
+| [`connection seed`](#connection-seed) | `P⇒S` | Target writes (DDL and/or data, as the plan states) | Create the seeded tables (the mapped models) on a connection and fill them from the seeds (prints what it would do unless --apply) |
 | [`connection publish`](#connection-publish) | `P⇒T` | Tracking tables only | Store the project and model metadata as JSON in the connection for introspection |
 | [`ui terminal`](#ui-terminal) | `—` | Offline only | Interactive terminal interface: choose, plan and run operations (each action it runs declares its own effect) |
 | [`ui web`](#ui-web) | `—` | Offline only | Web interface on this machine's loopback address: project health, lineage, models and their rendered scripts, tests, the support matrix (it runs only commands that read, unless started with --allow-apply) |
@@ -155,17 +155,17 @@ Usage: `dbdatabuild project sample [models]... [options]`
 
 | Option | Meaning |
 |---|---|
-| `--data` `<path>` | A directory of CSV files named after sources (staging.orders.csv) to use instead of generated rows |
+| `--data` `<path>` | A directory of CSV files named after declared models (staging.orders.csv) to use instead of generated rows |
+| `--declared` | Also show the declared (mapped and native) models the models read |
 | `--limit` `<number>` | Rows of each result to show (the row count is always complete) |
 | `--project` `<path>` | Project root (contains models/) |
-| `--rows` `<number>` | Rows generated for each source table |
-| `--scale` `<number>` | For sources that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own) |
+| `--rows` `<number>` | Rows generated for each declared model |
+| `--scale` `<number>` | For declared models that have a seed (seeds/): the scale the seed reads with getvariable('scale'), usually how many of the main entity (default: the project's own) |
 | `--seed` `<number>` | Seed of the generator: the same seed gives the same rows |
-| `--sources` | Also show the source tables the models read |
 
 ## project seed
 
-Run the seeds (DuckDB queries that generate the source data) into a DuckDB file.
+Run the seeds (DuckDB queries that generate the rows of the mapped models) into a DuckDB file.
 
 Effect: Repo files only (no target connection). Reads and writes: `P⇒P`.
 
@@ -189,7 +189,7 @@ Usage: `dbdatabuild project import [connection] [tables]... [options]`
 | Argument | Meaning |
 |---|---|
 | `connection` | Connection to read (default: the project's only default connection) |
-| `tables` (several) | Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the source descriptors the project already has) |
+| `tables` (several) | Tables or views as schema_name.table_name, with * and ? as wildcards (default: refresh the mapped models the project already has) |
 
 | Option | Meaning |
 |---|---|
@@ -465,14 +465,14 @@ Usage: `dbdatabuild connection compare [connection] [table] [options]`
 | `--against-schema` `<text>` | Compare with the table of the same name under this schema name (a development copy, for example) |
 | `--columns` `<text ...>` | Compare only these columns (and the key) |
 | `--exclude-columns` `<text ...>` | Leave these columns out of the comparison |
-| `--key` `<text ...>` | Columns that identify a row (default: the model's grain or unique key, or a source's grain) |
+| `--key` `<text ...>` | Columns that identify a row (default: the model's grain or unique key, or a mapped model's grain) |
 | `--limit` `<number>` | With --show-values, how many sample rows of each kind of difference |
 | `--project` `<path>` | Project root |
 | `--show-values` | Read and show values: the smallest and largest of each column and sample rows of each difference (without it only counts are read) |
 
 ## connection seed
 
-Create the seeded source tables on a connection and fill them from the seeds (prints what it would do unless --apply).
+Create the seeded tables (the mapped models) on a connection and fill them from the seeds (prints what it would do unless --apply).
 
 Effect: Target writes (DDL and/or data, as the plan states). Reads and writes: `P⇒S`.
 
@@ -486,7 +486,7 @@ Usage: `dbdatabuild connection seed [connection] [options]`
 |---|---|
 | `--apply` | Create and fill the tables on the write login (default: print what would happen and connect to nothing) |
 | `--project` `<path>` | Project root |
-| `--replace` | Drop and recreate a source table that already exists (default: stop at the first table that exists) |
+| `--replace` | Drop and recreate a seeded table that already exists (default: stop at the first table that exists) |
 | `--scale` `<number>` | The variable `scale` the seeds read, usually how many of the main entity (default: the project's own) |
 | `--seed` `<number>` | The variable `seed` the seeds read: the same seed and scale give the same rows |
 

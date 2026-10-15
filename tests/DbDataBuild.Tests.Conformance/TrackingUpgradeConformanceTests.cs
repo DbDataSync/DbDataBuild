@@ -102,7 +102,7 @@ public class TrackingUpgradeConformanceTests
 
             // the layout as it was: this layout without the two columns of layout five, recorded as four (the table of layout six is left: a store at four is not claimed whatever else it holds)
             foreach (var (table, column) in TrackingSchema.AddedInLayout5) await engine.ExecAsync($"ALTER TABLE {Q(schema)}.{Q(table)} DROP COLUMN {Q(column)}");
-            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} IN (7, 8)");
+            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} IN (7, 8, 9)");
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (4, 'old', {(name == "postgres" ? "now()" : "SYSUTCDATETIME()")})");
 
             // init never alters, so it does not claim the store: the version stays four and the tool says what to do
@@ -147,7 +147,7 @@ public class TrackingUpgradeConformanceTests
             await engine.ExecAsync($"DROP TABLE IF EXISTS {Q(schema)}.{Q(TrackingSchema.AddedInLayout6)}");
             await engine.ExecAsync($"DROP TABLE IF EXISTS {Q(schema)}.{Q(TrackingSchema.TableAddedInLayout7)}");
             foreach (var (table, column) in TrackingSchema.AddedInLayout7) await engine.ExecAsync($"ALTER TABLE {Q(schema)}.{Q(table)} DROP COLUMN {Q(column)}");
-            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} IN (5, 6, 7, 8)");
+            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} IN (5, 6, 7, 8, 9)");
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (5, 'old', {(name == "postgres" ? "now()" : "SYSUTCDATETIME()")})");
         }
         try
@@ -275,7 +275,8 @@ public class TrackingUpgradeConformanceTests
             foreach (var view in new[] { "metadata_columns", "metadata_current" }) await engine.ExecAsync($"DROP VIEW {Q(schema)}.{Q(view)}");
             await engine.ExecAsync($"DROP TABLE {Q(schema)}.{Q(TrackingSchema.TableAddedInLayout8)}");
             foreach (var (table, column) in TrackingSchema.AddedInLayout8) await engine.ExecAsync($"ALTER TABLE {Q(schema)}.{Q(table)} DROP COLUMN {Q(column)}");
-            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} = 8");
+            await RenameColumn(engine, name, schema, "metadata_document", "subject_kind", "kind");
+            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} IN (8, 9)");
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (7, 'old', {timestamp})");
             var json = "{\"schema\":\"dbdatabuild.model/1\",\"name\":\"marts.old\",\"kind\":{\"type\":\"view\"}}";
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("metadata_document")} ({Q("connection")}, {Q("kind")}, {Q("subject")}, {Q("document")}, {Q("document_hash")}, {Q("recorded_utc")}, {Q("tool_version")}) VALUES ('{name}', 'model', 'marts.old', '{json}', '{new string('c', 64)}', {timestamp}, 'old')");
@@ -285,10 +286,10 @@ public class TrackingUpgradeConformanceTests
             Assert.Contains("DDB-505", refused.Err + refused.Out);
             Assert.Contains("layout version 7", refused.Err + refused.Out);
 
-            // init creates the table and keeps the view it finds (without the column): it alters nothing, so the store is still seven
+            // init creates the table and alters nothing, so the store is still seven (and the views, which need the column `subject_kind`, are not made)
             Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
             Assert.Equal("7", await Version());
-            Assert.Equal(["marts.old"], await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("metadata_current")}"));
+            Assert.Equal(["marts.old"], await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("metadata_document")}"));
             Assert.NotEqual(0, Cli("connection", "publish", name).Exit);
 
             // the upgrade adds the column; the document stored before has no kind; it is safe to repeat
@@ -307,6 +308,83 @@ public class TrackingUpgradeConformanceTests
             Assert.Equal(["marts.v2>src.t|mapped|2", "marts.v2>staging.v1|model|1", "staging.v1>src.t|mapped|1"], rows);
             var again = Cli("connection", "publish", name);
             Assert.Contains("dependencies of 0 model(s) written", again.Out);                                   // nothing changed, nothing is written
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+            try { await engine.ExecAsync(name == "postgres" ? $"DROP SCHEMA IF EXISTS {Q(schema)} CASCADE" : $"DECLARE @s nvarchar(max) = N''; SELECT @s += N'DROP VIEW ' + QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name) + N';' FROM sys.views WHERE schema_id = SCHEMA_ID('{schema}'); SELECT @s += N'DROP TABLE ' + QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name) + N';' FROM sys.tables WHERE schema_id = SCHEMA_ID('{schema}'); EXEC(@s); DROP SCHEMA {Q(schema)}"); } catch (Exception) { }
+        }
+    }
+
+    private static Task RenameColumn(Engine engine, string name, string schema, string table, string from, string to) =>
+        engine.ExecAsync(name == "postgres" ? $"ALTER TABLE \"{schema}\".\"{table}\" RENAME COLUMN \"{from}\" TO \"{to}\"" : $"EXEC sp_rename '[{schema}].[{table}].[{from}]', '{to}', 'COLUMN'");
+
+    [SkippableTheory, MemberData(nameof(Engines))]
+    public async Task A_store_of_layout_eight_gets_the_subject_kind_column_and_its_mapped_models_become_models_from_the_upgrade(string name)
+    {
+        var engine = EngineEnv.Require(name);
+        await engine.StartAsync();
+        await using var _ = engine;
+        var dir = Path.Combine(Path.GetTempPath(), "ddb-upgrade9-" + Guid.NewGuid().ToString("N"));
+        string? Env(string v) => v == LoginSettings.VariableName(name, Login.Read) || v == LoginSettings.VariableName(name, Login.Write) ? engine.ConnectionString : null;
+        (int Exit, string Out, string Err) Cli(params string[] args)
+        {
+            var o = new StringWriter(); var e = new StringWriter();
+            var exit = CliApp.Run([.. args, "--project", dir], o, e, environment: Env);
+            return (exit, o.ToString(), e.ToString());
+        }
+        var schema = "dbdatabuild_up9_" + Guid.NewGuid().ToString("N")[..6];
+        var ddl = TrackingDdl.For(name);
+        string Q(string id) => ddl.Quote(id);
+        string Concat(string sql) => sql.Replace(" + ", name == "postgres" ? " || " : " + ");
+        async Task<string> Version() => (await engine.RowsAsync($"SELECT CAST(MAX({Q("version")}) AS VARCHAR(10)) FROM {Q(schema)}.{Q("tracking_version")}")).Single();
+        var timestamp = name == "postgres" ? "now()" : "SYSUTCDATETIME()";
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "models/src"));
+            Directory.CreateDirectory(Path.Combine(dir, "models/marts"));
+            File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), $"defaults: {{connections: [{name}]}}\ntracking: {{ connection: {name}, schema: {schema} }}\n" + (name == "postgres" ? "string_semantics:\n  case: sensitive\n  trailing_space: significant\n  collations:\n    default: { duckdb: NFC, postgres: C }\n" : ""));
+            File.WriteAllText(Path.Combine(dir, "models/src/t.yml"), "name: src.t\ntitle: A table\nkind: mapped\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            File.WriteAllText(Path.Combine(dir, "models/marts/v1.yml"), "name: marts.v1\nkind: view\ncolumns:\n  - {name: id, type: BIGINT, nullable: false}\n");
+            File.WriteAllText(Path.Combine(dir, "models/marts/v1.sql"), "SELECT id FROM src.t\n");
+            Assert.Equal(0, Cli("project", "compile").Exit);
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
+            Assert.Equal(0, Cli("connection", "publish", name).Exit);
+            Assert.Equal("9", await Version());
+
+            // the layout as it was: the column is `kind`, a mapped model is of kind `source` in the documents and in object_info, the views are the old ones' absence, recorded as eight
+            foreach (var view in new[] { "metadata_columns", "metadata_current" }) await engine.ExecAsync($"DROP VIEW {Q(schema)}.{Q(view)}");
+            await RenameColumn(engine, name, schema, "metadata_document", "subject_kind", "kind");
+            await engine.ExecAsync($"UPDATE {Q(schema)}.{Q("metadata_document")} SET {Q("kind")} = 'source' WHERE {Q("subject")} = 'src.t'");
+            await engine.ExecAsync($"UPDATE {Q(schema)}.{Q("object_info")} SET {Q("subject_kind")} = 'source' WHERE {Q("subject")} = 'src.t'");
+            await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} = 9");
+            await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (8, 'old', {timestamp})");
+
+            var refused = Cli("connection", "publish", name);
+            Assert.NotEqual(0, refused.Exit);
+            Assert.Contains("DDB-505", refused.Err + refused.Out);
+            Assert.Contains("layout version 8", refused.Err + refused.Out);
+
+            // init alters no table, so the store is still eight and has no `subject_kind`; the views, which need it, are not made
+            Assert.Equal(0, Cli("connection", "init", name, "--apply").Exit);
+            Assert.Equal("8", await Version());
+            Assert.NotEqual(0, Cli("connection", "publish", name).Exit);
+
+            // the upgrade is printed for review, then renames the column and makes the mapped model a model; safe to repeat
+            var review = Cli("connection", "init", name, "--upgrade");
+            Assert.Contains("(layout 9)", review.Out);
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);
+            Assert.Equal("9", await Version());
+            Assert.Equal(0, Cli("connection", "init", name, "--upgrade", "--apply").Exit);
+            Assert.Equal(["model|marts.v1|view", "model|src.t|mapped", "project|project|"], await engine.RowsAsync(Concat($"SELECT {Q("subject_kind")} + '|' + {Q("subject")} + '|' + COALESCE({Q("model_kind")}, '') FROM {Q(schema)}.{Q("metadata_current")} ORDER BY 1")));
+            Assert.Empty(await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("object_info")} WHERE {Q("subject_kind")} = 'source'"));
+            Assert.NotEmpty(await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("object_info")} WHERE {Q("subject_kind")} = 'model' AND {Q("subject")} = 'src.t'"));
+            Assert.Equal(["src.t"], await engine.RowsAsync($"SELECT {Q("model")} FROM {Q(schema)}.{Q("metadata_columns")} WHERE {Q("model_kind")} = 'mapped'"));      // the view of columns names the model kind, and a mapped model is among them
+
+            // a publish works again and has nothing to write (the documents are as they were)
+            var again = Cli("connection", "publish", name);
+            Assert.True(again.Exit == 0, again.Out + again.Err);
+            Assert.Contains("Stored 0 document(s)", again.Out);
         }
         finally
         {

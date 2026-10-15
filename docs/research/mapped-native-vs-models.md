@@ -1,6 +1,6 @@
 # Mapped and native models: why they are `SourceDescriptor` / `dbdatabuild.source`, and what the split costs (review of 2026-10-14)
 
-Status: review, no merge done. Entry 165 fixes the metadata symptoms (a kind on both documents, `model_kind` for all seven); the structural decision is the owner's, at the end.
+Status: review (2026-10-14). **Outcome: built in entry 167** (see the end of this note): option (a), stage 2, no merge. Entry 165 fixed the metadata symptoms (a kind on both documents, `model_kind` for all seven).
 
 ## How it got this way
 
@@ -80,3 +80,21 @@ Each item is a place where a tool or person inspecting the project sees mapped/n
 2. Keep the graph node `kind` value `source` for a mapped model (the released JSON of `project show graph`) or change it to `mapped` like the dependency rows? Changed in 165 only for dependency rows and `upstream[].kind` (which were unreleased in layout 8 / `model/2`).
 3. Whether `depends_on_kind` should say the model kind (`view`, `full`, ...) for built models instead of `model`: more precise, one vocabulary with `model_kind`, but it breaks `upstream_kind = 'model'` rules, which are probably the most common ones.
 4. Merge: not recommended; if wanted, it needs its own plan.
+
+## Outcome (entry 167, 2026-10-14)
+
+The owner said: consistency, not compatibility; carry stage 2 through. Built, item by item against the list above:
+
+* Items 1 and 5 (two documents, doubled views): one document, `dbdatabuild.model/3`, for all seven kinds; a declared model's document leaves out what it does not have. One set of views: `metadata_models`, `metadata_indexes`, `metadata_foreign_keys`; `metadata_sources`, `metadata_source_indexes` and `metadata_source_foreign_keys` are gone.
+* Items 2 and 3 (subject kind, two columns named `kind`): the subject kind is `model` for every model; the column is `subject_kind` (as on `object_info`) in `metadata_document` and `metadata_current`; `metadata_columns.kind` is `model_kind`. Tracking layout 9 with a tested upgrade from layout 8.
+* Item 4 (dependency vocabulary): the graph node has `category` (`model`, `macro`, `unknown`) and the model `kind` (a mapped model is `mapped`); the dependency rows get the same two columns in the next entry.
+* Item 6 and 7: already fixed in entry 165.
+* Items 8 and 9 (two arrays, counts): `data.models[]` for every kind in `project compile` and `project show metadata`; `counts.models` and the text count all seven, with `by_kind`.
+* Items 10 and 11 (two selector grammars, `DependencyGraph` calling mapped models sources): `ModelSelection` over `ProjectModel`s, once; `UpdateSelection` calls it; the graph's unbuilt nodes are the declared models and the macros. (The refresh's three-term copy over `loads.yml` goes in the run's subject 5.)
+* Item 12 (TUI and web): both list all seven kinds.
+* Item 13 (docs): `docs/models.md` and DESIGN.md say one thing.
+* Item 15 (terms): `ModelSource` is `BuiltModel`, `SourceDescriptor` is `DeclaredModel`, the project collections are `BuiltModels`, `MappedModels`, `NativeModels`, `DeclaredModels`; `ImportSourcesCommand`, `SourceImport`, `SourceTypes` and the editor schema lost the word; `kind: table|view` of an imported object is `object_kind`. `source` stays for a data source (a resolver's, a parameter's, `SourceCatalogReader`).
+* Item 14 (drift reported through three commands) is untouched: it differs by design.
+
+Not merged: the two classes are still two (option (b)); the review's estimate stands. The decisions asked at the end were answered by the owner's direction (go ahead; the node kind is `mapped`; the model kind as the dependency kind is subject 2).
+

@@ -9,8 +9,8 @@ namespace DbDataBuild.Models;
 /// grain candidates. <c>indexes</c> and <c>foreign_keys</c> are what the table has, as exported by `import`; the tool reads them (metadata, advice) and never creates them.
 /// </summary>
 /// <param name="DeclaredConnections">The connections the table exists on (after the project files above it were merged in); null when nothing says, which is the project's default connections.</param>
-public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<string> Grain,
-    IReadOnlyList<IndexDefinition>? DeclaredIndexes = null, IReadOnlyList<SourceForeignKey>? DeclaredForeignKeys = null, IReadOnlyList<string>? DeclaredConnections = null, bool Generated = false, NativeQuery? Native = null, ObjectInfo? DeclaredInfo = null)
+public sealed record DeclaredModel(string Name, IReadOnlyList<ColumnDefinition> Columns, IReadOnlyList<string> Grain,
+    IReadOnlyList<IndexDefinition>? DeclaredIndexes = null, IReadOnlyList<ForeignKeyDefinition>? DeclaredForeignKeys = null, IReadOnlyList<string>? DeclaredConnections = null, bool Generated = false, NativeQuery? Native = null, ObjectInfo? DeclaredInfo = null)
 {
     /// <summary>The descriptor's title, description, tags and properties (tags and properties merged down the project files, as a model's are).</summary>
     public ObjectInfo Info => DeclaredInfo ?? ObjectInfo.Empty;
@@ -19,7 +19,7 @@ public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinitio
     public bool IsNative => Native != null;
 
     /// <summary>The model kind of this descriptor, the word the metadata documents and tables carry: `mapped` or `native`.</summary>
-    public string Kind => IsNative ? NativeQuery.Kind : SourceDescriptorLoader.MappedKind;
+    public string Kind => IsNative ? NativeQuery.Kind : DeclaredModelLoader.MappedKind;
 
     /// <summary>The definition file this descriptor was read from (project-relative; empty for one the tool generates). A model's name is not its path, so the file is kept.</summary>
     public string File { get; init; } = "";
@@ -29,7 +29,7 @@ public sealed record SourceDescriptor(string Name, IReadOnlyList<ColumnDefinitio
 
     public IReadOnlyList<string>? Connections => DeclaredConnections;
     public IReadOnlyList<IndexDefinition> Indexes => DeclaredIndexes ?? [];
-    public IReadOnlyList<SourceForeignKey> ForeignKeys => DeclaredForeignKeys ?? [];
+    public IReadOnlyList<ForeignKeyDefinition> ForeignKeys => DeclaredForeignKeys ?? [];
 }
 
 /// <summary>
@@ -59,9 +59,9 @@ public sealed record NativeQuery(string Access, string Text, IReadOnlyList<strin
 }
 
 /// <summary>A foreign key of a source table: its columns, the table it points at (`schema_name.table_name`) and that table's columns, in the same order.</summary>
-public sealed record SourceForeignKey(string Name, IReadOnlyList<string> Columns, string Table, IReadOnlyList<string> ReferencedColumns, int Line = 0);
+public sealed record ForeignKeyDefinition(string Name, IReadOnlyList<string> Columns, string Table, IReadOnlyList<string> ReferencedColumns, int Line = 0);
 
-public static class SourceDescriptorLoader
+public static class DeclaredModelLoader
 {
     private static readonly string[] Keys = ["name", "kind", "connections", "columns", "grain", "indexes", "foreign_keys", "reads", "parameters", "track_definition", "refresh", .. YamlFieldReader.InfoKeys];
 
@@ -69,7 +69,7 @@ public static class SourceDescriptorLoader
     public const string MappedKind = "mapped";
 
     /// <summary>Reads a mapped model from its own file alone (the layers above it, if any, are merged by <see cref="LoadMerged"/>).</summary>
-    public static SourceDescriptor? Load(string text, string file, string? expectedName, List<Diagnostic> diags, IReadOnlySet<string>? connections = null)
+    public static DeclaredModel? Load(string text, string file, string? expectedName, List<Diagnostic> diags, IReadOnlySet<string>? connections = null)
     {
         var before = diags.Count;
         var root = StrictYamlReader.Read(text, file, diags);
@@ -85,7 +85,7 @@ public static class SourceDescriptorLoader
     }
 
     /// <summary>Reads a mapped model that was merged from the project files above it and its own file (`kind` and `connections` may come from a folder).</summary>
-    public static SourceDescriptor? LoadMerged(MergedYaml merged, string file, string? expectedName, List<Diagnostic> diags, IReadOnlySet<string>? connections = null, string? nativeFile = null)
+    public static DeclaredModel? LoadMerged(MergedYaml merged, string file, string? expectedName, List<Diagnostic> diags, IReadOnlySet<string>? connections = null, string? nativeFile = null)
     {
         var before = diags.Count;
         var result = new Reader(file, diags, connections ?? TargetNames.All.ToHashSet(StringComparer.Ordinal), nativeFile) { NodeFiles = merged.FileOf }.Read(merged.Root, expectedName);
@@ -94,7 +94,7 @@ public static class SourceDescriptorLoader
 
     private sealed class Reader(string file, List<Diagnostic> diags, IReadOnlySet<string> knownConnections, string? nativeFile = null) : YamlFieldReader(file, diags)
     {
-        public SourceDescriptor? Read(YamlNode root, string? expectedName)
+        public DeclaredModel? Read(YamlNode root, string? expectedName)
         {
             if (root is not YamlMapping top) { Add(DiagnosticCatalog.InvalidValue, root, "A mapped model must be a mapping with `name`, `kind` and `columns`."); return null; }
             CheckKeys(top, Keys, "a mapped or native model");
@@ -126,7 +126,7 @@ public static class SourceDescriptorLoader
             var indexes = ReadIndexes(top, columns);
             var foreignKeys = ReadForeignKeys(top, columns);
             var info = ReadInfo(top);
-            return name == null ? null : new SourceDescriptor(name.Value, columns, grain?.Select(g => g.Value).ToList() ?? [], indexes, foreignKeys, connections?.Select(c => c.Value).ToList(), Native: native, DeclaredInfo: info);
+            return name == null ? null : new DeclaredModel(name.Value, columns, grain?.Select(g => g.Value).ToList() ?? [], indexes, foreignKeys, connections?.Select(c => c.Value).ToList(), Native: native, DeclaredInfo: info);
         }
 
         /// <summary>`kind: {native: {access, query}}` and the model's `reads` and `parameters`. The text is `query:` or the `.native.sql` file beside the definition, never both.</summary>
@@ -190,9 +190,9 @@ public static class SourceDescriptorLoader
             return result;
         }
 
-        private List<SourceForeignKey> ReadForeignKeys(YamlMapping top, List<ColumnDefinition> columns)
+        private List<ForeignKeyDefinition> ReadForeignKeys(YamlMapping top, List<ColumnDefinition> columns)
         {
-            var result = new List<SourceForeignKey>();
+            var result = new List<ForeignKeyDefinition>();
             if (top.Get("foreign_keys") is not { } node) return result;
             if (node is not YamlSequence seq) { Add(DiagnosticCatalog.InvalidValue, node, "`foreign_keys` must be a list."); return result; }
             var declared = columns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -219,7 +219,7 @@ public static class SourceDescriptorLoader
                 if (cols != null && refCols != null && cols.Count != refCols.Count)
                     Add(DiagnosticCatalog.InvalidValue, m, $"Foreign key `{name?.Value}` has {cols.Count} column(s) and references {refCols.Count}.");
                 if (name != null && cols != null && table != null && refCols != null)
-                    result.Add(new SourceForeignKey(name.Value, cols.Select(c => c.Value).ToList(), table, refCols.Select(c => c.Value).ToList(), m.Line));
+                    result.Add(new ForeignKeyDefinition(name.Value, cols.Select(c => c.Value).ToList(), table, refCols.Select(c => c.Value).ToList(), m.Line));
             }
             return result;
         }
@@ -227,10 +227,10 @@ public static class SourceDescriptorLoader
 }
 
 /// <summary>Writes a source descriptor in canonical formatting: name, grain, columns; <c>nullable</c> only when false (the same style as definitions).</summary>
-public static class SourceDescriptorWriter
+public static class DeclaredModelWriter
 {
     /// <param name="withInfo">False for the text the definition hash is made of: what a person says about an object in words is not part of what the object is.</param>
-    public static string Yaml(SourceDescriptor d, bool withInfo = true)
+    public static string Yaml(DeclaredModel d, bool withInfo = true)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("name: ").Append(YamlText.Scalar(d.Name)).Append('\n');

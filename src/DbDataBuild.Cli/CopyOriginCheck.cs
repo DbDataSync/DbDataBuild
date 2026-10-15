@@ -21,10 +21,10 @@ internal static class CopyOriginCheck
     {
         var findings = new List<Diagnostic>();
         var none = new Result(findings, false);
-        var declared = ctx.Project.Descriptors.Concat(ctx.Project.NativeModels).FirstOrDefault(d => string.Equals(d.Name, copy.From, StringComparison.OrdinalIgnoreCase));
+        var declared = ctx.Project.MappedModels.Concat(ctx.Project.NativeModels).FirstOrDefault(d => string.Equals(d.Name, copy.From, StringComparison.OrdinalIgnoreCase));
         // a model the project builds on the origin is declared by its own columns: the origin's table is what that model's plan made (or it is not built yet)
         var builtModel = declared == null && ctx.Project.Models.FirstOrDefault(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase) && !m.IsCopy) is { } model;
-        if (builtModel) declared = new SourceDescriptor(ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Name, ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Columns, []);
+        if (builtModel) declared = new DeclaredModel(ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Name, ctx.Project.Models.First(m => string.Equals(m.Name, copy.From, StringComparison.OrdinalIgnoreCase)).Columns, []);
         if (declared == null) return none;
         if (declared.Native is { Access: NativeQuery.Command }) return none;      // a command is not described: the transfer's own check is its net
 
@@ -68,7 +68,7 @@ internal static class CopyOriginCheck
         return none;
     }
 
-    private static async Task<List<string>> Differences(LoginSettings login, CopyOrigin origin, SourceDescriptor declared)
+    private static async Task<List<string>> Differences(LoginSettings login, CopyOrigin origin, DeclaredModel declared)
     {
         await using var read = await ReadSession.OpenAsync(login);
         var (schema, name) = (origin.Table[..origin.Table.IndexOf('.')], origin.Table[(origin.Table.IndexOf('.') + 1)..]);
@@ -77,16 +77,16 @@ internal static class CopyOriginCheck
         if (shape == null) return [$"the table does not exist there"];
         if (storedAs != null)
             return [$"the table is stored as `{storedAs}` there (the dialect `{login.Dialect.Name}` folds a name without quotes to {(login.Dialect.Case == IdentifierCase.Upper ? "upper" : "lower")} case), and the copy reads the name as declared: declare it as `{storedAs}`"];
-        var live = SourceImport.Describe(origin.Engine, shape, null, dialect: login.Dialect);
-        var now = SourceImport.ToDescriptor(live, declared);
+        var live = MappedModelImport.Describe(origin.Engine, shape, null, dialect: login.Dialect);
+        var now = MappedModelImport.ToDescriptor(live, declared);
         // what a copy reads: a column that is gone, a type that changed, a column that can now be NULL where the declaration says it cannot; an added column is not read, so it is no difference
-        return SourceImport.Compare(declared, now)
+        return MappedModelImport.Compare(declared, now)
             // a Flight SQL server's Arrow schemas may mark every column nullable (the one tried does), so a declared NOT NULL cannot be held against them
-            .Where(c => c.Kind is SourceChangeKind.ColumnRemoved or SourceChangeKind.TypeChanged || (origin.Engine != "flightsql" && c is { Kind: SourceChangeKind.NullabilityChanged, Detail: "now nullable" }))
+            .Where(c => c.Kind is MappedModelChangeKind.ColumnRemoved or MappedModelChangeKind.TypeChanged || (origin.Engine != "flightsql" && c is { Kind: MappedModelChangeKind.NullabilityChanged, Detail: "now nullable" }))
             .Select(c => c.Kind switch
             {
-                SourceChangeKind.ColumnRemoved => $"column `{c.Column}` is gone",
-                SourceChangeKind.TypeChanged => $"column `{c.Column}` changed type ({c.Detail})",
+                MappedModelChangeKind.ColumnRemoved => $"column `{c.Column}` is gone",
+                MappedModelChangeKind.TypeChanged => $"column `{c.Column}` changed type ({c.Detail})",
                 _ => $"column `{c.Column}` can now be NULL",
             }).ToList();
     }

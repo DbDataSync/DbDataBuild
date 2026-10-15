@@ -8,7 +8,7 @@ using DbDataBuild.Sql.Matrix;
 namespace DbDataBuild.Cli;
 
 /// <summary>
-/// `dbdatabuild project model update` (DESIGN.md 6.5). Effect class: repo files only. It reads models, sources and the config, asks DuckDB to describe
+/// `dbdatabuild project model update` (DESIGN.md 6.5). Effect class: repo files only. It reads models and the config, asks DuckDB to describe
 /// queries, and writes definition (.yml) files only, never a .sql, and never connects to a target. Nothing is written before the diff is
 /// shown and (interactively) confirmed, and nothing is written at all if any model still needs attention.
 /// </summary>
@@ -59,9 +59,9 @@ internal static class DefineCommand
         if (matrixDiags.Count > 0) throw new InvalidOperationException("The embedded support matrix is invalid: " + string.Join("; ", matrixDiags.Select(d => d.Found)));
 
         // ---- choose the models ----
-        var mapped = project.FileDescriptors.Select(d => d.File.Length > 0 ? d.File[..^".yml".Length] : $"{ProjectValidator.ModelsDir}/{d.Name.Replace('.', '/')}").ToHashSet(StringComparer.Ordinal);
+        var mapped = project.DeclaredModels.Select(d => d.File.Length > 0 ? d.File[..^".yml".Length] : $"{ProjectValidator.ModelsDir}/{d.Name.Replace('.', '/')}").ToHashSet(StringComparer.Ordinal);
         // a copy has no query and no `columns` to write: its columns are its origin's (DESIGN.md 6.5.2), so it is left out like a mapped model
-        foreach (var copy in project.Sources.Where(s => s.Definition.IsCopy && s.DefinitionFile.EndsWith(".yml", StringComparison.Ordinal))) mapped.Add(copy.DefinitionFile[..^".yml".Length]);
+        foreach (var copy in project.BuiltModels.Where(s => s.Definition.IsCopy && s.DefinitionFile.EndsWith(".yml", StringComparison.Ordinal))) mapped.Add(copy.DefinitionFile[..^".yml".Length]);
         var selection = Select(projectRoot, paths, mapped, error, out var selectionProblem);
         if (selectionProblem) return CliApp.ExitUsage;
 
@@ -108,7 +108,7 @@ internal static class DefineCommand
                 if (head != null)
                 {
                     // the definition does not say its name and kind: the project's own reading of it (with the head) is what exists
-                    existing = project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel)?.Definition;
+                    existing = project.BuiltModels.FirstOrDefault(s => s.DefinitionFile == ymlRel)?.Definition;
                     if (existing == null) existingProblems.Add(new Diagnostic(DiagnosticCatalog.QueryHeadInvalid, new(ymlRel, 0, 0), $"`{ymlRel}` does not load together with the head of `{sqlRel}`; `{Core.ProductInfo.Cli} project compile` says why."));
                 }
                 else existing = ModelDefinitionLoader.Load(existingText, ymlRel, config.Layout == ModelLayout.Folder ? name : null, existingProblems, config.Connections.Keys.ToHashSet(StringComparer.Ordinal));
@@ -116,16 +116,16 @@ internal static class DefineCommand
             }
             else hashes[ymlRel] = null;
             var queryText = parsedHead.Body;
-            if (project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } known) queryText = QueryParameters.Mark(QueryParameters.ResolveNames(queryText, known, config, (known.Definition.Targets ?? config.DefaultConnections).FirstOrDefault() ?? ""), known, config).Sql;      // a name stands as the name it is (on the model's first connection, as the render reads it), a value as a typed marker
-            var macroSupport = project.Sources.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } macroSource ? (macroContext ??= ProjectContext.Load(projectRoot)).MacroSupportFor(macroSource, queryText) : null;
+            if (project.BuiltModels.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } known) queryText = QueryParameters.Mark(QueryParameters.ResolveNames(queryText, known, config, (known.Definition.Targets ?? config.DefaultConnections).FirstOrDefault() ?? ""), known, config).Sql;      // a name stands as the name it is (on the model's first connection, as the render reads it), a value as a typed marker
+            var macroSupport = project.BuiltModels.FirstOrDefault(s => s.DefinitionFile == ymlRel) is { } macroSource ? (macroContext ??= ProjectContext.Load(projectRoot)).MacroSupportFor(macroSource, queryText) : null;
             targets.Add(new DefineTarget(name, ymlRel, sqlRel, queryText, existingText, existing, existingProblems, macroSupport, head));
         }
 
-        // The graph holds every valid model (their declared columns) and the sources. Selected models with a valid definition are among them.
-        var graph = new ModelGraph(project.Models, project.AllDescriptors);
+        // The graph holds every valid model (their declared columns) and the declared models. Selected models with a valid definition are among them.
+        var graph = new ModelGraph(project.Models, project.DeclaredModelsAndStaging);
         var engine = new DefineEngine(graph, config, linter);
 
-        // project-level findings worth showing: config problems and source descriptor problems
+        // project-level findings worth showing: config problems and mapped model problems
         var shown = new List<Diagnostic>();
         shown.AddRange(configDiags);
         shown.AddRange(project.Diagnostics.Where(d => d.Location.File == ProjectValidator.RetiredSourcesDir || IsMappedModelFile(projectRoot, d.Location.File)));

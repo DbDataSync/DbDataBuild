@@ -120,7 +120,7 @@ public class MacroTests
     {
         var dir = Project();
         var ctx = ProjectContext.Load(dir);
-        Assert.Equal(["src.orders_snap"], ctx.BaseTablesOf(ctx.Project.Sources.Single(s => s.Definition.Name == "marts.snap_totals"), "SELECT * FROM status_totals('src.orders_snap', 'snap_date')"));
+        Assert.Equal(["src.orders_snap"], ctx.BaseTablesOf(ctx.Project.BuiltModels.Single(s => s.Definition.Name == "marts.snap_totals"), "SELECT * FROM status_totals('src.orders_snap', 'snap_date')"));
         Assert.Equal(["src.orders_snap", "status_totals()"], ctx.Graph.Reads("marts.snap_totals").Order(StringComparer.Ordinal));
         Assert.Equal(["snapshot_at()"], ctx.Graph.Reads("status_totals()"));
         Assert.Contains("src.orders", ctx.Graph.Ancestors("marts.live_totals").Keys);
@@ -128,7 +128,7 @@ public class MacroTests
         Assert.Contains("marts.live_totals", ctx.Graph.Descendants("snapshot_at()").Keys);
 
         var graph = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "graph", "--project", dir, "--format", "json", "marts.snap_totals").Out)!["data"]!;
-        Assert.Equal(["marts.snap_totals:model", "snapshot_at():macro", "src.orders_snap:source", "status_totals():macro"], graph["nodes"]!.AsArray().Select(n => $"{(string?)n!["name"]}:{(string?)n["kind"]}").Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.snap_totals:full", "snapshot_at():macro", "src.orders_snap:mapped", "status_totals():macro"], graph["nodes"]!.AsArray().Select(n => $"{(string?)n!["name"]}:{(string?)n["kind"] ?? (string?)n["category"]}").Order(StringComparer.Ordinal));
 
         var metadata = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!["models"]!.AsArray();
         var upstream = metadata.Single(m => (string?)m!["name"] == "marts.snap_totals")!["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["kind"]}");
@@ -253,7 +253,7 @@ public class MacroTests
         var dir = NamedProject();
         var ctx = ProjectContext.Load(dir);
         Assert.Equal(["src.orders", "src.orders_snap", "status_totals()"], ctx.Graph.Reads("marts.totals").Order(StringComparer.Ordinal));
-        var source = ctx.Project.Sources.Single(s => s.Definition.Name == "marts.totals");
+        var source = ctx.Project.BuiltModels.Single(s => s.Definition.Name == "marts.totals");
         Assert.Equal(["src.orders"], ctx.BaseTablesOf(source, source.ReadQuery(dir, ctx.Config, "live")));
         Assert.Equal(["src.orders_snap"], ctx.BaseTablesOf(source, source.ReadQuery(dir, ctx.Config, "snap")));
         Assert.Equal(2, ctx.QueryVariants(source).Count);
@@ -280,7 +280,7 @@ public class MacroTests
         var dir = NamedProject(TwoConnections.Replace("table: { type: NAME, value: src.orders_snap }", "table: { type: NAME, value: src.orders }").Replace("date_col: { type: NAME, value: snap_date }", "date_col: { type: NAME, value: \"\" }"));
         Assert.Equal(0, Cli("project", "compile", "--project", dir).Exit);
         Assert.True(File.Exists(Path.Combine(dir, "rendered", "lowered", "marts.totals", "lowered.sql")));
-        Assert.Single(ProjectContext.Load(dir).QueryVariants(ProjectContext.Load(dir).Project.Sources.Single(s => s.Definition.Name == "marts.totals")));
+        Assert.Single(ProjectContext.Load(dir).QueryVariants(ProjectContext.Load(dir).Project.BuiltModels.Single(s => s.Definition.Name == "marts.totals")));
     }
 
     [Fact]

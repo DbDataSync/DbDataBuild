@@ -112,7 +112,7 @@ public static class DialectProfiles
     private static IReadOnlyDictionary<string, string> OnTopOfAnsi(IReadOnlyDictionary<string, string> own) =>
         AnsiTypes.Concat(own).GroupBy(kv => kv.Key).ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.Ordinal).ToFrozenDictionary(StringComparer.Ordinal);
 
-    // sqlserver, postgres and fabric read their own catalogs with their own code (CatalogReader), whose types are the ones SourceTypes knows; `Types` is for a driver of another kind that names one of these dialects
+    // sqlserver, postgres and fabric read their own catalogs with their own code (CatalogReader), whose types are the ones ImportedTypes knows; `Types` is for a driver of another kind that names one of these dialects
     public static readonly DialectProfile SqlServer = new("sqlserver", "[", "]", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Preserve, LimitStyle.Top, OnTopOfAnsi(SqlServerExtraTypes));
     public static readonly DialectProfile Fabric = SqlServer with { Name = "fabric" };
     public static readonly DialectProfile Postgres = new("postgres", "\"", "\"", ParameterStyle.NamedAt, "SELECT 1", CatalogStyle.InformationSchema, IdentifierCase.Lower, LimitStyle.Limit, OnTopOfAnsi(PostgresExtraTypes));

@@ -21,7 +21,7 @@ public static class NativeInline
     private static string Id(string modelName) => Regex.Replace(modelName.ToLowerInvariant(), "[^a-z0-9]+", "_").Trim('_');
 
     /// <summary>The native model's text with each `${scope.name}` replaced by a placeholder of its own, and those placeholders as parameters (typed by the value the native model sees).</summary>
-    public static NativeUse Prepare(SourceDescriptor native, ProjectConfig config)
+    public static NativeUse Prepare(DeclaredModel native, ProjectConfig config)
     {
         var q = native.Native!;
         var connection = (native.Connections ?? config.DefaultConnections)[0];
@@ -39,7 +39,7 @@ public static class NativeInline
     }
 
     /// <summary>The value each placeholder of <paramref name="use"/> takes on <paramref name="connection"/>, keyed `native.<name>` like the plan's lookup.</summary>
-    public static IReadOnlyDictionary<string, ParameterValue> Values(SourceDescriptor native, NativeUse use, ProjectConfig config, string connection)
+    public static IReadOnlyDictionary<string, ParameterValue> Values(DeclaredModel native, NativeUse use, ProjectConfig config, string connection)
     {
         var values = native.Native!.ParametersFor(config, connection);
         var result = new Dictionary<string, ParameterValue>(StringComparer.Ordinal);

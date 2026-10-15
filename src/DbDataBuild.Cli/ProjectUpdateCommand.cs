@@ -54,7 +54,7 @@ internal static class ProjectUpdateCommand
             // the metadata of the mapped models and of the tables copies read: the same code `project model update` runs
             var outcome = ConnectionCapture.GatherAsync(ctx, selection, env, open ?? TestOpener.Value ?? ReadSession.OpenAsync).GetAwaiter().GetResult();
             output.Payload("connections", outcome.Connections.Select(c => new { connection = c.Connection, driver = c.Driver, status = c.Status, reason = c.Reason }).ToList());
-            output.Payload("sources", ConnectionCapture.SourcesPayload(outcome));
+            output.Payload("mapped_models", ConnectionCapture.MappedModelsPayload(outcome));
             output.Payload("catalog_notes", outcome.Notes);
             var (captureExit, captureDifferences, captureWritten) = ConnectionCapture.Finish(root, outcome, check, null, output, error);
             tally.Differences += captureDifferences;
@@ -79,7 +79,7 @@ internal static class ProjectUpdateCommand
     private static int RunDefinitions(CommandSpec spec, ProjectContext ctx, UpdateSelection selection, FileInfo? answers, bool acceptInferred, bool check, TextWriter output, TextWriter error, List<string> written, Tally tally)
     {
         // the definitions that have a query: a copy and a mapped model have none to define from (their columns are the table's), and are the connections' part
-        var paths = selection.Everything ? [] : ctx.Project.Sources.Where(s => selection.Includes(s.Definition.Name) && !s.Definition.IsCopy && s.DefinitionFile.EndsWith(".yml", StringComparison.Ordinal)).Select(s => s.QueryFile).ToArray();
+        var paths = selection.Everything ? [] : ctx.Project.BuiltModels.Where(s => selection.Includes(s.Definition.Name) && !s.Definition.IsCopy && s.DefinitionFile.EndsWith(".yml", StringComparison.Ordinal)).Select(s => s.QueryFile).ToArray();
         if (!selection.Everything && paths.Length == 0) return CliApp.ExitOk;
         if (!Directory.Exists(Path.Combine(ctx.Root, ProjectValidator.ModelsDir))) return CliApp.ExitOk;      // a project with no models yet has no definitions to update
         var report = CommandReport.Create(true, spec.Name, TextWriter.Null, TextWriter.Null);

@@ -8,12 +8,12 @@ namespace DbDataBuild.Tests.Unit;
 public class InferenceTests
 {
     internal static ModelGraph Graph() => new([], [
-        new SourceDescriptor("staging.orders",
+        new DeclaredModel("staging.orders",
         [
             new("order_id", "BIGINT", false), new("customer_id", "BIGINT", true), new("amount", "DECIMAL(14, 2)", true),
             new("code", "VARCHAR(20)", false), new("order_date", "DATE", false), new("created_at", "TIMESTAMP", true),
         ], ["order_id"]),
-        new SourceDescriptor("staging.customers", [new("customer_id", "BIGINT", false), new("name", "VARCHAR(50)", true)], ["customer_id"]),
+        new DeclaredModel("staging.customers", [new("customer_id", "BIGINT", false), new("name", "VARCHAR(50)", true)], ["customer_id"]),
     ]);
 
     private static Inference Infer(string sql)

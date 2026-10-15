@@ -152,7 +152,7 @@ public class FuzzTests
                 Assert.True(def == null || diags.All(d => d.Severity != Severity.Error), label);
                 Assert.DoesNotContain(diags, d => d.Code == "DDB-900");
                 var source = new List<Diagnostic>();
-                SourceDescriptorLoader.Load(mutated, "models/staging/k.yml", null, source);
+                DeclaredModelLoader.Load(mutated, "models/staging/k.yml", null, source);
                 var rewritten = DbDataBuild.Define.KindFormRewriter.Rewrite(mutated, "models/marts/k.yml", projectFile: false);
                 if (rewritten.NewText != null)
                 {

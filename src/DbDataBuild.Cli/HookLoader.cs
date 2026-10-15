@@ -12,16 +12,16 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class HookLoader
 {
-    public static IReadOnlyList<PlannedHook> Load(ModelSource source, ProjectConfig config, string target, string root, List<Diagnostic> diags)
+    public static IReadOnlyList<PlannedHook> Load(BuiltModel built, ProjectConfig config, string target, string root, List<Diagnostic> diags)
     {
-        var model = source.Definition;
-        var resolved = HookReader.Resolve(model, config, target, source.DefinitionFile, diags);
+        var model = built.Definition;
+        var resolved = HookReader.Resolve(model, config, target, built.DefinitionFile, diags);
         var result = new List<PlannedHook>();
         var engine = TargetRegistry.Get(config.EngineOf(target) ?? target);
         int? version = config.TargetVersions.TryGetValue(target, out var v) ? v : null;
         foreach (var hook in resolved)
         {
-            var where = new SourceLocation(source.DefinitionFile, model.Hooks.FirstOrDefault(h => h.Name == hook.Name || h.Use == hook.Group)?.Line ?? 0, 1);
+            var where = new SourceLocation(built.DefinitionFile, model.Hooks.FirstOrDefault(h => h.Name == hook.Name || h.Use == hook.Group)?.Line ?? 0, 1);
             var action = HookEvents.Find(hook.Event)!.Action;
             if (model.Kind == ModelKinds.View && action is "load" or "backfill")
             {

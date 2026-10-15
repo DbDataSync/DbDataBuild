@@ -9,7 +9,7 @@ internal static class ProjectGraph
     public static DependencyGraph Build(ProjectContext ctx)
     {
         var edges = new List<(string Model, string Reads)>();
-        foreach (var m in ctx.Project.Sources)
+        foreach (var m in ctx.Project.BuiltModels)
         {
             // a model that names something by a parameter reads other tables on connections that give other names: the graph has all of them
             foreach (var sql in ctx.QueryVariants(m))
@@ -22,11 +22,11 @@ internal static class ProjectGraph
             foreach (var callee in macro.Calls) edges.Add((ProjectContext.MacroNode(macro.ShortName), ProjectContext.MacroNode(callee)));
         foreach (var n in ctx.Project.NativeModels)
             foreach (var read in n.Native?.Reads ?? []) edges.Add((n.Name, read));            // a native text is opaque: `reads:` is how it has ancestors
-        return new DependencyGraph(ctx.Project.Sources.Select(s => s.Definition.Name), ctx.Project.AllDescriptors.Select(d => d.Name).Concat(ctx.Project.Macros.Definitions.Where(d => !d.IsType).Select(d => ProjectContext.MacroNode(d.ShortName))), edges);
+        return new DependencyGraph(ctx.Project.BuiltModels.Select(s => s.Definition.Name), ctx.Project.DeclaredModelsAndStaging.Select(d => d.Name).Concat(ctx.Project.Macros.Definitions.Where(d => !d.IsType).Select(d => ProjectContext.MacroNode(d.ShortName))), edges);
     }
 
     /// <summary>Which column of which table each output column of a model comes from, with the kind of transformation (direct, expression, aggregation, ...).</summary>
-    public static IReadOnlyList<ColumnEdge> ColumnEdges(ProjectContext ctx, ModelSource model)
+    public static IReadOnlyList<ColumnEdge> ColumnEdges(ProjectContext ctx, BuiltModel model)
     {
         var sql = model.ReadQuery(ctx.Root, ctx.Config);
         var facts = MetadataBuilder.AnalyzeAgainstUpstream(ctx, model.Definition.Name, ctx.AnalysisSql(model, sql)).Facts;

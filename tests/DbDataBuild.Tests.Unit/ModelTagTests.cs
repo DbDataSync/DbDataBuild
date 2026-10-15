@@ -48,7 +48,7 @@ public class ModelTagTests
         Assert.Equal(["finance.margin", "finance.revenue"], Chosen(dir, "tag:finance"));
         Assert.Equal(["finance.revenue"], Chosen(dir, "tag:critical"));
         Assert.Equal(["finance.costs"], Chosen(dir, "tag:only_mine"));                              // `tags=` replaces what was inherited
-        Assert.Equal(["finance.revenue", "ops.queue"], Chosen(dir, "tag:everywhere"));              // the project's tag reaches the models that do not remove it
+        Assert.Equal(["finance.revenue", "ops.queue", "staging.orders"], Chosen(dir, "tag:everywhere"));              // the project's tag reaches the models that do not remove it, mapped ones too
         Assert.DoesNotContain("finance.margin", Chosen(dir, "tag:everywhere"));                     // `tags-` removes one
         Assert.Equal(["finance.revenue"], Chosen(dir, "tag:finance,tag:critical"));                 // an intersection with another term
     }

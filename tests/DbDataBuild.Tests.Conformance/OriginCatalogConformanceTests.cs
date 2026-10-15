@@ -84,7 +84,7 @@ public class OriginCatalogConformanceTests
             using var doc = JsonDocument.Parse(json.Out);
             var data = doc.RootElement.GetProperty("data");
             Assert.Equal(0, data.GetProperty("catalog_notes").GetArrayLength());
-            var ordersJson = data.GetProperty("sources").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "sales.orders");
+            var ordersJson = data.GetProperty("mapped_models").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "sales.orders");
             Assert.Equal(["ix_orders_placed", "ux_orders_total"], ordersJson.GetProperty("indexes").EnumerateArray().Select(i => i.GetProperty("name").GetString()).Order(StringComparer.Ordinal));
             Assert.Equal("sales.customers", ordersJson.GetProperty("foreign_keys")[0].GetProperty("references").GetProperty("table").GetString());
         }

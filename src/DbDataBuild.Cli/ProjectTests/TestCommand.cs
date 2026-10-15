@@ -50,7 +50,7 @@ internal static class TestCommand
         }
         if (rules.Count > 0)
         {
-            using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, plan: null).Select(d => new MetadataDocument(d.Kind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
+            using var db = MetadataDatabase.Open(MetadataPublisher.Collect(ctx, null, plan: null).Select(d => new MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
             foreach (var rule in rules) outcomes.Add(EvaluateRule(db, rule, limit, error));
         }
 
@@ -134,8 +134,8 @@ internal static class TestCommand
 
     private static void EvaluateModelTest(ProjectContext ctx, ModelTestFile test, int limit, List<Outcome> outcomes, TextWriter error)
     {
-        var source = ctx.Project.Sources.FirstOrDefault(s => s.Definition.Name == test.Model);
-        if (source == null)
+        var built = ctx.Project.BuiltModels.FirstOrDefault(s => s.Definition.Name == test.Model);
+        if (built == null)
         {
             var d = new Diagnostic(DiagnosticCatalog.InvalidValue, new(test.File, 1, 1), $"The test `{test.Name}` is for the model `{test.Model}`, which is not a model of this project.",
                 Fix: $"Name an existing model in `model:`, or name the file after the model (`{ModelTestLoader.Directory}/<schema name>/<model>.yml`).");
@@ -144,15 +144,15 @@ internal static class TestCommand
             return;
         }
 
-        var valuesSql = source.ReadQueryWithValues(ctx.Root, ctx.Config, ctx.TargetsOf(source.Definition)[0]);
-        var (sql, collation, _) = ctx.StringEmulation(source, valuesSql);
-        var declared = ctx.Project.Models.Select(m => (m.Name, m.Columns)).Concat(ctx.Project.AllDescriptors.Select(s => (s.Name, s.Columns))).ToDictionary(t => t.Name, t => t.Columns, StringComparer.OrdinalIgnoreCase);
-        var upstream = ctx.BaseTablesOf(source, valuesSql)
+        var valuesSql = built.ReadQueryWithValues(ctx.Root, ctx.Config, ctx.TargetsOf(built.Definition)[0]);
+        var (sql, collation, _) = ctx.StringEmulation(built, valuesSql);
+        var declared = ctx.Project.Models.Select(m => (m.Name, m.Columns)).Concat(ctx.Project.DeclaredModelsAndStaging.Select(s => (s.Name, s.Columns))).ToDictionary(t => t.Name, t => t.Columns, StringComparer.OrdinalIgnoreCase);
+        var upstream = ctx.BaseTablesOf(built, valuesSql)
             .Distinct(StringComparer.OrdinalIgnoreCase).Where(declared.ContainsKey).Select(n => new UpstreamTable(n, declared[n])).ToList();
 
         foreach (var c in test.Cases)
         {
-            var result = ModelTestRunner.Run(source.Definition.Name, source.Definition.Columns, sql, upstream, c, limit, ctx.Project.Macros.PreludeFor([valuesSql]), collation);
+            var result = ModelTestRunner.Run(built.Definition.Name, built.Definition.Columns, sql, upstream, c, limit, ctx.Project.Macros.PreludeFor([valuesSql]), collation);
             var outcome = result.Outcome switch { CaseOutcome.Pass => RuleOutcome.Ran, CaseOutcome.Fail => RuleOutcome.Ran, CaseOutcome.NotASelect => RuleOutcome.NotASelect, _ => RuleOutcome.CouldNotRun };
             var o = Judge("model", $"{test.Name}::{c.Name}", test.File, test.Model, c.Name, test.Description, test.Severity, test.Tags, outcome, result.Message, result.Line, result.Columns, result.Rows,
                 result.Outcome == CaseOutcome.Fail ? Math.Max(1, result.Count) : 0, error);

@@ -17,12 +17,12 @@ internal static class Prompts
     [
         new("explore-project", "Explore the project", "Orient in a project: what it holds, how it is layered, what is wrong with it",
             [],
-            _ => Preface + "Give me a picture of this project. Call `project_compile` and `project_tests_run`, then `project_show_graph` and `project_show_metadata`. Tell me: how many sources and models, the layers and what each is for, the largest dependency chains, " +
-                 "which models read which sources, and every error or warning (look up each code with `help_code`). Say what you would look at first. Change nothing."),
+            _ => Preface + "Give me a picture of this project. Call `project_compile` and `project_tests_run`, then `project_show_graph` and `project_show_metadata`. Tell me: how many models of each kind, the layers and what each is for, the largest dependency chains, " +
+                 "which models read which mapped and native models, and every error or warning (look up each code with `help_code`). Say what you would look at first. Change nothing."),
 
         new("add-model", "Add a model", "Write a new model and its definition, check it on sample data, render it and plan it",
             [new("name", "The model's name, as schema_name.table_name (marts.fct_orders)"), new("purpose", "What one row is, and what the model should compute")],
-            a => Preface + $"Add the model `{a["name"]}`: {a["purpose"]}\n\nFollow the loop for a model change in the skill. Look at the models and sources it should read (`project_show_metadata`, `project_show_graph`) before writing. " +
+            a => Preface + $"Add the model `{a["name"]}`: {a["purpose"]}\n\nFollow the loop for a model change in the skill. Look at the models it should read (`project_show_metadata`, `project_show_graph`) before writing. " +
                  "Write the query in DuckDB's dialect and the definition with its columns and grain, run `project_compile` until it is clean, check the logic with `project_sample` and add a model test for the logic that is easy to get wrong, run `project_model_update` with `check`, " +
                  "then `project_compile` again and `project_tests_run`. Finish with `connection_deploy` with `write_plan` if a connection is configured for reading, and show me the steps. Ask me about anything the plan asks; do not answer questions about data yourself."),
 

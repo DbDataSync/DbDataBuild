@@ -4,7 +4,7 @@ using static DbDataBuild.Tests.Unit.SchemaConformanceTests;
 
 namespace DbDataBuild.Tests.Unit;
 
-public class SourceDescriptorTests
+public class DeclaredModelTests
 {
     public sealed record Case(string Name, string Yaml, bool SchemaValid, params string[] Codes)
     {
@@ -53,11 +53,11 @@ public class SourceDescriptorTests
     }
 
     [Theory, MemberData(nameof(Data))]
-    public void Source_schema_and_loader_agree(Case c)
+    public void Declared_model_schema_and_loader_agree(Case c)
     {
-        Assert.Equal(c.SchemaValid, SchemaAccepts(LoadSchema("source"), c.Yaml));
+        Assert.Equal(c.SchemaValid, SchemaAccepts(LoadSchema("declared-model"), c.Yaml));
         var diags = new List<Diagnostic>();
-        var d = SourceDescriptorLoader.Load(c.Yaml, "models/staging/orders.yml", "staging.orders", diags);
+        var d = DeclaredModelLoader.Load(c.Yaml, "models/staging/orders.yml", "staging.orders", diags);
         if (c.Codes.Length == 0)
         {
             Assert.Empty(diags.Select(DiagnosticFormatter.Format));
@@ -73,7 +73,7 @@ public class SourceDescriptorTests
     [Fact]
     public void Descriptor_is_read_completely()
     {
-        var d = SourceDescriptorLoader.Load("name: staging.orders\nkind: mapped\ngrain: [order_id]\n" + Cols, "f.yml", null, [])!;
+        var d = DeclaredModelLoader.Load("name: staging.orders\nkind: mapped\ngrain: [order_id]\n" + Cols, "f.yml", null, [])!;
         Assert.Equal("staging.orders", d.Name);
         Assert.Equal(["order_id"], d.Grain);
         Assert.Equal(["order_id", "amount"], d.Columns.Select(c => c.Name));
@@ -89,7 +89,7 @@ public class SourceDescriptorTests
         File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\n" + Cols);
         File.WriteAllText(Path.Combine(dir, "models/staging/bad.yml"), "name: staging.nope\nkind: mapped\n" + Cols);
         var result = ProjectValidator.Validate(dir);
-        Assert.Equal("staging.orders", Assert.Single(result.Descriptors).Name);
+        Assert.Equal("staging.orders", Assert.Single(result.MappedModels).Name);
         Assert.Contains(result.Diagnostics, d => d.Code == "DDB-107" && d.Location.File == "models/staging/bad.yml");
     }
 
@@ -100,7 +100,7 @@ public class SourceDescriptorTests
         Directory.CreateDirectory(Path.Combine(dir, "models", "staging"));
         File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\n" + Cols);
         var result = ProjectValidator.Validate(dir);
-        Assert.Equal("staging.orders", Assert.Single(result.Descriptors).Name);
+        Assert.Equal("staging.orders", Assert.Single(result.MappedModels).Name);
         Assert.DoesNotContain(result.Diagnostics, d => d.Code == "DDB-108");              // nothing is missing: there is no query to have
 
         File.WriteAllText(Path.Combine(dir, "models/staging/orders.sql"), "SELECT 1");
@@ -117,7 +117,7 @@ public class SourceDescriptorTests
         File.WriteAllText(Path.Combine(dir, "models/crm/customers.yml"), "name: crm.customers\n" + Cols);
         var result = ProjectValidator.Validate(dir);
         Assert.Empty(result.Diagnostics);
-        var d = Assert.Single(result.Descriptors);
+        var d = Assert.Single(result.MappedModels);
         Assert.Equal(("crm.customers", "crm"), (d.Name, string.Join(",", d.Connections!)));
     }
 
@@ -135,6 +135,6 @@ public class SourceDescriptorTests
     public void Sources_are_optional()
     {
         var dir = TestSupport.NewProjectDir();
-        Assert.Empty(ProjectValidator.Validate(dir).Descriptors);
+        Assert.Empty(ProjectValidator.Validate(dir).MappedModels);
     }
 }

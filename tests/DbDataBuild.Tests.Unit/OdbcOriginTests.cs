@@ -203,15 +203,15 @@ public class OdbcOriginTests
     [Fact]
     public void The_standard_names_of_information_schema_map_to_logical_types_and_a_profile_adds_its_own()
     {
-        SourceType Of(string type, int? length = null, int? precision = null, int? scale = null, DialectProfile? profile = null) =>
-            SourceTypes.From("odbc", new ColumnShape("c", type, length, precision, scale, true, null, null), profile);
+        ImportedType Of(string type, int? length = null, int? precision = null, int? scale = null, DialectProfile? profile = null) =>
+            ImportedTypes.From("odbc", new ColumnShape("c", type, length, precision, scale, true, null, null), profile);
         Assert.Equal("BIGINT", Of("bigint").LogicalType);
         Assert.Equal("DOUBLE", Of("double precision").LogicalType);
         Assert.Equal("DECIMAL(18, 3)", Of("numeric", precision: 18, scale: 3).LogicalType);
-        Assert.Equal(SourceTypeFit.None, Of("numeric").Fit);                                              // a decimal with no precision has no logical type
+        Assert.Equal(TypeFit.None, Of("numeric").Fit);                                              // a decimal with no precision has no logical type
         Assert.Equal("VARCHAR(40)", Of("character varying", length: 40).LogicalType);
         Assert.Equal("VARCHAR", Of("text").LogicalType);
-        Assert.Equal(SourceTypeFit.Widened, Of("character", length: 3).Fit);                              // fixed length: padding is not part of the logical type
+        Assert.Equal(TypeFit.Widened, Of("character", length: 3).Fit);                              // fixed length: padding is not part of the logical type
         Assert.Equal("TIMESTAMP", Of("timestamp without time zone").LogicalType);
         Assert.Equal("TIMESTAMP WITH TIME ZONE", Of("timestamp with time zone").LogicalType);
         var bytea = Of("bytea");

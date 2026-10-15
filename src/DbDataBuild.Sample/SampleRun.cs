@@ -4,42 +4,46 @@ using DuckDB.NET.Data;
 
 namespace DbDataBuild.Sample;
 
-/// <summary>A model to run: its declared columns, its DuckDB-dialect query, and the tables that query reads (sources or other models).</summary>
+/// <summary>A model to run: its declared columns, its DuckDB-dialect query, and the tables that query reads (declared models or other models).</summary>
 /// <param name="Collation">DuckDB's `default_collation` for the query (the model's connection profile); null for none.</param>
 /// <param name="Notes">What was done to make DuckDB compare strings as the model's connection does, shown with the result.</param>
-public sealed record SampleModel(string Name, IReadOnlyList<ColumnDefinition> Columns, string Sql, IReadOnlyList<string> Upstream, string? Collation = null, IReadOnlyList<string>? Notes = null);
+public sealed record SampleModel(string Name, IReadOnlyList<ColumnDefinition> Columns, string Sql, IReadOnlyList<string> Upstream, string? Collation = null, IReadOnlyList<string>? Notes = null)
+{
+    /// <summary>The model kind, for the table the result shows.</summary>
+    public string Kind { get; init; } = ModelKinds.View;
+}
 
-/// <param name="Rows">Rows generated per source.</param>
+/// <param name="Rows">Rows generated per declared model.</param>
 /// <param name="Limit">Rows of each result that are returned (the row count is always complete).</param>
-/// <param name="DataDir">A directory of CSV files named after sources (`staging.orders.csv`); a source with a file uses it instead of generated rows.</param>
-/// <param name="Seeds">The project's seeds (DESIGN.md 15.6): a source with a seed is filled by running it, with the variables `seed` and `scale`, instead of generated at random.</param>
+/// <param name="DataDir">A directory of CSV files named after declared models (`staging.orders.csv`); a declared model with a file uses it instead of generated rows.</param>
+/// <param name="Seeds">The project's seeds (DESIGN.md 15.6): a declared model with a seed is filled by running it, with the variables `seed` and `scale`, instead of generated at random.</param>
 /// <param name="Scale">The variable `scale` the seeds read; null keeps the project's default.</param>
 public sealed record SampleOptions(int Rows = 50, int Seed = 1, int Limit = 20, string? DataDir = null, SeedSet? Seeds = null, int? Scale = null, DbDataBuild.Core.DuckPrelude? Macros = null);
 
 public sealed record SampleColumn(string Name, string Type);
 
-/// <param name="Kind">source or model.</param>
-/// <param name="Origin">For a source: generated or the CSV file's name.</param>
+/// <param name="Kind">The model kind of the table: a built kind for a result, `mapped` or `native` for a declared model that was filled.</param>
+/// <param name="Origin">For a declared model: generated or the CSV file's name.</param>
 public sealed record SampleTable(string Name, string Kind, IReadOnlyList<SampleColumn> Columns, long RowCount, IReadOnlyList<IReadOnlyList<string?>> Rows, string? Error, string? Origin, IReadOnlyList<string> Warnings);
 
 public sealed record SampleResult(IReadOnlyList<SampleTable> Tables);
 
 /// <summary>
-/// Runs models on sample data, offline, in an in-memory DuckDB (DESIGN.md 15.2): sources are filled with generated or supplied rows, then the selected models and the
+/// Runs models on sample data, offline, in an in-memory DuckDB (DESIGN.md 15.2): declared models are filled with generated or supplied rows, then the selected models and the
 /// models they depend on run in dependency order, each as `CREATE TABLE ... AS <query>`, so a downstream model reads what its upstream model produced. Nothing is
 /// connected to and nothing is written: this answers "what would this query return on data like this", not "what is in the warehouse". External access is off, so a
 /// query cannot read files or the network.
 /// </summary>
 public static class SampleRun
 {
-    public static SampleResult Run(IReadOnlyList<SourceDescriptor> sources, IReadOnlyList<SampleModel> models, IReadOnlyList<string> selected, SampleOptions options)
+    public static SampleResult Run(IReadOnlyList<DeclaredModel> sources, IReadOnlyList<SampleModel> models, IReadOnlyList<string> selected, SampleOptions options)
     {
         var byModel = models.ToDictionary(m => m.Name, StringComparer.OrdinalIgnoreCase);
         var bySource = sources.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
 
         // the selected models, everything they read, in dependency order
         var order = new List<SampleModel>();
-        var neededSources = new List<SourceDescriptor>();
+        var neededSources = new List<DeclaredModel>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Visit(string name)
         {
@@ -62,7 +66,7 @@ public static class SampleRun
         var seeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (options.Seeds is { Seeds.Count: > 0 } seedSet)
         {
-            bool HasCsv(SourceDescriptor s) => options.DataDir != null && File.Exists(Path.Combine(options.DataDir, s.Name + ".csv"));
+            bool HasCsv(DeclaredModel s) => options.DataDir != null && File.Exists(Path.Combine(options.DataDir, s.Name + ".csv"));
             var wanted = neededSources.Where(s => seedSet.Find(s.Name) != null && !HasCsv(s)).Select(s => s.Name).ToList();
             if (wanted.Count > 0)
             {
@@ -73,16 +77,16 @@ public static class SampleRun
                     {
                         seeded.Add(l.Name);
                         var s = bySource[l.Name];
-                        tables.Add(Read(db, s.Name, "source", s.Columns.Select(c => new SampleColumn(c.Name, c.Type)).ToList(), options, null, $"seeded by {l.File} (seed {options.Seed}{(options.Scale != null ? $", scale {options.Scale}" : "")})", []));
+                        tables.Add(Read(db, s.Name, s.Kind, s.Columns.Select(c => new SampleColumn(c.Name, c.Type)).ToList(), options, null, $"seeded by {l.File} (seed {options.Seed}{(options.Scale != null ? $", scale {options.Scale}" : "")})", []));
                     }
                 }
-                catch (SampleException ex) { foreach (var name in wanted) { seeded.Add(name); tables.Add(new SampleTable(name, "source", Columns(bySource[name].Columns), 0, [], ex.Message, null, [])); } }
+                catch (SampleException ex) { foreach (var name in wanted) { seeded.Add(name); tables.Add(new SampleTable(name, bySource[name].Kind, Columns(bySource[name].Columns), 0, [], ex.Message, null, [])); } }
             }
         }
         foreach (var s in neededSources.Where(s => !seeded.Contains(s.Name)))
         {
             try { tables.Add(LoadSource(db, s, options)); }
-            catch (SampleException ex) { tables.Add(new SampleTable(s.Name, "source", Columns(s.Columns), 0, [], ex.Message, null, [])); }
+            catch (SampleException ex) { tables.Add(new SampleTable(s.Name, s.Kind, Columns(s.Columns), 0, [], ex.Message, null, [])); }
         }
 
         foreach (var statement in options.Macros?.Macros ?? [])
@@ -99,17 +103,17 @@ public static class SampleRun
             if (broken != null)
             {
                 failed[m.Name] = $"not run: it reads `{broken}`, which failed";
-                tables.Add(new SampleTable(m.Name, "model", Columns(m.Columns), 0, [], failed[m.Name], null, []));
+                tables.Add(new SampleTable(m.Name, m.Kind, Columns(m.Columns), 0, [], failed[m.Name], null, []));
                 continue;
             }
             tables.Add(RunModel(db, m, options, failed));
         }
 
         var shown = new HashSet<string>(selected, StringComparer.OrdinalIgnoreCase);
-        return new SampleResult(tables.Where(t => t.Kind == "source" || shown.Contains(t.Name) || t.Error != null).ToList());
+        return new SampleResult(tables.Where(t => ModelKinds.Declared.Contains(t.Kind) || shown.Contains(t.Name) || t.Error != null).ToList());
     }
 
-    private static SampleTable LoadSource(DuckDBConnection db, SourceDescriptor s, SampleOptions o)
+    private static SampleTable LoadSource(DuckDBConnection db, DeclaredModel s, SampleOptions o)
     {
         var (schema, table) = Split(s.Name);
         Exec(db, $"CREATE SCHEMA IF NOT EXISTS {Q(schema)}");
@@ -129,11 +133,11 @@ public static class SampleRun
                 Exec(db, $"INSERT INTO {Q(schema)}.{Q(table)} ({names}) VALUES {string.Join(", ", rows.Skip(i).Take(200).Select(r => "(" + string.Join(", ", r) + ")"))}");
             origin = $"generated ({rows.Count} rows, seed {o.Seed})";
         }
-        return Read(db, s.Name, "source", s.Columns.Select(c => new SampleColumn(c.Name, c.Type)).ToList(), o, null, origin, []);
+        return Read(db, s.Name, s.Kind, s.Columns.Select(c => new SampleColumn(c.Name, c.Type)).ToList(), o, null, origin, []);
     }
 
     /// <summary>The CSV is read on a separate connection (the one that runs the models cannot read files) and its rows are inserted into the sample database.</summary>
-    private static void LoadCsv(DuckDBConnection db, string schema, string table, SourceDescriptor s, string file)
+    private static void LoadCsv(DuckDBConnection db, string schema, string table, DeclaredModel s, string file)
     {
         using var reader = new DuckDBConnection("DataSource=:memory:");
         reader.Open();
@@ -189,12 +193,12 @@ public static class SampleRun
             var extra = columns.Where(c => !declared.Any(n => string.Equals(c.Name, n, StringComparison.OrdinalIgnoreCase))).Select(c => c.Name).ToList();
             if (missing.Count > 0) warnings.Add($"the query does not return the declared column(s) {string.Join(", ", missing)}");
             if (extra.Count > 0) warnings.Add($"the query returns column(s) {string.Join(", ", extra)} that the definition does not declare");
-            return Read(db, m.Name, "model", columns, o, null, null, warnings);
+            return Read(db, m.Name, m.Kind, columns, o, null, null, warnings);
         }
         catch (DuckDBException ex)
         {
             failed[m.Name] = FirstLine(ex.Message);
-            return new SampleTable(m.Name, "model", Columns(m.Columns), 0, [], FirstLine(ex.Message), null, []);
+            return new SampleTable(m.Name, m.Kind, Columns(m.Columns), 0, [], FirstLine(ex.Message), null, []);
         }
     }
 

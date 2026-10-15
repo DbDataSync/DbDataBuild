@@ -12,7 +12,7 @@ namespace DbDataBuild.Cli;
 internal static class ProjectChecks
 {
     /// <param name="onlyTargets">Restrict lint and rendering to these targets (null: each model's own targets).</param>
-    public static List<Diagnostic> Run(IReadOnlyList<ModelSource> sources, ProjectConfig config, IReadOnlyList<string>? onlyTargets, string? projectRoot = null, ModelLowering? lowering = null)
+    public static List<Diagnostic> Run(IReadOnlyList<BuiltModel> models, ProjectConfig config, IReadOnlyList<string>? onlyTargets, string? projectRoot = null, ModelLowering? lowering = null)
     {
         var matrixDiags = new List<Diagnostic>();
         var matrix = MatrixLoader.LoadEmbedded(matrixDiags);
@@ -21,20 +21,20 @@ internal static class ProjectChecks
         var renderer = new LoadRenderer(matrix, linter, config);
         var diagnostics = new List<Diagnostic>();
         if (lowering != null) diagnostics.AddRange(lowering.CheckMacros());
-        foreach (var source in sources)
+        foreach (var built in models)
         {
-            foreach (var problem in source.QueryParameterProblems(projectRoot ?? Directory.GetCurrentDirectory(), config))
-                diagnostics.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(source.QueryFile, 0, 0), $"{source.Definition.Name}: {problem}."));
-            if (source.QueryParameterProblems(projectRoot ?? Directory.GetCurrentDirectory(), config).Count > 0) continue;
+            foreach (var problem in built.QueryParameterProblems(projectRoot ?? Directory.GetCurrentDirectory(), config))
+                diagnostics.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(built.QueryFile, 0, 0), $"{built.Definition.Name}: {problem}."));
+            if (built.QueryParameterProblems(projectRoot ?? Directory.GetCurrentDirectory(), config).Count > 0) continue;
             var root = projectRoot ?? Directory.GetCurrentDirectory();
-            var targets = (source.Definition.Targets ?? config.DefaultConnections).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList();
+            var targets = (built.Definition.Targets ?? config.DefaultConnections).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList();
             // a model that names something by a parameter reads a different query on connections that give different names: each such query is checked on its own
-            var variants = source.QueryVariants(root, config, targets);
-            foreach (var (sql, variantTargets, variant) in variants.DefaultIfEmpty((Sql: source.ReadQuery(root, config), Targets: (IReadOnlyList<string>)targets, Variant: (string?)null)))
+            var variants = built.QueryVariants(root, config, targets);
+            foreach (var (sql, variantTargets, variant) in variants.DefaultIfEmpty((Sql: built.ReadQuery(root, config), Targets: (IReadOnlyList<string>)targets, Variant: (string?)null)))
             {
                 if (lowering is { Enabled: false } && lowering.ReachesMacros(sql))
                 {
-                    diagnostics.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(source.QueryFile, 0, 0), $"{source.Definition.Name} calls a macro of the project, and a macro is expanded by DuckDB while the query is lowered, which is switched off.",
+                    diagnostics.Add(new Diagnostic(DiagnosticCatalog.InvalidValue, new(built.QueryFile, 0, 0), $"{built.Definition.Name} calls a macro of the project, and a macro is expanded by DuckDB while the query is lowered, which is switched off.",
                         Fix: "Remove `lowering: { enabled: false }` from dbdatabuild.yml, or do not call macros."));
                     continue;
                 }
@@ -43,27 +43,27 @@ internal static class ProjectChecks
                 string? bodyFile = null;
                 if (lowering is { Enabled: true })
                 {
-                    var (lowered, error) = lowering.Lower(source, sql, source.QueryParameterList(root, config), variant);
+                    var (lowered, error) = lowering.Lower(built, sql, built.QueryParameterList(root, config), variant);
                     if (lowered == null) { diagnostics.Add(error!); continue; }
                     body = lowered.Sql;
                     bodyFile = $"rendered/{lowered.ArtifactPath}";
                 }
                 // each target is linted on the query it will actually get: the lowered one with that target's rules applied
-                var rewrites = RewriteCatalog.For(config, source.Definition, diagnostics);
-                foreach (var t in variantTargets) diagnostics.AddRange(linter.Lint(DbDataBuild.Targets.Rules.TargetRules.Apply(body, config.EngineOf(t) ?? t, rewrites, config.TargetVersions.TryGetValue(t, out var tv) ? tv : null).Sql, bodyFile ?? source.QueryFile, [t], config));
+                var rewrites = RewriteCatalog.For(config, built.Definition, diagnostics);
+                foreach (var t in variantTargets) diagnostics.AddRange(linter.Lint(DbDataBuild.Targets.Rules.TargetRules.Apply(body, config.EngineOf(t) ?? t, rewrites, config.TargetVersions.TryGetValue(t, out var tv) ? tv : null).Sql, bodyFile ?? built.QueryFile, [t], config));
                 // every declared model x target x operation pair must render (in memory; nothing is written), and the scripts must pass offline validation
-                if (config.LintSlices) diagnostics.AddRange(SliceAdvice(source, variantTargets, body));
-                if (config.LintSlices && lowering != null) diagnostics.AddRange(SliceSourceAdvice(source, variantTargets, body, lowering));
-                if (lowering != null && !source.Definition.LintIgnore.Contains(DiagnosticCatalog.StringsCompareDifferently.Code)) diagnostics.AddRange(StringProfileAdvice(source, variantTargets, config, lowering, body));
-                diagnostics.AddRange(renderer.Render(source.Definition, body, source.QueryFile, variantTargets, bodyFile, source.QueryParameterList(root, config), lowering?.NativeUsesFor(body) ?? []).Diagnostics.Where(d => d.Code != DiagnosticCatalog.SqlParseFailure.Code));
+                if (config.LintSlices) diagnostics.AddRange(SliceAdvice(built, variantTargets, body));
+                if (config.LintSlices && lowering != null) diagnostics.AddRange(SliceSourceAdvice(built, variantTargets, body, lowering));
+                if (lowering != null && !built.Definition.LintIgnore.Contains(DiagnosticCatalog.StringsCompareDifferently.Code)) diagnostics.AddRange(StringProfileAdvice(built, variantTargets, config, lowering, body));
+                diagnostics.AddRange(renderer.Render(built.Definition, body, built.QueryFile, variantTargets, bodyFile, built.QueryParameterList(root, config), lowering?.NativeUsesFor(body) ?? []).Diagnostics.Where(d => d.Code != DiagnosticCatalog.SqlParseFailure.Code));
             }
-            diagnostics.AddRange(NameLengths(source, config, targets));
-            foreach (var target in targets) HookLoader.Load(source, config, target, projectRoot ?? Directory.GetCurrentDirectory(), diagnostics);   // missing or unparseable hook scripts
+            diagnostics.AddRange(NameLengths(built, config, targets));
+            foreach (var target in targets) HookLoader.Load(built, config, target, projectRoot ?? Directory.GetCurrentDirectory(), diagnostics);   // missing or unparseable hook scripts
         }
         if (config.LintIndexes)
-            foreach (var source in sources)
-                diagnostics.AddRange(IndexAdvice(source, (source.Definition.Targets ?? config.DefaultConnections).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList()));
-        diagnostics.AddRange(CollationChecker.Check(config, sources));
+            foreach (var built in models)
+                diagnostics.AddRange(IndexAdvice(built, (built.Definition.Targets ?? config.DefaultConnections).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList()));
+        diagnostics.AddRange(CollationChecker.Check(config, models));
         return diagnostics;
     }
 
@@ -71,9 +71,9 @@ internal static class ProjectChecks
     internal static bool TooLong(string engine, string name) => engine == "postgres" ? System.Text.Encoding.UTF8.GetByteCount(name) > 63 : name.Length > 128;
 
     /// <summary>The names a model gives (its schema name, object name, columns and indexes) that an engine it is built on would cut or refuse (DDB-241).</summary>
-    internal static IEnumerable<Diagnostic> NameLengths(ModelSource source, ProjectConfig config, IReadOnlyList<string> targets)
+    internal static IEnumerable<Diagnostic> NameLengths(BuiltModel built, ProjectConfig config, IReadOnlyList<string> targets)
     {
-        var def = source.Definition;
+        var def = built.Definition;
         var names = new List<(string Kind, string Name)>();
         var dot = def.Name.LastIndexOf('.');
         if (dot > 0) { names.Add(("schema name", def.Name[..dot])); names.Add(("object name", def.Name[(dot + 1)..])); } else names.Add(("object name", def.Name));
@@ -83,7 +83,7 @@ internal static class ProjectChecks
         {
             var engine = config.EngineOf(target) ?? target;
             foreach (var (kind, name) in names.Where(n => TooLong(engine, n.Name)))
-                yield return new Diagnostic(DiagnosticCatalog.NameTooLongForEngine, new(source.DefinitionFile, 0, 0),
+                yield return new Diagnostic(DiagnosticCatalog.NameTooLongForEngine, new(built.DefinitionFile, 0, 0),
                     $"{def.Name}: the {kind} `{(name.Length > 40 ? name[..40] + "..." : name)}` is {(engine == "postgres" ? $"{System.Text.Encoding.UTF8.GetByteCount(name)} bytes, and PostgreSQL keeps 63" : $"{name.Length} characters, and {(engine == "fabric" ? "Fabric" : "SQL Server")} accepts 128")} (connection `{target}`).");
         }
     }
@@ -98,33 +98,33 @@ internal static class ProjectChecks
         var config = ctx.Config;
         IReadOnlyList<string>? ConnectionsOf(string table)
         {
-            if (ctx.Project.Sources.FirstOrDefault(s => string.Equals(s.Definition.Name, table, StringComparison.OrdinalIgnoreCase)) is { } model) return ctx.TargetsOf(model.Definition);
-            if (ctx.Project.AllDescriptors.FirstOrDefault(d => string.Equals(d.Name, table, StringComparison.OrdinalIgnoreCase)) is { } mapped) return mapped.Connections ?? config.DefaultConnections;
+            if (ctx.Project.BuiltModels.FirstOrDefault(s => string.Equals(s.Definition.Name, table, StringComparison.OrdinalIgnoreCase)) is { } model) return ctx.TargetsOf(model.Definition);
+            if (ctx.Project.DeclaredModelsAndStaging.FirstOrDefault(d => string.Equals(d.Name, table, StringComparison.OrdinalIgnoreCase)) is { } mapped) return mapped.Connections ?? config.DefaultConnections;
             return null;
         }
         // a table read through a name that differs between connections is read on the connections that give it that name only
-        bool ReadsOn(ModelSource source, string target, string read) =>
-            !source.HasNames(ctx.Root, ctx.Config) || read.EndsWith("()", StringComparison.Ordinal) || ctx.BaseTablesOf(source, source.ReadQuery(ctx.Root, ctx.Config, target)).Contains(read, StringComparer.OrdinalIgnoreCase);
+        bool ReadsOn(BuiltModel built, string target, string read) =>
+            !built.HasNames(ctx.Root, ctx.Config) || read.EndsWith("()", StringComparison.Ordinal) || ctx.BaseTablesOf(built, built.ReadQuery(ctx.Root, ctx.Config, target)).Contains(read, StringComparer.OrdinalIgnoreCase);
         foreach (var n in ctx.Project.NativeModels.Where(n => n.Native is { Reads.Count: 0 }).OrderBy(n => n.Name, StringComparer.Ordinal))
             found.Add(new Diagnostic(DiagnosticCatalog.NativeReadsNotDeclared, new(n.Native!.File, n.Native.Line, 0), $"{n.Name} is a native {n.Native.Access} and does not declare what it reads, so it has no ancestors in the graph."));
-        foreach (var source in ctx.Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal))
+        foreach (var built in ctx.Project.BuiltModels.OrderBy(s => s.Definition.Name, StringComparer.Ordinal))
         {
-            var targets = ctx.TargetsOf(source.Definition).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList();
-            foreach (var read in ctx.Graph.Reads(source.Definition.Name))
+            var targets = ctx.TargetsOf(built.Definition).Where(t => onlyTargets == null || onlyTargets.Contains(t)).ToList();
+            foreach (var read in ctx.Graph.Reads(built.Definition.Name))
             {
-                if (source.HasNames(ctx.Root, ctx.Config) && targets.All(t => !ctx.BaseTablesOf(source, source.ReadQuery(ctx.Root, ctx.Config, t)).Contains(read, StringComparer.OrdinalIgnoreCase)) && !read.EndsWith("()", StringComparison.Ordinal)) continue;
+                if (built.HasNames(ctx.Root, ctx.Config) && targets.All(t => !ctx.BaseTablesOf(built, built.ReadQuery(ctx.Root, ctx.Config, t)).Contains(read, StringComparer.OrdinalIgnoreCase)) && !read.EndsWith("()", StringComparison.Ordinal)) continue;
                 if (ctx.Project.NativeModels.FirstOrDefault(n => string.Equals(n.Name, read, StringComparison.OrdinalIgnoreCase)) is { Native.Access: NativeQuery.Command })
-                    found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(source.DefinitionFile, 0, 0), $"{source.Definition.Name} reads `{read}`, a native command: a command can only be run, never read inside a query.",
+                    found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(built.DefinitionFile, 0, 0), $"{built.Definition.Name} reads `{read}`, a native command: a command can only be run, never read inside a query.",
                         Fix: $"Copy it (`kind: {{copy: {{from: {read}}}}}`, on its own connection or another) and read the copy."));
                 if (ConnectionsOf(read) is { } where)
-                    foreach (var target in targets.Where(t => !where.Contains(t, StringComparer.Ordinal) && ReadsOn(source, t, read)))
-                        found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(source.DefinitionFile, 0, 0),
-                            $"{source.Definition.Name} is built on `{target}` and reads `{read}`, which is on {string.Join(", ", where.Select(w => $"`{w}`"))}, not on `{target}`.",
-                            Fix: $"Copy `{read}` to `{target}` (a model of `kind: {{copy: {{from: {read}}}}}` on `{target}`) and read the copy, or build {source.Definition.Name} on {where[0]}."));
+                    foreach (var target in targets.Where(t => !where.Contains(t, StringComparer.Ordinal) && ReadsOn(built, t, read)))
+                        found.Add(new Diagnostic(DiagnosticCatalog.ModelReadsAnotherConnection, new(built.DefinitionFile, 0, 0),
+                            $"{built.Definition.Name} is built on `{target}` and reads `{read}`, which is on {string.Join(", ", where.Select(w => $"`{w}`"))}, not on `{target}`.",
+                            Fix: $"Copy `{read}` to `{target}` (a model of `kind: {{copy: {{from: {read}}}}}` on `{target}`) and read the copy, or build {built.Definition.Name} on {where[0]}."));
             }
         }
         // a copy that reads from a Flight SQL server whose dialect nobody has said: its read is written for ansi until `project update` has asked the server and committed the answer
-        var copyOrigins = ctx.Project.Sources.Where(s => s.Definition.IsCopy).SelectMany(s => ctx.TargetsOf(s.Definition).Where(t => onlyTargets == null || onlyTargets.Contains(t)).SelectMany(t => ctx.OriginsOf(s.Definition, t))).Select(o => o.Connection);
+        var copyOrigins = ctx.Project.BuiltModels.Where(s => s.Definition.IsCopy).SelectMany(s => ctx.TargetsOf(s.Definition).Where(t => onlyTargets == null || onlyTargets.Contains(t)).SelectMany(t => ctx.OriginsOf(s.Definition, t))).Select(o => o.Connection);
         foreach (var name in DialectLockFile.Missing(config, copyOrigins))
             found.Add(new Diagnostic(DiagnosticCatalog.DialectLockMissing, new(ProductInfo.DialectLockFile, 0, 0),
                 $"The connection `{name}` is `{config.Connections[name].Kind.Describe()}` with no dialect keyword and no entry in {ProductInfo.DialectLockFile}, so the copies that read from it are written for `ansi`. Run `{ProductInfo.Cli} project update` to ask the server and commit its dialect, or name the dialect in `engine`."));
@@ -137,13 +137,13 @@ internal static class ProjectChecks
     /// DDB-236 (advice): a model built on connections that compare strings differently, whose query uses string columns where that matters. Trailing spaces alone are not an issue for the columns the model declares
     /// `trimmed: true` (and ordering does not depend on them). Silenced with `lint_ignore: [DDB-236]`.
     /// </summary>
-    internal static IEnumerable<Diagnostic> StringProfileAdvice(ModelSource source, IReadOnlyList<string> targets, ProjectConfig config, ModelLowering lowering, string body)
+    internal static IEnumerable<Diagnostic> StringProfileAdvice(BuiltModel built, IReadOnlyList<string> targets, ProjectConfig config, ModelLowering lowering, string body)
     {
         var differences = config.StringProfileDifferences(targets);
         if (differences.Count == 0) return [];
         var dimensions = differences.Select(d => d.Dimension).ToHashSet(StringComparer.Ordinal);
         var onlyTrailing = dimensions.Count == 1 && dimensions.Contains("trailing_space");
-        var uses = lowering.StringUses(source.Definition.Name, body)
+        var uses = lowering.StringUses(built.Definition.Name, body)
             .Where(u => !onlyTrailing || (EqualityContexts.Contains(u.Context) && !u.Trimmed)).ToList();
         if (uses.Count == 0) return [];
         static string Where(string context) => context switch
@@ -153,13 +153,13 @@ internal static class ProjectChecks
         };
         var shown = string.Join(", ", uses.Take(3).Select(u => $"`{u.Column}` in {Where(u.Context)}")) + (uses.Count > 3 ? $" and {uses.Count - 3} more" : "");
         var how = string.Join("; ", differences.Select(d => $"{d.Dimension}: {string.Join(", ", d.Values.Select(v => $"{v.Connection} {v.Value}"))}"));
-        return [new Diagnostic(DiagnosticCatalog.StringsCompareDifferently, new(source.QueryFile, 0, 0), $"{source.Definition.Name} uses string columns where it matters how strings compare ({shown}), and it is built on connections that compare them differently ({how}): it can return different rows on each.")];
+        return [new Diagnostic(DiagnosticCatalog.StringsCompareDifferently, new(built.QueryFile, 0, 0), $"{built.Definition.Name} uses string columns where it matters how strings compare ({shown}), and it is built on connections that compare them differently ({how}): it can return different rows on each.")];
     }
 
     /// <summary>Index lint (DDB-223, DDB-224): advice only, with the exact index to declare. A model silences single codes with `lint_ignore`.</summary>
-    internal static IEnumerable<Diagnostic> IndexAdvice(ModelSource source, IReadOnlyList<string> targets)
+    internal static IEnumerable<Diagnostic> IndexAdvice(BuiltModel built, IReadOnlyList<string> targets)
     {
-        var def = source.Definition;
+        var def = built.Definition;
         foreach (var a in IndexAdvisor.For(def, targets).Where(a => !def.LintIgnore.Contains(a.Code)))
         {
             var columns = string.Join(", ", a.Columns);
@@ -175,8 +175,8 @@ internal static class ProjectChecks
                 : $"{def.Name} {what}, but no declared index leads with it, so each load scans the table ({string.Join(", ", a.Targets)}).";
             var fix = a.Existing != null
                 ? $"Add `unique: true` to index `{a.Existing}` if you want the engine to enforce the key; leaving it is allowed."
-                : $"Add under `indexes:` in {source.DefinitionFile}:  {Models.IndexAdvisor.Yaml(a)}";
-            yield return new Diagnostic(a.Severity == Severity.Warning ? DiagnosticCatalog.MergeKeyNotIndexed : DiagnosticCatalog.LoadColumnNotIndexed, new(source.DefinitionFile, 0, 0), found, Fix: fix);
+                : $"Add under `indexes:` in {built.DefinitionFile}:  {Models.IndexAdvisor.Yaml(a)}";
+            yield return new Diagnostic(a.Severity == Severity.Warning ? DiagnosticCatalog.MergeKeyNotIndexed : DiagnosticCatalog.LoadColumnNotIndexed, new(built.DefinitionFile, 0, 0), found, Fix: fix);
         }
     }
 
@@ -184,9 +184,9 @@ internal static class ProjectChecks
     /// Slice lint (DDB-239): the slice column of a load that reads only the rows after its watermark or in its range is read from a source column, and the project says what indexes that source has, and none
     /// leads with the column. Advice only; the tool never creates an index on a source.
     /// </summary>
-    internal static IEnumerable<Diagnostic> SliceSourceAdvice(ModelSource source, IReadOnlyList<string> targets, string body, ModelLowering lowering)
+    internal static IEnumerable<Diagnostic> SliceSourceAdvice(BuiltModel built, IReadOnlyList<string> targets, string body, ModelLowering lowering)
     {
-        var def = source.Definition;
+        var def = built.Definition;
         if (def.LintIgnore.Contains(DiagnosticCatalog.LoadSliceSourceNotIndexed.Code)) yield break;
         var done = new HashSet<(string Operation, string Column)>();
         foreach (var target in targets)
@@ -199,8 +199,8 @@ internal static class ProjectChecks
                     _ => (null, ""),
                 };
                 if (column == null || !done.Add((op.Name, column))) continue;
-                foreach (var (table, sourceColumn) in lowering.SourceColumnsWithoutLeadingIndex(body, column))
-                    yield return new Diagnostic(DiagnosticCatalog.LoadSliceSourceNotIndexed, new(source.DefinitionFile, 0, 0),
+                foreach (var (table, sourceColumn) in lowering.MappedColumnsWithoutLeadingIndex(body, column))
+                    yield return new Diagnostic(DiagnosticCatalog.LoadSliceSourceNotIndexed, new(built.DefinitionFile, 0, 0),
                         $"{def.Name} / {op.Name} {what} by `{column}`, which the query reads from `{table}.{sourceColumn}`, and no index declared for `{table}` leads with that column, so each load scans the source to find the slice.",
                         Fix: $"If `{table}` has an index that leads with `{sourceColumn}`, add it under `indexes:` in its declaration (`dbdatabuild project import {table} --write` exports it); otherwise ask its owner for one. Silence this with `lint_ignore: [DDB-239]` if the cost is acceptable.");
             }
@@ -210,9 +210,9 @@ internal static class ProjectChecks
     /// Slice lint (DDB-225): for each load that selects its slice from the finished query, whether the filter can be applied below the query's aggregates and windows. Advice only;
     /// the query is never rewritten. A model silences it with `lint_ignore`.
     /// </summary>
-    internal static IEnumerable<Diagnostic> SliceAdvice(ModelSource source, IReadOnlyList<string> targets, string body)
+    internal static IEnumerable<Diagnostic> SliceAdvice(BuiltModel built, IReadOnlyList<string> targets, string body)
     {
-        var def = source.Definition;
+        var def = built.Definition;
         if (def.LintIgnore.Contains(DiagnosticCatalog.LoadSliceNotPushable.Code)) yield break;
         var done = new HashSet<(string Operation, string Column)>();
         foreach (var target in targets)
@@ -227,7 +227,7 @@ internal static class ProjectChecks
                 if (column == null || !done.Add((op.Name, column))) continue;
                 var blockers = DbDataBuild.Sql.Analysis.SliceAnalyzer.Analyze(body, column);
                 if (blockers.Count == 0) continue;
-                yield return new Diagnostic(DiagnosticCatalog.LoadSliceNotPushable, new(source.DefinitionFile, 0, 0),
+                yield return new Diagnostic(DiagnosticCatalog.LoadSliceNotPushable, new(built.DefinitionFile, 0, 0),
                     $"{def.Name} / {op.Name} {what} by `{column}`, which is applied to the finished query, but {string.Join("; and ", blockers.Select(b => b.Detail))}. " +
                     "Every load therefore does the work for the whole history and keeps only the slice.",
                     Fix: "Slice by a grouping or partition column, or use a strategy that does not slice the finished result (for example filter the source inside the query yourself and use full_replace or a key-based load). Silence this with `lint_ignore: [DDB-225]` if the cost is acceptable.");

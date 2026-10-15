@@ -15,7 +15,7 @@ internal static class HistoryConcerns
     {
         var open = history.Where(h => h.NeedsAttention).ToList();
         if (open.Count == 0 || plannedModels.Count == 0) return [];
-        var edges = ctx.Project.Sources.SelectMany(s => ProjectGraph.ColumnEdges(ctx, s)).Where(e => e.FromTable != null && e.FromColumn != null).ToList();
+        var edges = ctx.Project.BuiltModels.SelectMany(s => ProjectGraph.ColumnEdges(ctx, s)).Where(e => e.FromTable != null && e.FromColumn != null).ToList();
         var bySource = edges.ToLookup(e => (e.FromTable!.ToLowerInvariant(), e.FromColumn!.ToLowerInvariant()));
 
         // column -> the entries it comes from (the first found, for the message)
@@ -47,7 +47,7 @@ internal static class HistoryConcerns
             var shown = string.Join("; ", hits.Take(3).Select(h => $"`{h.Key.Column}` comes from {h.Value.Via}"));
             var more = hits.Count > 3 ? $" and {hits.Count - 3} more column(s)" : "";
             var origins = string.Join(", ", hits.Select(h => $"{h.Value.Entry.Model}.{h.Value.Entry.Column}").Distinct(StringComparer.Ordinal));
-            findings.Add(new Diagnostic(DiagnosticCatalog.ReadsInconsistentHistory, new(ctx.Project.Sources.FirstOrDefault(s => s.Definition.Name == model)?.DefinitionFile ?? model, 0, 0),
+            findings.Add(new Diagnostic(DiagnosticCatalog.ReadsInconsistentHistory, new(ctx.Project.BuiltModels.FirstOrDefault(s => s.Definition.Name == model)?.DefinitionFile ?? model, 0, 0),
                 $"{model} is built from a column whose history is inconsistent ({shown}{more}): a backfill was requested for {origins} and none is recorded, so rows loaded before it hold NULL there.",
                 Fix: $"Backfill it (`{ProductInfo.Cli} connection deploy --backfill <model>=<operation>`), or accept it: `{ProductInfo.Cli} connection deploy --ack history:{hits[0].Value.Entry.Model}.{hits[0].Value.Entry.Column} --reason <why>`.") with { SeverityOverride = severity });
         }

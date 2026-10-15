@@ -979,7 +979,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "kind": {
+        "subject_kind": {
           "type": "string"
         },
         "subject": {
@@ -991,7 +991,7 @@
         }
       },
       "required": [
-        "kind",
+        "subject_kind",
         "subject",
         "hash"
       ]
@@ -1084,6 +1084,21 @@
                 "models": {
                   "type": "integer"
                 },
+                "by_kind": {
+                  "description": "The models counted by model kind, all seven kinds (0 for a kind the project has none of).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "view": { "type": "integer" },
+                    "full": { "type": "integer" },
+                    "incremental_by_unique_key": { "type": "integer" },
+                    "incremental_by_time_range": { "type": "integer" },
+                    "copy": { "type": "integer" },
+                    "mapped": { "type": "integer" },
+                    "native": { "type": "integer" }
+                  },
+                  "required": ["view", "full", "incremental_by_unique_key", "incremental_by_time_range", "copy", "mapped", "native"]
+                },
                 "errors": {
                   "type": "integer"
                 },
@@ -1096,6 +1111,7 @@
               },
               "required": [
                 "models",
+                "by_kind",
                 "errors",
                 "warnings",
                 "notes"
@@ -1118,12 +1134,6 @@
             },
             "project": {
               "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/project"
-            },
-            "sources": {
-              "type": "array",
-              "items": {
-                "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/source"
-              }
             },
             "models": {
               "type": "array",
@@ -1144,6 +1154,21 @@
                 "models": {
                   "type": "integer"
                 },
+                "by_kind": {
+                  "description": "The models counted by model kind, all seven kinds (0 for a kind the project has none of).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "view": { "type": "integer" },
+                    "full": { "type": "integer" },
+                    "incremental_by_unique_key": { "type": "integer" },
+                    "incremental_by_time_range": { "type": "integer" },
+                    "copy": { "type": "integer" },
+                    "mapped": { "type": "integer" },
+                    "native": { "type": "integer" }
+                  },
+                  "required": ["view", "full", "incremental_by_unique_key", "incremental_by_time_range", "copy", "mapped", "native"]
+                },
                 "errors": {
                   "type": "integer"
                 },
@@ -1156,6 +1181,7 @@
               },
               "required": [
                 "models",
+                "by_kind",
                 "errors",
                 "warnings",
                 "notes"
@@ -1178,12 +1204,6 @@
             },
             "project": {
               "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/project"
-            },
-            "sources": {
-              "type": "array",
-              "items": {
-                "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/source"
-              }
             },
             "models": {
               "type": "array",
@@ -1210,6 +1230,21 @@
                 "models": {
                   "type": "integer"
                 },
+                "by_kind": {
+                  "description": "The models counted by model kind, all seven kinds (0 for a kind the project has none of).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "view": { "type": "integer" },
+                    "full": { "type": "integer" },
+                    "incremental_by_unique_key": { "type": "integer" },
+                    "incremental_by_time_range": { "type": "integer" },
+                    "copy": { "type": "integer" },
+                    "mapped": { "type": "integer" },
+                    "native": { "type": "integer" }
+                  },
+                  "required": ["view", "full", "incremental_by_unique_key", "incremental_by_time_range", "copy", "mapped", "native"]
+                },
                 "errors": {
                   "type": "integer"
                 },
@@ -1222,6 +1257,7 @@
               },
               "required": [
                 "models",
+                "by_kind",
                 "errors",
                 "warnings",
                 "notes"
@@ -1244,12 +1280,6 @@
             },
             "project": {
               "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/project"
-            },
-            "sources": {
-              "type": "array",
-              "items": {
-                "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/source"
-              }
             },
             "models": {
               "type": "array",
@@ -1285,6 +1315,21 @@
                 "models": {
                   "type": "integer"
                 },
+                "by_kind": {
+                  "description": "The models counted by model kind, all seven kinds (0 for a kind the project has none of).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "view": { "type": "integer" },
+                    "full": { "type": "integer" },
+                    "incremental_by_unique_key": { "type": "integer" },
+                    "incremental_by_time_range": { "type": "integer" },
+                    "copy": { "type": "integer" },
+                    "mapped": { "type": "integer" },
+                    "native": { "type": "integer" }
+                  },
+                  "required": ["view", "full", "incremental_by_unique_key", "incremental_by_time_range", "copy", "mapped", "native"]
+                },
                 "errors": {
                   "type": "integer"
                 },
@@ -1297,6 +1342,7 @@
               },
               "required": [
                 "models",
+                "by_kind",
                 "errors",
                 "warnings",
                 "notes"
@@ -1319,12 +1365,6 @@
             },
             "project": {
               "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/project"
-            },
-            "sources": {
-              "type": "array",
-              "items": {
-                "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/source"
-              }
             },
             "models": {
               "type": "array",
@@ -1351,12 +1391,6 @@
       "properties": {
         "project": {
           "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/project"
-        },
-        "sources": {
-          "type": "array",
-          "items": {
-            "$ref": "urn:dbdatabuild:schemas:metadata#/$defs/source"
-          }
         },
         "models": {
           "type": "array",
@@ -1680,7 +1714,7 @@
             ]
           }
         },
-        "sources": {
+        "mapped_models": {
           "description": "The mapped models (and the tables copies read) compared with their tables: what differs, per model.",
           "type": "array",
           "items": {
@@ -1690,7 +1724,7 @@
               "name": {
                 "type": "string"
               },
-              "kind": {
+              "object_kind": {
                 "enum": [
                   "table",
                   "view",
@@ -3249,7 +3283,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "rows_per_source": {
+        "rows_per_declared_model": {
           "type": "integer"
         },
         "seed": {
@@ -3268,9 +3302,15 @@
                 "type": "string"
               },
               "kind": {
+                "description": "The model kind of the table: a built kind for a result, `mapped` or `native` for a declared model that was filled.",
                 "enum": [
-                  "source",
-                  "model"
+                  "view",
+                  "full",
+                  "incremental_by_unique_key",
+                  "incremental_by_time_range",
+                  "copy",
+                  "mapped",
+                  "native"
                 ]
               },
               "origin": {
@@ -3612,7 +3652,7 @@
             ]
           }
         },
-        "sources": {
+        "mapped_models": {
           "description": "The mapped models (and the tables copies read) compared with their tables: what differs, per model.",
           "type": "array",
           "items": {
@@ -3622,7 +3662,7 @@
               "name": {
                 "type": "string"
               },
-              "kind": {
+              "object_kind": {
                 "enum": [
                   "table",
                   "view",
@@ -3717,7 +3757,7 @@
             "write"
           ]
         },
-        "sources": {
+        "mapped_models": {
           "type": "array",
           "items": {
             "type": "object",
@@ -3726,7 +3766,7 @@
               "name": {
                 "type": "string"
               },
-              "kind": {
+              "object_kind": {
                 "enum": [
                   "table",
                   "view",
@@ -3923,7 +3963,7 @@
             },
             "required": [
               "name",
-              "kind",
+              "object_kind",
               "status",
               "grain",
               "changes"
@@ -4096,25 +4136,31 @@
               "name": {
                 "type": "string"
               },
-              "kind": {
+              "category": {
+                "description": "What the node is: a model of the project (any of the seven kinds; `kind` says which), a macro, or a table that is none of the project's.",
                 "enum": [
                   "model",
-                  "source",
-                  "native",
                   "macro",
                   "unknown"
+                ]
+              },
+              "kind": {
+                "description": "The model kind of a model node; absent for a macro or an unknown table.",
+                "enum": [
+                  "view",
+                  "full",
+                  "incremental_by_unique_key",
+                  "incremental_by_time_range",
+                  "copy",
+                  "mapped",
+                  "native",
+                  null
                 ]
               },
               "level": {
                 "type": "integer"
               },
               "file": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "model_kind": {
                 "type": [
                   "string",
                   "null"
@@ -4129,7 +4175,7 @@
             },
             "required": [
               "name",
-              "kind",
+              "category",
               "level",
               "connections"
             ]
@@ -4710,7 +4756,7 @@
             ]
           }
         },
-        "sources_without_a_seed": {
+        "declared_models_without_a_seed": {
           "type": "array",
           "items": {
             "type": "string"

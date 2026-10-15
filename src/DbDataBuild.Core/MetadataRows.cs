@@ -45,40 +45,27 @@ public static class MetadataDependencies
     }
 
     /// <summary>
-    /// The rows from the metadata documents alone (a model's `upstream`, a native model's `native.reads`): what the in-memory database builds when it is given no rows of its own. The kind of a thing a native model reads is
-    /// found among the documents (a model, a native model or another source; an unknown table otherwise).
+    /// The rows from the metadata documents alone (a model document's `upstream`, which for a native model is the tables it says it reads): what the in-memory database builds when it is given no rows of its own.
     /// </summary>
-    public static IReadOnlyList<DependencyRow> FromDocuments(IEnumerable<(string Kind, string Subject, string Json)> documents)
+    public static IReadOnlyList<DependencyRow> FromDocuments(IEnumerable<(string SubjectKind, string Subject, string Json)> documents)
     {
-        var list = documents.ToList();
-        var kinds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (kind, subject, json) in list.Where(d => d.Kind is "model" or "source"))
-            kinds[subject] = kind == "model" ? "model" : ModelKindOf(kind, json) ?? "mapped";
         var direct = new List<(string, string, string)>();
-        foreach (var (kind, subject, json) in list)
+        foreach (var (subjectKind, subject, json) in documents)
         {
+            if (subjectKind != "model") continue;
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (kind == "model" && root.TryGetProperty("upstream", out var upstream) && upstream.ValueKind == JsonValueKind.Array)
+            if (doc.RootElement.TryGetProperty("upstream", out var upstream) && upstream.ValueKind == JsonValueKind.Array)
                 foreach (var u in upstream.EnumerateArray())
                     direct.Add((subject, u.GetProperty("name").GetString()!, u.GetProperty("kind").GetString()!));
-            else if (kind == "source" && root.TryGetProperty("kind_settings", out var settings) && settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty("reads", out var reads) && reads.ValueKind == JsonValueKind.Array)
-                foreach (var r in reads.EnumerateArray().Select(r => r.GetString()!))
-                    direct.Add((subject, r, kinds.GetValueOrDefault(r, "unknown")));
         }
         return Closure(direct);
     }
 
-    /// <summary>
-    /// The model kind of a model or source document (the `model_kind` column of the stored documents): `view`, `full`, ... for a model document, `mapped` or `native` for a source document; null for any other kind of document. A source
-    /// document of the first version (no `kind`) is told by its `native` object.
-    /// </summary>
-    public static string? ModelKindOf(string documentKind, string json)
+    /// <summary>The model kind of a model document (the `model_kind` column of the stored documents): any of the seven kinds; null for any other subject kind.</summary>
+    public static string? ModelKindOf(string subjectKind, string json)
     {
-        if (documentKind is not ("model" or "source")) return null;
+        if (subjectKind != "model") return null;
         using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        if (root.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String) return k.GetString();
-        return documentKind == "source" ? root.TryGetProperty("native", out var n) && n.ValueKind == JsonValueKind.Object ? "native" : "mapped" : null;
+        return doc.RootElement.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() : null;
     }
 }

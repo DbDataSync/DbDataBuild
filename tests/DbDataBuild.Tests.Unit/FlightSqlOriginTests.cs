@@ -302,7 +302,7 @@ public class FlightSqlOriginTests
         Assert.False(columns[0].Nullable);
         Assert.True(columns[1].Nullable);
 
-        SourceType Of(ColumnShape c) => SourceTypes.From("flightsql", c);
+        ImportedType Of(ColumnShape c) => ImportedTypes.From("flightsql", c);
         Assert.Equal("BIGINT", Of(columns[0]).LogicalType);
         Assert.Equal("DECIMAL(18, 3)", Of(columns[6]).LogicalType);
         Assert.Equal("TIMESTAMP WITH TIME ZONE", Of(columns[9]).LogicalType);

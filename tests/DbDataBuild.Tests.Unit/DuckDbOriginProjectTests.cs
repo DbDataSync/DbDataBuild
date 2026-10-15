@@ -134,7 +134,7 @@ public class DuckDbOriginProjectTests : IDisposable
         MakeDb(); Project("kind: {copy: {from: src.events, unique_key: [id], watermark: {column: day, lookback: 3 days}}}\n");
         Assert.False(ProjectValidator.Validate(dir).HasErrors, string.Join("\n", ProjectValidator.Validate(dir).Diagnostics.Select(DiagnosticFormatter.Format)));
         var ctx = ProjectContext.Load(dir);
-        var copy = ctx.Project.Sources.Single(s => s.Definition.Name == "dst.events").Definition;
+        var copy = ctx.Project.BuiltModels.Single(s => s.Definition.Name == "dst.events").Definition;
         var origin = Assert.Single(ctx.OriginsOf(copy, "sqlserver"));
         Assert.Equal(("analytics", "duckdb"), (origin.Connection, origin.Engine));
         var ddl = TargetRegistry.Get("sqlserver").CreateDdl(ctx.Config);
@@ -155,7 +155,7 @@ public class DuckDbOriginProjectTests : IDisposable
     {
         MakeDb(); Project();
         var ctx = ProjectContext.Load(dir);
-        var copy = ctx.Project.Sources.Single(s => s.Definition.Name == "dst.events").Definition;
+        var copy = ctx.Project.BuiltModels.Single(s => s.Definition.Name == "dst.events").Definition;
         var origin = Assert.Single(ctx.OriginsOf(copy, "sqlserver"));
         var ok = await CopyOriginCheck.RunOneAsync(ctx, copy, origin, Env);
         Assert.DoesNotContain(ok.Findings, f => f.Severity == Severity.Error);
@@ -177,7 +177,7 @@ public class DuckDbOriginProjectTests : IDisposable
         Assert.False(ProjectValidator.Validate(dir).HasErrors, string.Join("\n", ProjectValidator.Validate(dir).Diagnostics.Select(DiagnosticFormatter.Format)));
 
         var ctx = ProjectContext.Load(dir);
-        var copy = ctx.Project.Sources.Single(s => s.Definition.Name == "dst.orders").Definition;
+        var copy = ctx.Project.BuiltModels.Single(s => s.Definition.Name == "dst.orders").Definition;
         var origin = Assert.Single(ctx.OriginsOf(copy, "sqlserver"));
         var ddl = TargetRegistry.Get("sqlserver").CreateDdl(ctx.Config);
         var (_, spec) = Planner.CopyTransfer(ctx.Config, copy, ddl, origin);

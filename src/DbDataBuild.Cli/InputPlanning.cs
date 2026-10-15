@@ -35,7 +35,7 @@ internal static class InputPlanning
         {
             var model = planned.First(m => m.Definition.Name == op.Model);
             var def = model.Definition;
-            var source = ctx.Project.Sources.First(s => s.Definition.Name == def.Name);
+            var built = ctx.Project.BuiltModels.First(s => s.Definition.Name == def.Name);
             var declared = LoadPlan.For(def, target).First(o => o.Name == op.Operation);
             var declaredNames = declared.InputList.SelectMany(i => i.Names.Append(i.Name)).ToHashSet(StringComparer.Ordinal);
             var given = pins.Where(p => p.Matches(op.Model, op.Operation) && PinnableNames(op, def, target).Contains(p.Name))
@@ -44,7 +44,7 @@ internal static class InputPlanning
             foreach (var (origin, engine) in origins)
             {
                 var diags = new List<Diagnostic>();
-                var (recipes, skip) = RefreshPlanBuilder.InputsOf(ctx, source, target, def, op, model.ParameterValues, diags, engine);
+                var (recipes, skip) = RefreshPlanBuilder.InputsOf(ctx, built, target, def, op, model.ParameterValues, diags, engine);
                 if (recipes == null || diags.Any(d => d.Severity == Severity.Error))
                 {
                     result[PlanInput.InputsKey(def.Name, op.Operation, origin)] = new([], $"the inputs of {def.Name}.{op.Operation} could not be compiled: {skip ?? string.Join(" ", diags.Select(d => d.Found))}", false);

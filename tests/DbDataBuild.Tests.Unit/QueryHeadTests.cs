@@ -94,7 +94,7 @@ public class QueryHeadTests
     {
         var dir = Project("CREATE TABLE marts.fct\nWITH (kind = 'incremental_by_unique_key', unique_key = (order_id))\nAS\nSELECT order_id, amount FROM staging.orders\n", Columns);
         Assert.Equal("", Validate(dir));
-        var source = ProjectValidator.Validate(dir).Sources.Single();
+        var source = ProjectValidator.Validate(dir).BuiltModels.Single();
         Assert.Equal(("marts.fct", ModelKinds.IncrementalByUniqueKey, "order_id"), (source.Definition.Name, source.Definition.Kind, string.Join(",", source.Definition.UniqueKey)));
         Assert.Equal("SELECT order_id, amount FROM staging.orders\n", source.ReadQuery(dir, ProjectConfigLoader.LoadFromProject(dir, new List<Diagnostic>())));    // the query, without the head
         var render = new StringWriter(); var err = new StringWriter();
@@ -110,12 +110,12 @@ public class QueryHeadTests
     {
         var view = Project("CREATE VIEW marts.fct AS SELECT order_id, amount FROM staging.orders", Columns);
         Assert.Equal("", Validate(view));
-        Assert.Equal(ModelKinds.View, ProjectValidator.Validate(view).Sources.Single().Definition.Kind);
+        Assert.Equal(ModelKinds.View, ProjectValidator.Validate(view).BuiltModels.Single().Definition.Kind);
 
         var dir = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", Columns);
         Write(dir, "models/marts/_dbdatabuild.yml", "defaults:\n  kind: {incremental_by_unique_key: {unique_key: [order_id]}}\n");
         Assert.Equal("", Validate(dir));
-        var source = ProjectValidator.Validate(dir).Sources.Single();
+        var source = ProjectValidator.Validate(dir).BuiltModels.Single();
         Assert.Equal((ModelKinds.Full, 0), (source.Definition.Kind, source.Definition.UniqueKey.Count));              // the head wins over the folder's kind, and nothing of it is left
     }
 
@@ -130,7 +130,7 @@ public class QueryHeadTests
 
         var same = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "name: marts.fct\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\n" + Columns);
         Assert.Equal("", Validate(same));                                                                                   // a plain CREATE TABLE leaves the kind to the definition
-        Assert.Equal(ModelKinds.IncrementalByUniqueKey, ProjectValidator.Validate(same).Sources.Single().Definition.Kind);
+        Assert.Equal(ModelKinds.IncrementalByUniqueKey, ProjectValidator.Validate(same).BuiltModels.Single().Definition.Kind);
 
         var contradiction = Project("CREATE TABLE marts.fct AS SELECT order_id, amount FROM staging.orders", "kind: view\n" + Columns);
         Assert.Contains("the head says `CREATE TABLE`, and `models/marts/fct.yml` says the kind is `view`", Validate(contradiction));
@@ -155,6 +155,6 @@ public class QueryHeadTests
         Assert.Contains("DDB-107", Validate(dir));                                                                          // the default layout: the path is the name
         var free = Project("CREATE TABLE reports.fct AS SELECT order_id, amount FROM staging.orders", Columns, "defaults: {connections: [sqlserver]}\ntracking: none\nmodel_layout: none\n");
         Assert.Equal("", Validate(free));
-        Assert.Equal("reports.fct", ProjectValidator.Validate(free).Sources.Single().Definition.Name);
+        Assert.Equal("reports.fct", ProjectValidator.Validate(free).BuiltModels.Single().Definition.Name);
     }
 }

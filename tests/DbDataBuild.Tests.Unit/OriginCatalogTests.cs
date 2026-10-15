@@ -45,12 +45,12 @@ public class OriginCatalogTests
     {
         var cfg = Load("connections:\n  pg: { engine: readonly flightsql postgres }\n  ms: { engine: readonly odbc sqlserver }\n", out _)!;
         ColumnShape Col(string type, int? length = null, int? precision = null, int? scale = null) => new("c", type, length, precision, scale, true, null, null);
-        Assert.Equal("BIGINT", SourceTypes.From("flightsql", Col("int8"), cfg.DialectOf("pg")).LogicalType);
-        Assert.Equal("BOOLEAN", SourceTypes.From("flightsql", Col("bool"), cfg.DialectOf("pg")).LogicalType);
-        Assert.Equal("BIGINT", SourceTypes.From("flightsql", Col("bigint"), cfg.DialectOf("pg")).LogicalType);        // the standard names still work
-        Assert.Equal("VARCHAR(20)", SourceTypes.From("odbc", Col("nvarchar", 20), cfg.DialectOf("ms")).LogicalType);
-        Assert.Equal("TIMESTAMP", SourceTypes.From("odbc", Col("datetime2"), cfg.DialectOf("ms")).LogicalType);
-        Assert.Equal("UUID", SourceTypes.From("odbc", Col("uniqueidentifier"), cfg.DialectOf("ms")).LogicalType);
+        Assert.Equal("BIGINT", ImportedTypes.From("flightsql", Col("int8"), cfg.DialectOf("pg")).LogicalType);
+        Assert.Equal("BOOLEAN", ImportedTypes.From("flightsql", Col("bool"), cfg.DialectOf("pg")).LogicalType);
+        Assert.Equal("BIGINT", ImportedTypes.From("flightsql", Col("bigint"), cfg.DialectOf("pg")).LogicalType);        // the standard names still work
+        Assert.Equal("VARCHAR(20)", ImportedTypes.From("odbc", Col("nvarchar", 20), cfg.DialectOf("ms")).LogicalType);
+        Assert.Equal("TIMESTAMP", ImportedTypes.From("odbc", Col("datetime2"), cfg.DialectOf("ms")).LogicalType);
+        Assert.Equal("UUID", ImportedTypes.From("odbc", Col("uniqueidentifier"), cfg.DialectOf("ms")).LogicalType);
     }
 
     [Fact]
@@ -168,8 +168,8 @@ public class OriginCatalogTests
         var dialect = DialectProfiles.Build("mine", DialectProfiles.Ansi, "ansi", null, null, null, "odbc", null, null, new Dictionary<string, string> { ["sql_variant"] = "VARCHAR" }).Profile!;
         var odd = (await Catalog(new FakeDriver(), dialect).TablesAsync("sales", "orders", default))![0].Columns.Single(c => c.Name == "odd");
         Assert.Equal("sql_variant", odd.Type);
-        Assert.Equal("VARCHAR", SourceTypes.From("odbc", odd, dialect).LogicalType);
-        Assert.Null(SourceTypes.From("odbc", odd, DialectProfiles.Ansi).LogicalType);
+        Assert.Equal("VARCHAR", ImportedTypes.From("odbc", odd, dialect).LogicalType);
+        Assert.Null(ImportedTypes.From("odbc", odd, DialectProfiles.Ansi).LogicalType);
     }
 
     [Fact]
@@ -257,7 +257,7 @@ public class OriginCatalogTests
         Assert.Empty(session.CatalogNotes);
 
         // and the importer's descriptor: the key seeds the grain, the index is exported, the expression index is said to be left out
-        var live = SourceImport.Describe("odbc", shapes["sales.orders"] with { Physical = indexes["orders"] }, (await SourceCatalogReader.PrimaryKeysAsync(session, "odbc", "sales"))["orders"], dialect: OdbcCatalogDialect);
+        var live = MappedModelImport.Describe("odbc", shapes["sales.orders"] with { Physical = indexes["orders"] }, (await SourceCatalogReader.PrimaryKeysAsync(session, "odbc", "sales"))["orders"], dialect: OdbcCatalogDialect);
         Assert.Equal(["id", "code"], live.PrimaryKey);
         Assert.Equal(["ix_code"], live.Indexes!.Select(i => i.Name));                       // the primary key's own index is the grain
         Assert.Equal(["code", "amount"], live.Indexes![0].Columns);

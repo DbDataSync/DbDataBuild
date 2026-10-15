@@ -3,7 +3,7 @@ using System.Globalization;
 namespace DbDataBuild.State;
 
 /// <summary>How faithfully a native type is described by its logical type.</summary>
-public enum SourceTypeFit
+public enum TypeFit
 {
     /// <summary>The logical type holds exactly the values the native type holds.</summary>
     Exact,
@@ -17,7 +17,7 @@ public enum SourceTypeFit
 
 /// <param name="LogicalType">The logical type written in a descriptor, or null when there is none.</param>
 /// <param name="Reason">Why a type is not exact or has no logical type; empty for an exact mapping.</param>
-public sealed record SourceType(string? LogicalType, SourceTypeFit Fit, string Reason)
+public sealed record ImportedType(string? LogicalType, TypeFit Fit, string Reason)
 {
     public bool HasType => LogicalType != null;
 }
@@ -27,15 +27,15 @@ public sealed record SourceType(string? LogicalType, SourceTypeFit Fit, string R
 /// mapping). An enumerated table per target: a type is mapped only when its values are known to fit, and a column with no honest logical type is reported, never guessed.
 /// Logical types describe values, not storage: a varchar and an nvarchar column are both VARCHAR(n).
 /// </summary>
-public static class SourceTypes
+public static class ImportedTypes
 {
     /// <param name="profile">The dialect of a source that is known only by its driver (`odbc`, `flightsql`): its `types:` say what the catalog's type names are. Ignored for the engines the tool builds on and DuckDB.</param>
-    public static SourceType From(string target, ColumnShape c, DbDataBuild.Models.DialectProfile? profile = null) =>
+    public static ImportedType From(string target, ColumnShape c, DbDataBuild.Models.DialectProfile? profile = null) =>
         target is "odbc" or "flightsql" ? FromProfile(profile ?? DbDataBuild.Models.DialectProfiles.Ansi, c)
         : target == "duckdb" ? DuckDb(c) : target == "postgres" ? Postgres(c) : TSql(c);
 
     // The standard names of information_schema, or the ones a project's dialect maps (`types:`). A type the profile does not name has no logical type, and is said so rather than guessed.
-    private static SourceType FromProfile(DbDataBuild.Models.DialectProfile profile, ColumnShape c)
+    private static ImportedType FromProfile(DbDataBuild.Models.DialectProfile profile, ColumnShape c)
     {
         if (!profile.Types.TryGetValue(c.Type.ToLowerInvariant(), out var logical))
             return No($"{c.Type} has no logical type in the dialect `{profile.Name}` (map it under `types:` of the dialect)");
@@ -47,24 +47,24 @@ public static class SourceTypes
         };
     }
 
-    private static SourceType Exact(string logical) => new(logical, SourceTypeFit.Exact, "");
-    private static SourceType Widened(string logical, string why) => new(logical, SourceTypeFit.Widened, why);
-    private static SourceType Lossy(string logical, string why) => new(logical, SourceTypeFit.Lossy, why);
-    private static SourceType No(string why) => new(null, SourceTypeFit.None, why);
+    private static ImportedType Exact(string logical) => new(logical, TypeFit.Exact, "");
+    private static ImportedType Widened(string logical, string why) => new(logical, TypeFit.Widened, why);
+    private static ImportedType Lossy(string logical, string why) => new(logical, TypeFit.Lossy, why);
+    private static ImportedType No(string why) => new(null, TypeFit.None, why);
 
     private static string Dec(int? p, int? s) => string.Create(CultureInfo.InvariantCulture, $"DECIMAL({p}, {s ?? 0})");
 
     /// <summary>Text with a declared length is VARCHAR(n); text with none (varchar(max), text) is unlimited, which is a bare VARCHAR: DuckDB's own spelling, and one the target mappings turn back into the engine's unlimited type.</summary>
-    private static SourceType Text(ColumnShape c, bool fixedLength, string nativeName)
+    private static ImportedType Text(ColumnShape c, bool fixedLength, string nativeName)
     {
         if (c.Length is null or < 1) return Exact("VARCHAR");
         var logical = string.Create(CultureInfo.InvariantCulture, $"VARCHAR({c.Length})");
         return fixedLength ? Widened(logical, $"{nativeName}({c.Length}) is fixed length; trailing padding is not part of the logical type") : Exact(logical);
     }
 
-    private static SourceType AsText(string nativeName) => Lossy("VARCHAR", $"{nativeName} is read as text; a model that selects it casts it explicitly if the engine needs that");
+    private static ImportedType AsText(string nativeName) => Lossy("VARCHAR", $"{nativeName} is read as text; a model that selects it casts it explicitly if the engine needs that");
 
-    private static SourceType TSql(ColumnShape c) => c.Type switch
+    private static ImportedType TSql(ColumnShape c) => c.Type switch
     {
         "bigint" => Exact("BIGINT"),
         "int" => Exact("INTEGER"),
@@ -94,7 +94,7 @@ public static class SourceTypes
     };
 
     // DuckDB's own type names are the logical types: most map exactly. An unsigned or 128-bit integer, an interval, a list, a struct, a map and an enum have no logical type.
-    private static SourceType DuckDb(ColumnShape c) => c.Type switch
+    private static ImportedType DuckDb(ColumnShape c) => c.Type switch
     {
         "bigint" => Exact("BIGINT"),
         "integer" => Exact("INTEGER"),
@@ -117,7 +117,7 @@ public static class SourceTypes
         _ => No($"{c.Type} has no logical type"),
     };
 
-    private static SourceType Postgres(ColumnShape c) => c.Type switch
+    private static ImportedType Postgres(ColumnShape c) => c.Type switch
     {
         "bigint" => Exact("BIGINT"),
         "integer" => Exact("INTEGER"),

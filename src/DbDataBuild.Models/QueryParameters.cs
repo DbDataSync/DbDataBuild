@@ -44,31 +44,31 @@ public static class QueryParameters
     /// The query with each reference to a **name** (a parameter of type NAME) replaced by the string it is on <paramref name="connection"/>: `snapshot_at(${connection.table}, ${connection.date_column})`
     /// becomes `snapshot_at('src.orders_snap', 'snap_date')`. This is done before anything else, so DuckDB binds the query for that name. References to values are left for <see cref="Mark"/>.
     /// </summary>
-    public static string ResolveNames(string sql, ModelSource source, ProjectConfig config, string connection)
+    public static string ResolveNames(string sql, BuiltModel built, ProjectConfig config, string connection)
     {
         if (!Uses(sql)) return sql;
-        var values = source.ParametersFor(config, connection);
+        var values = built.ParametersFor(config, connection);
         return ParameterReferences.Substitute(sql, (scope, name) => values.TryGetValue($"{scope}.{name}", out var v) && v.Type == ParameterValue.Name ? v.NameLiteral : null);
     }
 
     /// <summary>True when the query refers to a name on any of the model's connections (so its text, and everything made from it, can differ between them).</summary>
-    public static bool HasNames(string sql, ModelSource source, ProjectConfig config)
+    public static bool HasNames(string sql, BuiltModel built, ProjectConfig config)
     {
         foreach (var (scope, name) in ParameterReferences.In(sql))
-            foreach (var c in source.Definition.Targets ?? config.DefaultConnections)
-                if (source.ParametersFor(config, c).TryGetValue($"{scope}.{name}", out var v) && v.Type == ParameterValue.Name) return true;
+            foreach (var c in built.Definition.Targets ?? config.DefaultConnections)
+                if (built.ParametersFor(config, c).TryGetValue($"{scope}.{name}", out var v) && v.Type == ParameterValue.Name) return true;
         return false;
     }
 
     /// <summary>What is wrong with the names of a query: a reference that is a name on one connection of the model and not on another, or missing there. Names are not values: they are not bound, so a view may use them.</summary>
-    public static IReadOnlyList<string> NameProblems(string sql, ModelSource source, ProjectConfig config)
+    public static IReadOnlyList<string> NameProblems(string sql, BuiltModel built, ProjectConfig config)
     {
         var problems = new List<string>();
-        var connections = source.Definition.Targets ?? config.DefaultConnections;
+        var connections = built.Definition.Targets ?? config.DefaultConnections;
         foreach (var (scope, name) in ParameterReferences.In(sql))
         {
             var key = $"{scope}.{name}";
-            var types = connections.Select(c => source.ParametersFor(config, c).TryGetValue(key, out var v) ? v.Type : null).ToList();
+            var types = connections.Select(c => built.ParametersFor(config, c).TryGetValue(key, out var v) ? v.Type : null).ToList();
             if (!types.Contains(ParameterValue.Name)) continue;
             for (var i = 0; i < connections.Count; i++)
                 if (types[i] == null) problems.Add($"`${{{key}}}` is a name but has no value on the connection `{connections[i]}`");
@@ -78,12 +78,12 @@ public static class QueryParameters
     }
 
     /// <summary>The problems with the references in a query, and the query with each reference replaced by its marker.</summary>
-    public static (string Sql, IReadOnlyList<QueryParameter> Parameters, IReadOnlyList<string> Problems) Mark(string sql, ModelSource source, ProjectConfig config)
+    public static (string Sql, IReadOnlyList<QueryParameter> Parameters, IReadOnlyList<string> Problems) Mark(string sql, BuiltModel built, ProjectConfig config)
     {
         var refs = ParameterReferences.In(sql);
         if (refs.Count == 0) return (sql, [], []);
         var problems = new List<string>();
-        var def = source.Definition;
+        var def = built.Definition;
         if (def.Kind == ModelKinds.View) problems.Add("a view's query cannot use parameters: a view is DDL, and DDL binds no values (use a table, or write the value into the query)");
         var connections = def.Targets ?? config.DefaultConnections;
         var parameters = new List<QueryParameter>();
@@ -95,7 +95,7 @@ public static class QueryParameters
             var types = new HashSet<string>();
             foreach (var c in connections)
             {
-                if (source.ParametersFor(config, c).TryGetValue(key, out var v)) types.Add(v.Type);
+                if (built.ParametersFor(config, c).TryGetValue(key, out var v)) types.Add(v.Type);
                 else problems.Add($"`${{{key}}}` has no value{(scope == "connection" ? $" on the connection `{c}` (`connections.{c}.parameters`)" : scope == "model" ? " (`parameters:` in the model's file)" : " (`parameters:` in a project file)")}");
             }
             if (types.Count > 1) problems.Add($"`${{{key}}}` has different types on the model's connections ({string.Join(", ", types.Order(StringComparer.Ordinal))})");
@@ -110,9 +110,9 @@ public static class QueryParameters
     }
 
     /// <summary>The query with each reference replaced by the **value** it has on a connection, as a literal of its type: for what DuckDB runs for real (`sample`, `test`).</summary>
-    public static string WithValues(string sql, ModelSource source, ProjectConfig config, string connection)
+    public static string WithValues(string sql, BuiltModel built, ProjectConfig config, string connection)
     {
-        var values = source.ParametersFor(config, connection);
+        var values = built.ParametersFor(config, connection);
         return ParameterReferences.Substitute(sql, (scope, name) =>
         {
             if (!values.TryGetValue($"{scope}.{name}", out var v)) return null;

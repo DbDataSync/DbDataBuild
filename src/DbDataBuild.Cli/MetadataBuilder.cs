@@ -18,9 +18,8 @@ namespace DbDataBuild.Cli;
 /// </summary>
 internal static class MetadataBuilder
 {
-    public const string ModelSchema = "dbdatabuild.model/2";
-    public const string ProjectSchema = "dbdatabuild.project/1";
-    public const string SourceSchema = "dbdatabuild.source/2";
+    public const string ModelSchema = "dbdatabuild.model/3";
+    public const string ProjectSchema = "dbdatabuild.project/2";
 
     private static readonly JsonSerializerOptions Compact = new(CommandReport.Json) { WriteIndented = false };
 
@@ -53,23 +52,26 @@ internal static class MetadataBuilder
                 policy = cfg.Policy.ToDictionary(p => p.Key, p => p.Value.ToString().ToLowerInvariant()),
                 hook_groups = cfg.HookGroups.ToDictionary(g => g.Key, g => g.Value.Select(HookJson).ToList()),
             },
-            sources = ctx.Project.Descriptors.Concat(ctx.Project.NativeModels).OrderBy(d => d.Name, StringComparer.Ordinal).Select(d => new
+            models = ctx.Models.Select(m => new
             {
-                name = d.Name,
-                file = SourceFile(d),
-                definition_hash = DefinitionHash(d),
-                kind = d.Kind,
-                native = d.Native == null ? null : KindSettings(d),
-            }).ToList(),
-            models = ctx.Project.Sources.OrderBy(s => s.Definition.Name, StringComparer.Ordinal).Select(s => new
-            {
-                name = s.Definition.Name,
-                kind = s.Definition.Kind,
-                connections = ctx.TargetsOf(s.Definition),
-                definition_hash = ctx.DefinitionHashOf(s.ReadQuery(ctx.Root, ctx.Config)),
+                name = m.Name,
+                kind = m.Kind,
+                file = m.DefinitionFile,
+                connections = m.Connections,
+                definition_hash = DefinitionHashOf(ctx, m.Name),
             }).ToList(),
         };
     }
+
+    /// <summary>The definition hash of every model of the project, of any kind, by name.</summary>
+    public static IReadOnlyDictionary<string, string> DefinitionHashes(ProjectContext ctx) =>
+        ctx.Models.ToDictionary(m => m.Name, m => DefinitionHashOf(ctx, m.Name), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The hash that says whether a model's definition changed, for a model of any kind.</summary>
+    private static string DefinitionHashOf(ProjectContext ctx, string name) =>
+        ctx.Project.BuiltModels.FirstOrDefault(s => string.Equals(s.Definition.Name, name, StringComparison.OrdinalIgnoreCase)) is { } built
+            ? ctx.DefinitionHashOf(built.ReadQuery(ctx.Root, ctx.Config))
+            : DefinitionHash(ctx.Project.DeclaredModels.First(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>The settings of a model's kind, each kind its own (an empty object when it has none): the document says the kind as a plain string, and these beside it.</summary>
     public static object KindSettings(ModelDefinition d) => d.Kind switch
@@ -90,22 +92,22 @@ internal static class MetadataBuilder
     /// <summary>The kind of a table name in the project: model (view, full, incremental or copy), native, mapped or unknown.</summary>
     private static Func<string, string> KindLookup(ProjectContext ctx)
     {
-        var models = ctx.Project.Sources.Select(m => m.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var models = ctx.Project.BuiltModels.Select(m => m.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var natives = ctx.Project.NativeModels.Select(n => n.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var sources = ctx.Project.AllDescriptors.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? SourceDescriptorLoader.MappedKind : "unknown";
+        var sources = ctx.Project.DeclaredModelsAndStaging.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? DeclaredModelLoader.MappedKind : "unknown";
     }
 
     /// <summary>
     /// What a model's query reads, with the kind of each (model, native, mapped, unknown) and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the query could not be
     /// read and calls no macro, so the document says nothing rather than something wrong.
     /// </summary>
-    public static List<(string Name, string Kind)>? UpstreamOf(ProjectContext ctx, ModelSource source, string sql, bool analysed, Func<string, string>? kindOf = null)
+    public static List<(string Name, string Kind)>? UpstreamOf(ProjectContext ctx, BuiltModel built, string sql, bool analysed, Func<string, string>? kindOf = null)
     {
         var macros = ctx.MacrosCalledBy(sql);
         if (!analysed && macros.Count == 0) return null;
         kindOf ??= KindLookup(ctx);
-        return ctx.BaseTablesOf(source, sql).Select(n => (n, kindOf(n))).Concat(macros.Select(m => (m, "macro"))).ToList();
+        return ctx.BaseTablesOf(built, sql).Select(n => (n, kindOf(n))).Concat(macros.Select(m => (m, "macro"))).ToList();
     }
 
     /// <summary>
@@ -117,7 +119,7 @@ internal static class MetadataBuilder
     {
         var kindOf = KindLookup(ctx);
         var direct = new List<(string, string, string)>();
-        foreach (var m in ctx.Project.Sources)
+        foreach (var m in ctx.Project.BuiltModels)
         {
             // a model that names something by a parameter reads other tables on connections that give other names: every variant of its query counts (as in the dependency graph selectors and a refresh use)
             foreach (var sql in ctx.QueryVariants(m))
@@ -162,7 +164,7 @@ internal static class MetadataBuilder
     private static List<SchemaTableSpec> UpstreamSpecs(ProjectContext ctx, string modelName)
     {
         var upstream = ctx.Project.Models.Where(m => m.Name != modelName).Select(m => (m.Name, m.Columns))
-            .Concat(ctx.Project.AllDescriptors.Select(d => (d.Name, d.Columns))).ToList();
+            .Concat(ctx.Project.DeclaredModelsAndStaging.Select(d => (d.Name, d.Columns))).ToList();
         return upstream.Select(u =>
         {
             var i = u.Name.LastIndexOf('.');
@@ -170,35 +172,17 @@ internal static class MetadataBuilder
         }).ToList();
     }
 
-    /// <summary>The source descriptors a model's query reads, by name.</summary>
-    public static IReadOnlyList<string> SourcesRead(ProjectContext ctx, string modelName, string sql)
-    {
-        var (facts, _) = AnalyzeAgainstUpstream(ctx, modelName, sql);
-        var names = ctx.Project.AllDescriptors.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return facts?.BaseTables.Select(b => b.QualifiedName).Where(names.Contains).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal).ToList() ?? [];
-    }
+    /// <summary>The path of a declared model's file: its own, else the conventional path (`staging.orders` is `models/staging/orders.yml`).</summary>
+    public static string ModelFile(DeclaredModel d) => d.File.Length > 0 ? d.File : ModelFile(d.Name);
 
-    /// <summary>Which models read each source, across the whole project (so a source's document does not change with the models selected for a run).</summary>
-    public static IReadOnlyDictionary<string, IReadOnlyList<string>> Consumers(ProjectContext ctx)
-    {
-        var result = ctx.Project.AllDescriptors.ToDictionary(d => d.Name, _ => new List<string>(), StringComparer.OrdinalIgnoreCase);
-        foreach (var m in ctx.Project.Sources.OrderBy(m => m.Definition.Name, StringComparer.Ordinal))
-            foreach (var n in SourcesRead(ctx, m.Definition.Name, m.ReadQuery(ctx.Root, ctx.Config))) result[n].Add(m.Definition.Name);
-        return result.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.OrdinalIgnoreCase);
-    }
-    /// <summary>The path of a mapped model: `staging.orders` is `models/staging/orders.yml`.</summary>
-    /// <summary>The path of a source descriptor: `staging.orders` is `sources/staging/orders.yml`.</summary>
-    public static string SourceFile(string name) => $"{ProjectValidator.ModelsDir}/{name.Replace('.', '/')}.yml";
-
-    /// <summary>The metadata document of a source descriptor: what the project declares about a table it reads but does not build, and which models read it.</summary>
-    /// <summary>The file a source is declared in: the native model's own, else the conventional path of a mapped one.</summary>
-    public static string SourceFile(SourceDescriptor d) => d.File.Length > 0 ? d.File : d.Native is { File.Length: > 0 } n ? n.File.Replace('\\', '/') : SourceFile(d.Name);
+    /// <summary>The conventional path of a model's definition: `staging.orders` is `models/staging/orders.yml`.</summary>
+    public static string ModelFile(string name) => $"{ProjectValidator.ModelsDir}/{name.Replace('.', '/')}.yml";
 
     /// <summary>A native model's text is part of what it is, so a change to it changes the hash.</summary>
-    private static string DefinitionHash(SourceDescriptor d) => Hashing.ScriptHash(SourceDescriptorWriter.Yaml(d, withInfo: false) + (d.Native == null ? "" : "\n" + d.Native.Access + "\n" + d.Native.Text));
+    private static string DefinitionHash(DeclaredModel d) => Hashing.ScriptHash(DeclaredModelWriter.Yaml(d, withInfo: false) + (d.Native == null ? "" : "\n" + d.Native.Access + "\n" + d.Native.Text));
 
     /// <summary>The settings of a mapped or native model's kind, as a model's are: empty for a mapped model; for a native one how it is run, where, the hash of its text (the text itself is in the file), and the tables it says it reads.</summary>
-    public static object KindSettings(SourceDescriptor d) => d.Native == null ? new { } : new
+    public static object KindSettings(DeclaredModel d) => d.Native == null ? new { } : new
     {
         access = d.Native.Access,
         connections = d.Connections ?? [],
@@ -206,39 +190,57 @@ internal static class MetadataBuilder
         reads = d.Native.Reads,
     };
 
-    public static object Source(SourceDescriptor d, IReadOnlyList<string> consumers) => new
+    /// <summary>
+    /// The metadata documents of the models of any kind, ordered by name: the ones named (all when null). The same document for a built model and for a declared one, `kind` saying which; a declared model has no query, loads,
+    /// hooks or lineage, so those properties are left out of its document.
+    /// </summary>
+    public static List<(string Name, object Document)> Models(ProjectContext ctx, IReadOnlyCollection<string>? names = null)
     {
-        schema = SourceSchema,
-        name = d.Name,
-        title = d.Info.Title, description = d.Info.Description, tags = d.Info.TagsForDocument, properties = d.Info.PropertiesForDocument,
-        file = SourceFile(d),
-        definition_hash = DefinitionHash(d),
-        kind = d.Kind,
-        kind_settings = KindSettings(d),
-        grain = d.Grain,
-        columns = d.Columns.Select(c => new { name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation }).ToList(),
-        indexes = d.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
-        foreign_keys = d.ForeignKeys.Select(f => new { name = f.Name, columns = f.Columns, references = new { table = f.Table, columns = f.ReferencedColumns } }).ToList(),
-        consumers,
-    };
-
-    public static List<object> Sources(ProjectContext ctx, IEnumerable<string>? selectedModels)
-    {
-        var consumers = Consumers(ctx);
-        var wanted = selectedModels?.ToHashSet(StringComparer.Ordinal);
-        return ctx.Project.Descriptors.Concat(ctx.Project.NativeModels).OrderBy(d => d.Name, StringComparer.Ordinal)
-            .Where(d => wanted == null || consumers[d.Name].Any(wanted.Contains))
-            .Select(d => Source(d, consumers[d.Name])).ToList();
+        var wanted = names?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var built = ctx.Project.BuiltModels.Where(s => wanted == null || wanted.Contains(s.Definition.Name)).Select(s => (Name: s.Definition.Name, Make: (Func<object>)(() => Model(ctx, s, s.ReadQuery(ctx.Root, ctx.Config)))));
+        var declared = ctx.Project.DeclaredModels.Where(d => wanted == null || wanted.Contains(d.Name)).Select(d => (Name: d.Name, Make: (Func<object>)(() => Model(ctx, d))));
+        return built.Concat(declared).OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => (x.Name, x.Make())).ToList();
     }
 
-    public static object Model(ProjectContext ctx, ModelSource source, string sql)
+    /// <summary>The document of a declared (mapped or native) model.</summary>
+    public static object Model(ProjectContext ctx, DeclaredModel d)
     {
-        var def = source.Definition;
+        var targets = d.Connections ?? ctx.Config.DefaultConnections;
+        var ddls = targets.ToDictionary(t => t, t => TargetRegistry.Get(ctx.Config.EngineOf(t) ?? t).CreateDdl(ctx.Config.ForConnection(t)));
+        object Native(ColumnDefinition c) => targets.ToDictionary(t => t, t =>
+        {
+            try { var n = ddls[t].Map(d.Name, c); return (object)new { type = n.Declaration, collation = n.Collation }; }
+            catch (DdlUnsupportedException ex) { return new { error = ex.Diagnostic.Code, found = ex.Diagnostic.Found }; }
+        });
+        var kindOf = KindLookup(ctx);
+        return new
+        {
+            schema = ModelSchema,
+            name = d.Name,
+            title = d.Info.Title, description = d.Info.Description,
+            kind = d.Kind,
+            kind_settings = KindSettings(d),
+            grain = d.Grain,
+            tags = d.Info.TagsForDocument,
+            properties = d.Info.PropertiesForDocument,
+            connections = targets,
+            files = new { definition = ModelFile(d), query = (string?)null },
+            definition_hash = DefinitionHash(d),
+            upstream = d.Native?.Reads.Select(r => new { name = r, kind = kindOf(r) }).ToList(),
+            columns = d.Columns.Select(c => new { name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation, native = Native(c) }).ToList(),
+            indexes = d.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
+            foreign_keys = d.ForeignKeys.Select(f => new { name = f.Name, columns = f.Columns, references = new { table = f.Table, columns = f.ReferencedColumns } }).ToList(),
+        };
+    }
+
+    public static object Model(ProjectContext ctx, BuiltModel built, string sql)
+    {
+        var def = built.Definition;
         var targets = ctx.TargetsOf(def);
         var hash = ctx.DefinitionHashOf(sql);
 
         // lineage and inferred nullability, against the declared columns of everything upstream
-        var (facts, _) = AnalyzeAgainstUpstream(ctx, def.Name, ctx.AnalysisSql(source, sql));
+        var (facts, _) = AnalyzeAgainstUpstream(ctx, def.Name, ctx.AnalysisSql(built, sql));
 
         var ddls = targets.ToDictionary(t => t, t => TargetRegistry.Get(ctx.Config.EngineOf(t) ?? t).CreateDdl(ctx.Config.ForConnection(t)));      // the DDL is the engine's; the keys are the model's connections
         object Native(ColumnDefinition c) => targets.ToDictionary(t => t, t =>
@@ -265,8 +267,8 @@ internal static class MetadataBuilder
             catch (DdlUnsupportedException ex) { shapeHashes[t] = new { error = ex.Diagnostic.Code }; }
         }
 
-        var (render, _) = ctx.RenderModel(source, sql, targets);
-        var lowered = ctx.Lowering.Enabled ? ctx.Lowering.Lower(source, sql, source.QueryParameterList(ctx.Root, ctx.Config)).Model : null;
+        var (render, _) = ctx.RenderModel(built, sql, targets);
+        var lowered = ctx.Lowering.Enabled ? ctx.Lowering.Lower(built, sql, built.QueryParameterList(ctx.Root, ctx.Config)).Model : null;
         var rendered = render.Operations.OrderBy(o => o.Target, StringComparer.Ordinal).ThenBy(o => o.Operation, StringComparer.Ordinal).Select(o =>
         {
             var op = render.Loads.FirstOrDefault(l => l.Target == o.Target && l.Operation == o.Operation);
@@ -275,14 +277,14 @@ internal static class MetadataBuilder
                 connection = o.Target, operation = o.Operation, strategy = o.Strategy, is_default = o.IsDefault, matrix_status = o.Status, findings = o.Findings,
                 script_path = op?.ScriptPath, script_hash = op == null ? null : Hashing.ScriptHash(op.Script),
                 resolver_path = op?.ResolverPath, resolver_hash = op?.Resolver == null ? null : Hashing.ScriptHash(op.Resolver),
-                parameters = op?.Parameters.Select(p => new { name = p.Name, type = p.Type, source = p.Source, constraint = p.Constraint }).ToList(),
+                parameters = op?.Parameters.Select(p => new { name = p.Name, type = p.Type, built = p.Source, constraint = p.Constraint }).ToList(),
             };
         }).ToList();
 
         var hooks = new Dictionary<string, object>();
         foreach (var t in targets)
         {
-            var resolved = HookReader.Resolve(def, ctx.Config, t, source.DefinitionFile, new List<Diagnostic>());
+            var resolved = HookReader.Resolve(def, ctx.Config, t, built.DefinitionFile, new List<Diagnostic>());
             hooks[t] = resolved.Select(h =>
             {
                 var path = Path.Combine(ctx.Root, h.ScriptPath);
@@ -301,10 +303,10 @@ internal static class MetadataBuilder
             tags = def.Info.TagsForDocument,
             properties = def.Info.PropertiesForDocument,
             connections = targets,
-            files = new { definition = source.DefinitionFile, query = source.QueryFile },
-            inherited = source.Inherited.Select(o => new { path = o.Path, file = o.File, line = o.Line, value = o.Value }).ToList(),
+            files = new { definition = built.DefinitionFile, query = built.QueryFile },
+            inherited = built.Inherited.Select(o => new { path = o.Path, file = o.File, line = o.Line, value = o.Value }).ToList(),
             definition_hash = hash,
-            upstream = UpstreamOf(ctx, source, sql, facts != null)?.Select(u => new { name = u.Name, kind = u.Kind }).ToList(),
+            upstream = UpstreamOf(ctx, built, sql, facts != null)?.Select(u => new { name = u.Name, kind = u.Kind }).ToList(),
             rewrites_off = RewriteCatalog.For(ctx.Config, def).Disabled.Order(StringComparer.Ordinal).ToList(),
             lowered = lowered == null ? null : new
             {

@@ -25,11 +25,10 @@ internal static class ApplyCommand
                 return;
             }
             var touched = plan.Steps.Select(s => s.Object).Distinct(StringComparer.Ordinal).ToList();
-            var docs = MetadataPublisher.Collect(ctx, touched, plan);
-            var dependencies = MetadataPublisher.CollectDependencies(ctx, touched);
-            var stored = Task.Run(() => MetadataPublisher.PublishAsync(docs, scope, read, write, "apply-metadata", root, plan.Id, commit, dependencies)).GetAwaiter().GetResult();
+            var prepared = MetadataPublisher.Prepare(ctx, touched, plan);
+            var stored = Task.Run(() => MetadataPublisher.PublishAsync(prepared.Documents, scope, read, write, "apply-metadata", root, plan.Id, commit, prepared.Dependencies)).GetAwaiter().GetResult();
             output.WriteLine($"Metadata stored: {stored.Written.Count} document(s) written, {stored.Unchanged.Count} unchanged.");
-            output.Payload("metadata_stored", stored.Written.Select(d => new { kind = d.Kind, subject = d.Subject, hash = d.Hash }).ToList());
+            output.Payload("metadata_stored", stored.Written.Select(d => new { subject_kind = d.SubjectKind, subject = d.Subject, hash = d.Hash }).ToList());
         }
         catch (Exception ex) when (ex is GateRefusedException or IOException or InvalidOperationException)
         {
@@ -44,7 +43,7 @@ internal static class ApplyCommand
         {
             var ctx = ProjectContext.Load(root);
             var names = plan.Steps.Select(s => s.Object).ToHashSet(StringComparer.Ordinal);
-            var uses = NativeDefinitions.InPlay(ctx, ctx.Project.Sources.Where(s => names.Contains(s.Definition.Name)).Select(s => (s, s.ReadQuery(ctx.Root, ctx.Config))), plan.Connection);
+            var uses = NativeDefinitions.InPlay(ctx, ctx.Project.BuiltModels.Where(s => names.Contains(s.Definition.Name)).Select(s => (s, s.ReadQuery(ctx.Root, ctx.Config))), plan.Connection);
             if (uses.Count == 0) return;
             Task.Run(() => NativeDefinitions.RecordAsync(ctx, uses, scope, read, write, env, "apply-definitions", root, plan.Id, commit)).GetAwaiter().GetResult();
             output.WriteLine($"Routine definitions recorded for {uses.Count} native model use(s).");
