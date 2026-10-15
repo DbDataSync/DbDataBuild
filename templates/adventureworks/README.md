@@ -5,9 +5,9 @@ people), with every row made up by SQL in `seeds/`: nothing is copied from the o
 (`production`, `sales`, `purchasing`, `humanresources`), a staging layer of views, and a warehouse of dimensions, facts, aggregates and reports.
 
 ```
-dbdatabuild project compile                         # check config, models and sources, see how each query lowers, and write the load scripts (rendered/) to read and commit
+dbdatabuild project compile                         # check config, models, see how each query lowers, and write the load scripts (rendered/) to read and commit
 dbdatabuild project show graph --columns                # what reads what, and where each column comes from
-dbdatabuild project seed --scale 800               # generate the source data (the scale is the number of customers; four orders each)
+dbdatabuild project seed --scale 800               # generate the rows of the mapped models (the scale is the number of customers; four orders each)
 dbdatabuild project sample marts.fct_bom_explosion # run a model on that data and look at the rows
 dbdatabuild project tests run                           # metadata rules and model tests
 ```
@@ -39,13 +39,13 @@ dbdatabuild project tests run                           # metadata rules and mod
 
 ## Tests
 
-`tests/metadata/` holds rules over what the project is (every model has a grain, staging reads only sources, marts are named dim, fct, agg or rpt, incremental models declare their key,
+`tests/metadata/` holds rules over what the project is (every model has a grain, staging reads only mapped models, marts are named dim, fct, agg or rpt, incremental models declare their key,
 money is a decimal). `tests/models/` holds cases for the logic that is easy to get wrong: the explosion, the cost and price periods, the exchange rate of a weekend, the cohorts of
 quintiles, the year-on-year comparison, the on-time flags.
 
 ## Running the cycle on a database
 
-`connection seed` puts the source tables in an empty database you do not mind filling; the logins are environment variables (`DBDATABUILD_SQLSERVER_READ` and `DBDATABUILD_SQLSERVER_WRITE`, or `..._POSTGRES_...`).
+`connection seed` puts the tables of the mapped models in an empty database you do not mind filling; the logins are environment variables (`DBDATABUILD_SQLSERVER_READ` and `DBDATABUILD_SQLSERVER_WRITE`, or `..._POSTGRES_...`).
 Create a SQL Server database case-sensitive (`CREATE DATABASE adventureworks COLLATE Latin1_General_100_CS_AS`) to match the project's string profile; with the server default `connection status` reports DDB-310 for a view column made of literals.
 The numbers below are from a run against SQL Server 2022 (the same cycle ran on PostgreSQL 17 with the profile in the comment at the top of `dbdatabuild.yml`: same counts, with `postgres` as the connection); ids and times differ in yours.
 

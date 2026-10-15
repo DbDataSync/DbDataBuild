@@ -51,7 +51,7 @@ public static class ModelInference
             var t = new { QualifiedName = name };
             if (graph.Find(t.QualifiedName) is { } u) { if (!upstream.Contains(u)) upstream.Add(u); }
             else diags.Add(new Diagnostic(DiagnosticCatalog.UpstreamNotFound, At(),
-                $"The query uses `{t.QualifiedName}`, which is neither a model nor a source descriptor.",
+                $"The query uses `{t.QualifiedName}`, which is neither a built nor a declared (mapped or native) model.",
                 Fix: $"Add a mapped model `models/{t.QualifiedName.Replace('.', '/')}.yml` (kind: mapped) describing it, or define the model that produces it."));
         }
         if (diags.Count > 0) return (null, diags);

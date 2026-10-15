@@ -226,7 +226,7 @@ public static class DeclaredModelLoader
     }
 }
 
-/// <summary>Writes a source descriptor in canonical formatting: name, grain, columns; <c>nullable</c> only when false (the same style as definitions).</summary>
+/// <summary>Writes a mapped model in canonical formatting: name, grain, columns; <c>nullable</c> only when false (the same style as definitions).</summary>
 public static class DeclaredModelWriter
 {
     /// <param name="withInfo">False for the text the definition hash is made of: what a person says about an object in words is not part of what the object is.</param>

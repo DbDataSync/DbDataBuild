@@ -1,4 +1,4 @@
--- Staging splits the one text column a source gave us into the two the rest of the project wants.
+-- Staging splits the one text column a mapped model gave us into the two the rest of the project wants.
 -- The first name is everything before the first space, the last name everything after it ("van Dijk" stays whole).
 SELECT customer_id,
        substr(full_name, 1, strpos(full_name, ' ') - 1) AS first_name,

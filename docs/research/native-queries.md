@@ -11,7 +11,7 @@ such a model be declared, **how** do queries that depend on it see it, and **wha
 
 ## What the code gives us, and what stands in the way
 
-- A mapped model is a `SourceDescriptor`: name, declared columns, grain, connections. Queries bind against **declared columns** in an empty DuckDB table; the descriptor never needs the object to exist offline.
+- A mapped model is a `DeclaredModel` (it was a `SourceDescriptor` when this was written): name, declared columns, grain, connections. Queries bind against **declared columns** in an empty DuckDB table; the descriptor never needs the object to exist offline.
   So the *shape* side of a native query model is already solved by declaring columns.
 - A query on a connection can only read tables on that connection (DDB-231); DuckDB lowers the model's query to DuckDB-dialect SQL and polyglot transpiles it to the engine. Nothing in a model can be native text.
 - Reads go through `ReadSession`, whose guard accepts a single `SELECT`/`WITH` and refuses `EXEC`, `EXECUTE`, `CALL`, `INTO`, `SET`, `COPY` and the data-changing keywords. That guard is a second layer; the

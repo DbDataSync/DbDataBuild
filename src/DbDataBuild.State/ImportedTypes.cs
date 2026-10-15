@@ -11,7 +11,7 @@ public enum TypeFit
     Widened,
     /// <summary>The logical type is close but not the same: a value can lose precision (datetime2(7) keeps 7 fractional digits, TIMESTAMP 6).</summary>
     Lossy,
-    /// <summary>There is no logical type; the column cannot be described in a source descriptor.</summary>
+    /// <summary>There is no logical type; the column cannot be described in a mapped model.</summary>
     None,
 }
 

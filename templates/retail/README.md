@@ -6,9 +6,9 @@ aggregates and a report. The data is made up by SQL in `seeds/` (about 300 custo
 runs on your own machine.
 
 ```
-dbdatabuild project compile                         # check config, models and sources, see how each query lowers, and write the load scripts (rendered/) to read and commit
+dbdatabuild project compile                         # check config, models, see how each query lowers, and write the load scripts (rendered/) to read and commit
 dbdatabuild project show graph --columns                # what reads what, and where each column comes from
-dbdatabuild project seed --scale 1000              # generate the source data into .dbdatabuild/seed.duckdb
+dbdatabuild project seed --scale 1000              # generate the rows of the mapped models into .dbdatabuild/seed.duckdb
 dbdatabuild project sample marts.fct_sales_lines   # run a model on that data and look at the rows
 dbdatabuild project tests run                           # metadata rules and model tests
 ```
@@ -31,7 +31,7 @@ dbdatabuild project tests run                           # metadata rules and mod
 
 ## Tests
 
-`tests/metadata/` holds rules over what the project is (every model has a grain, staging reads only sources, marts never read sources).
+`tests/metadata/` holds rules over what the project is (every model has a grain, staging reads only mapped models, marts never read sources).
 `tests/models/` holds cases for the logic that is easy to get wrong: allocations that must add up exactly, the shipment split, the name split, the status mapping.
 Try breaking one: change `ELSE order_discount_cents - ...` in `fct_sales_lines.sql` and run `dbdatabuild project tests run`.
 
@@ -69,7 +69,7 @@ OK: 23 model(s) valid. 0 warning(s), 35 note(s).
 Next: dbdatabuild connection init sqlserver --apply
 ```
 
-**3. Seed and initialize.** `connection seed --apply` creates the twelve source tables and fills them (`Loaded 12 table(s), 4632 row(s).`; it stops at a table that exists, `--replace` recreates it).
+**3. Seed and initialize.** `connection seed --apply` creates the twelve tables of the mapped models and fills them (`Loaded 12 table(s), 4632 row(s).`; it stops at a table that exists, `--replace` recreates it).
 `connection init --apply` creates the tracking tables (`Applied 14 statements. The tracking tables are ready.`). `inspect` now says `Nothing in the way.`
 
 **4. Status.** `connection status sqlserver` compares the database with the compiled project and says what a deploy would do:

@@ -15,8 +15,8 @@ in a space, so the compile reports DDB-236 for it unless the columns are `trimme
 `store_id` comes from a parameter, so it never ends in a space). Text comparison across engines is parked as a design question (`docs/progress/OPEN-ITEMS.md`, P); this template shows what exists and adds nothing.
 
 ```
-dbdatabuild project compile                  # check config, models and sources; write rendered/<connection>/ for sqlserver and postgres (not store_east/store_west: nothing is built there)
-dbdatabuild project seed                     # generate the source rows into .dbdatabuild/seed.duckdb
+dbdatabuild project compile                  # check config, models; write rendered/<connection>/ for sqlserver and postgres (not store_east/store_west: nothing is built there)
+dbdatabuild project seed                     # generate the rows of the mapped models into .dbdatabuild/seed.duckdb
 dbdatabuild project sample marts.daily_sales # run the report on generated sample data (a copy is not seeded: the rows of warehouse.orders are made up for the sample)
 dbdatabuild project tests run                # the model test gives warehouse.orders rows of two stores with the same order number
 ```
@@ -124,6 +124,6 @@ document and, after `dbdatabuild connection publish sqlserver`, in the tracking 
 ## Notes
 
 - The shop systems are `readonly`: the tool reads them (a copy, `connection inspect`, `compare`) and never writes. Their read logins need `SELECT` on `pos.orders`; seeding demo shops needs a write login for a moment, with `readonly` taken out (step 1).
-- `connection seed` writes every seeded source of the project to the connection it is given, so seed each shop on its own connection as above (only `pos.orders` has a seed).
+- `connection seed` writes every seeded mapped model of the project to the connection it is given, so seed each shop on its own connection as above (only `pos.orders` has a seed).
 - The compile notes DDB-224 for `ux_orders_store_order`: the copy's load key is `store_id` alone (it replaces a shop's rows), which cannot be unique, so no index can make the engine enforce it; the unique index on `(store_id, order_id)` is the table's real key and leads with the load key so each load finds its rows.
 - The copy is incremental, which a deploy runs too (it reads from the newest value as well); rows deleted at a shop stay in the warehouse; a copy with no `watermark` would replace a shop's rows in full each run (DESIGN.md 6.5.2).

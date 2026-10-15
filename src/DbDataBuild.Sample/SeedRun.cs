@@ -9,7 +9,7 @@ public sealed record SeededTable(string Name, string File, long Rows);
 
 /// <summary>
 /// Runs a project's seeds (DESIGN.md 15.6) on a DuckDB connection: the variables `seed` and `scale`, then `seeds/macros.sql`, then each seed in the order of what reads what, each as
-/// `CREATE TABLE` from the source descriptor and `INSERT ... SELECT` of the seed's query cast to the declared types. A seed has to return exactly the declared columns. The data is a function of
+/// `CREATE TABLE` from the mapped model and `INSERT ... SELECT` of the seed's query cast to the declared types. A seed has to return exactly the declared columns. The data is a function of
 /// the seed and the scale: the same two numbers give the same rows.
 /// </summary>
 public static class SeedRun

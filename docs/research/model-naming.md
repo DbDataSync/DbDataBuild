@@ -47,7 +47,7 @@ What the layout changes elsewhere:
 
 - `define` names a model that has no definition yet from the file name when the layout can (`folder`, `none`: the path; `dotted`: the file name), and asks for a hand-written definition with `name:` when it cannot (`object`, or `dotted` with no schema name in the file name). A model that has a definition uses its `name:`.
 - `import` writes a new mapped model where the layout says (`models/<schema name>/<table>.yml`, `models/<schema name>.<table>.yml`, `models/<table>.yml`); a table the project already has a mapped model for is written to that model's own file. (`object` can collide when two schema names have a table of one name: the second is not written until one is moved.)
-- Metadata and `graph` show a mapped model's real file (`SourceDescriptor.File`), not one computed from its name.
+- Metadata and `graph` show a mapped model's real file (`DeclaredModel.File`), not one computed from its name.
 - Seeds and model tests are named by their own folders (`seeds/<schema name>/<table>.sql`, `tests/<schema name>/<model>.yml` or `model:` inside); they are not governed by `model_layout`.
 
 ## Still open (to settle when option B is revisited)

@@ -5,7 +5,7 @@ namespace DbDataBuild.State;
 /// <summary>One column of a live table as the importer saw it: the native type, the logical type it maps to (if any), and how faithful that is.</summary>
 public sealed record ImportedColumn(string Name, string NativeType, string? LogicalType, TypeFit Fit, string Reason, bool Nullable);
 
-/// <summary>A live table or view, described for a source descriptor. <c>File</c> is null when the object's name cannot be a path.</summary>
+/// <summary>A live table or view, described for a mapped model. <c>File</c> is null when the object's name cannot be a path.</summary>
 /// <summary>A foreign key as the catalog reports it.</summary>
 public sealed record ForeignKeyShape(string Name, IReadOnlyList<string> Columns, string ReferencedSchema, string ReferencedTable, IReadOnlyList<string> ReferencedColumns);
 

@@ -1,6 +1,6 @@
 # macro_examples: a small order ledger
 
-A project that shows **macros**: names for expressions and for whole queries, kept in `macros/*.sql`. Two source tables hold orders (`ledger.orders`, the live state, and `ledger.orders_history`, the same
+A project that shows **macros**: names for expressions and for whole queries, kept in `macros/*.sql`. Two mapped models hold orders (`ledger.orders`, the live state, and `ledger.orders_history`, the same
 orders as they stood at the end of each month) and three marts are built from them.
 
 **A macro is never run by an engine.** DuckDB expands a macro while the tool binds a query offline; everything after that (the support matrix, the transpile to T-SQL or PostgreSQL, the files in `rendered/`,
@@ -10,7 +10,7 @@ Macros need the lowerer (they are refused with `lowering: { enabled: false }`), 
 ```
 dbdatabuild project compile                          # expand the macros; rendered/lowered/<model>/lowered.sql is the query after DuckDB expanded them
 dbdatabuild project show graph +marts.status_totals_history   # the macros are nodes of the graph: dollars(), snapshot_at(), status_totals()
-dbdatabuild project seed                             # the source rows (ledger.orders 80 rows, ledger.orders_history 305)
+dbdatabuild project seed                             # the rows of the mapped models (ledger.orders 80 rows, ledger.orders_history 305)
 dbdatabuild project sample marts.orders --limit 5    # run a model on them
 dbdatabuild project tests run                        # a model test per mart; the macros are tested through them
 ```

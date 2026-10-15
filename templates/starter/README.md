@@ -5,9 +5,9 @@ A tiny project to try dbdatabuild without a database: three source tables (`raw.
 made up by SQL in `seeds/`, so every command below runs on your own machine with nothing else installed.
 
 ```
-dbdatabuild project compile                         # check config, models and sources, see how each query lowers, and write the load scripts (rendered/) to read and commit
+dbdatabuild project compile                         # check config, models, see how each query lowers, and write the load scripts (rendered/) to read and commit
 dbdatabuild project show graph --columns            # what reads what, and where each column comes from
-dbdatabuild project seed                       # generate the source data into .dbdatabuild/seed.duckdb (inspect it with any DuckDB tool)
+dbdatabuild project seed                       # generate the rows of the mapped models into .dbdatabuild/seed.duckdb (inspect it with any DuckDB tool)
 dbdatabuild project sample marts.orders        # run a model on that data and look at the rows
 dbdatabuild project tests run                       # the project's tests: metadata rules and model tests
 ```
@@ -44,7 +44,7 @@ The source tables are what `seeds/` generates, and `load-seeds` can put them in 
 
 ```
 dbdatabuild connection seed                 # shows what it would create and fill; connects to nothing
-dbdatabuild connection seed --apply         # creates the source tables and loads them (--replace drops and recreates tables that exist)
+dbdatabuild connection seed --apply         # creates the tables of the mapped models and loads them (--replace drops and recreates tables that exist)
 dbdatabuild connection init --apply               # the tracking tables
 dbdatabuild project compile --check     # the rendered files are checked in against the models
 dbdatabuild connection deploy --write-plan --accept-inferred   # reads the database, writes a plan you can read

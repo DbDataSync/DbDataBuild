@@ -5,11 +5,11 @@ This walks from nothing to a model built on a database. The first part needs onl
 ## 1. Look at a project offline
 
 ```
-dbdatabuild project create starter cafe       # 28 files: a small cafe, sources through staging to two marts (also: retail, chinook, adventureworks, fan_in_fan_out, macro_examples)
+dbdatabuild project create starter cafe       # 28 files: a small cafe, mapped models through staging to two marts (also: retail, chinook, adventureworks, fan_in_fan_out, macro_examples)
 cd cafe
 dbdatabuild project compile                # checks config and models, shows how each query lowers ("OK: 5 model(s) valid"), and writes the load scripts (rendered/) to read and commit
 dbdatabuild project show graph --columns   # what reads what, and where each column comes from
-dbdatabuild project seed                   # generate the source data into .dbdatabuild/seed.duckdb
+dbdatabuild project seed                   # generate the rows of the mapped models into .dbdatabuild/seed.duckdb
 dbdatabuild project sample marts.orders    # run a model on that data and see the rows
 dbdatabuild project tests run              # the project's tests: metadata rules and model tests
 dbdatabuild project show loads             # each model on each connection: the strategy, and how well the engine supports its query
@@ -23,7 +23,7 @@ Nothing here opens a database (the `project` commands never do). `project compil
 dbdatabuild.yml        connections, defaults, where tracking lives, the string profile
 models/**/*.sql        one SELECT per model (DuckDB dialect), optionally with a head: CREATE TABLE schema_name.table_name WITH (...) AS
 models/**/*.yml        the definition: name, kind, grain, columns (the contract), indexes, tests
-seeds/                 DuckDB queries that make sample source data
+seeds/                 DuckDB queries that make the sample rows of the mapped models
 tests/                 metadata rules and model tests
 rendered/              generated load scripts: commit them
 plans/                 plan files from `connection deploy`: read them, apply them
@@ -39,7 +39,7 @@ The tool uses two logins per connection, named by environment variable, and noth
 export DBDATABUILD_SQLSERVER_READ='Server=localhost,1433;User Id=reader;Password=...;TrustServerCertificate=true'
 export DBDATABUILD_SQLSERVER_WRITE='Server=localhost,1433;User Id=builder;Password=...;TrustServerCertificate=true'
 
-dbdatabuild connection seed --apply                      # optional: put the seeded source tables into the database (without --apply it only shows what it would do)
+dbdatabuild connection seed --apply                      # optional: put the seeded tables (the mapped models) into the database (without --apply it only shows what it would do)
 dbdatabuild connection init sqlserver --apply   # create the tracking tables (without --apply it shows the statements)
 dbdatabuild connection status sqlserver     # where it stands: nothing deployed yet, no drift
 dbdatabuild connection deploy sqlserver     # plan (it asks what it must ask), show the plan, apply it when you say yes

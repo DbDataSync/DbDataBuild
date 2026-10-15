@@ -57,7 +57,7 @@ Every command says, in its header and in `--help`, what it touches:
 | `project compile [models]` | check the project and write the compiled files (`rendered/`, refresh plans); `--check` for CI | `P⇒P` |
 | `project tests run [tests]` | run the project's tests | `P→` |
 | `project sample <models>` | run models on sample data | `P→` |
-| `project seed` | build the sample source data | `P⇒P` |
+| `project seed` | build the sample rows of the mapped models | `P⇒P` |
 | `project import <c> [tables]` | export a connection's tables as models | `C→P` |
 | `project show loads\|graph\|metadata\|plan` | read-only views | `P→` |
 | `project agent-kit` | install the skill for AI agents | `P⇒P` |
@@ -85,7 +85,7 @@ Every command says, in its header and in `--help`, what it touches:
 | `help matrix` | the support matrix |
 | `help dialects` | the dialect profiles of read-only origins: fields, built-ins, how to add one |
 
-Model kinds (view, full, incremental, copy, mapped, native) and how each operates are in `docs/models.md`.
+Model kinds (view, full, incremental, copy, mapped, native) and how each operates are in `docs/models.md`. All of them are models: a selector (`kind:mapped`, `+model`, `tag:`), the dependency graph, the counts, the metadata documents and the views, the terminal interface and the web page treat a mapped or native model like a built one; only the commands that build skip the two the tool does not build.
 
 ## Plans and events
 
