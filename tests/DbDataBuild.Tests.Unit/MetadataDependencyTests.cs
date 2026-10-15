@@ -15,14 +15,14 @@ public class MetadataDependencyTests
     {
         var rows = MetadataDependencies.Closure(
         [
-            ("m.c", "m.b", "model"), ("m.c", "s.x", "mapped"), ("m.b", "m.a", "model"), ("m.a", "s.x", "mapped"), ("m.a", "n.f", "native"), ("n.f", "s.y", "mapped"),
-            ("m.d", "mac", "macro"), ("m.d", "ghost", "unknown"), ("m.cy", "m.cy2", "model"), ("m.cy2", "m.cy", "model"),
+            ("m.c", "m.b", "model", "view"), ("m.c", "s.x", "model", "mapped"), ("m.b", "m.a", "model", "full"), ("m.a", "s.x", "model", "mapped"), ("m.a", "n.f", "model", "native"), ("n.f", "s.y", "model", "mapped"),
+            ("m.d", "mac", "macro", null), ("m.d", "ghost", "unknown", null), ("m.cy", "m.cy2", "model", "copy"), ("m.cy2", "m.cy", "model", "view"),
         ]);
-        string Of(string subject) => string.Join(";", rows.Where(r => r.Subject == subject).Select(r => $"{r.DependsOn}|{r.DependsOnKind}|{r.Depth}"));
-        Assert.Equal("m.b|model|1;s.x|mapped|1;m.a|model|2;n.f|native|3;s.y|mapped|4", Of("m.c"));           // s.x is direct, so depth 1, not 3
-        Assert.Equal("ghost|unknown|1;mac|macro|1", Of("m.d"));
-        Assert.Equal("m.cy2|model|1", Of("m.cy"));                                                            // a cycle ends where it started
-        Assert.Equal("s.y|mapped|1", Of("n.f"));
+        string Of(string subject) => string.Join(";", rows.Where(r => r.Subject == subject).Select(r => $"{r.DependsOn}|{r.DependsOnCategory}|{r.DependsOnKind ?? "-"}|{r.Depth}"));
+        Assert.Equal("m.b|model|view|1;s.x|model|mapped|1;m.a|model|full|2;n.f|model|native|3;s.y|model|mapped|4", Of("m.c"));           // s.x is direct, so depth 1, not 3; a model's kind is its own, not "model"
+        Assert.Equal("ghost|unknown|-|1;mac|macro|-|1", Of("m.d"));                                                                         // a macro and an unknown table have a category and no kind
+        Assert.Equal("m.cy2|model|copy|1", Of("m.cy"));                                                                                     // a cycle ends where it started
+        Assert.Equal("s.y|model|mapped|1", Of("n.f"));
     }
 
     private static string Project()
@@ -44,12 +44,12 @@ public class MetadataDependencyTests
     {
         var ctx = ProjectContext.Load(Project());
         Assert.False(ctx.Project.HasErrors, string.Join("\n", ctx.Project.Diagnostics.Select(DiagnosticFormatter.Format)));
-        var rows = MetadataBuilder.Dependencies(ctx).Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
+        var rows = MetadataBuilder.Dependencies(ctx).Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnCategory}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
         Assert.Equal(
         [
-            "marts.v1>staging.ext|native|1", "marts.v1>staging.t|mapped|2",
-            "marts.v2>marts.v1|model|1", "marts.v2>staging.ext|native|2", "marts.v2>staging.t|mapped|1",
-            "staging.ext>staging.t|mapped|1",
+            "marts.v1>staging.ext|model|native|1", "marts.v1>staging.t|model|mapped|2",
+            "marts.v2>marts.v1|model|view|1", "marts.v2>staging.ext|model|native|2", "marts.v2>staging.t|model|mapped|1",
+            "staging.ext>staging.t|model|mapped|1",
         ], rows);
     }
 
@@ -76,8 +76,8 @@ public class MetadataDependencyTests
         Assert.Null(MetadataDependencies.ModelKindOf("project", "{}"));
         Assert.Contains("\"kind\":\"view\"", docs.Single(d => d.Subject == "marts.v1").Json);
         Assert.Contains("\"kind_settings\":{}", docs.Single(d => d.Subject == "marts.v1").Json);
-        var fromProject = MetadataBuilder.Dependencies(ctx).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
-        var fromDocuments = MetadataDependencies.FromDocuments(docs.Select(d => (d.SubjectKind, d.Subject, d.Json))).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
+        var fromProject = MetadataBuilder.Dependencies(ctx).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnCategory}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
+        var fromDocuments = MetadataDependencies.FromDocuments(docs.Select(d => (d.SubjectKind, d.Subject, d.Json))).Where(r => r.Subject == "marts.v2" && r.DependsOn != "staging.ext").Select(r => $"{r.Subject}>{r.DependsOn}|{r.DependsOnCategory}|{r.DependsOnKind}|{r.Depth}").Order(StringComparer.Ordinal).ToList();
         Assert.Equal(fromProject.Where(r => !r.Contains("staging.ext")), fromDocuments.Where(r => !r.Contains("staging.ext")));       // the documents do not include the native model, so what it reads is "unknown" there
         using var db = MetadataDatabase.Open(docs.Select(d => new MetadataDocument(d.SubjectKind, d.Subject, d.Json, d.Hash)), ProductInfo.Version, MetadataBuilder.Dependencies(ctx));
         var run = db.Run("SELECT m.model, m.kind FROM metadata_models m ORDER BY m.model", 10);
@@ -86,10 +86,10 @@ public class MetadataDependencyTests
         Assert.Equal(["marts.v1|view", "marts.v2|full", "staging.ext|native", "staging.t|mapped"], kinds.Rows.Select(r => $"{r["subject"]}|{r["model_kind"]}"));      // no model has a null kind
         var declared = db.Run("SELECT model, kind, kind_settings->>'access' AS access FROM metadata_models WHERE kind IN ('mapped', 'native') ORDER BY model", 10);
         Assert.Equal(["staging.ext|native|select", "staging.t|mapped|"], declared.Rows.Select(r => $"{r["model"]}|{r["kind"]}|{r["access"]}"));
-        var up = db.Run("SELECT upstream, upstream_kind FROM metadata_upstream WHERE model = 'marts.v2' ORDER BY upstream", 10);
-        Assert.Equal(["marts.v1|model", "staging.t|mapped"], up.Rows.Select(r => $"{r["upstream"]}|{r["upstream_kind"]}"));
-        var anc = db.Run("SELECT ancestor, depth FROM metadata_ancestors WHERE model = 'marts.v2' ORDER BY depth, ancestor", 10);
-        Assert.Equal(["marts.v1|1", "staging.t|1", "staging.ext|2"], anc.Rows.Select(r => $"{r["ancestor"]}|{r["depth"]}"));
+        var up = db.Run("SELECT upstream, upstream_category, upstream_kind FROM metadata_upstream WHERE model = 'marts.v2' ORDER BY upstream", 10);
+        Assert.Equal(["marts.v1|model|view", "staging.t|model|mapped"], up.Rows.Select(r => $"{r["upstream"]}|{r["upstream_category"]}|{r["upstream_kind"]}"));
+        var anc = db.Run("SELECT ancestor, depth, ancestor_kind FROM metadata_ancestors WHERE model = 'marts.v2' ORDER BY depth, ancestor", 10);
+        Assert.Equal(["marts.v1|1|view", "staging.t|1|mapped", "staging.ext|2|native"], anc.Rows.Select(r => $"{r["ancestor"]}|{r["depth"]}|{r["ancestor_kind"]}"));
         Assert.Equal(1, db.Run("SELECT * FROM metadata_current WHERE model_kind = 'full'", 5).Count);
         Assert.Equal(1, db.Run("SELECT * FROM metadata_dependency WHERE depends_on = 'staging.t' AND subject = 'marts.v2'", 5).Count);
     }
@@ -97,7 +97,7 @@ public class MetadataDependencyTests
     [Fact]
     public void A_sync_writes_only_the_subjects_whose_rows_differ_from_the_stored_ones()
     {
-        DependencyRow R(string s, string d, int depth) => new(s, d, "model", depth);
+        DependencyRow R(string s, string d, int depth) => new(s, d, "model", "view", depth);
         var computed = new[] { R("a", "b", 1), R("a", "c", 2), R("x", "y", 1) };
         var set = new HashSet<string>(StringComparer.Ordinal);
         Assert.Equal(["a", "x"], MetadataStore.DependencySubjectsToWrite(computed, [], set, all: true));
@@ -115,7 +115,9 @@ public class MetadataDependencyTests
         Assert.Contains(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "model_kind" && c.Nullable);
         Assert.Contains(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "subject_kind" && !c.Nullable);
         Assert.DoesNotContain(TrackingSchema.Table("metadata_document").Columns, c => c.Name == "kind");
-        Assert.Equal(["connection", "subject", "depends_on", "depends_on_kind", "depth"], TrackingSchema.Table("metadata_dependency").Columns.Select(c => c.Name));
+        Assert.Equal(["connection", "subject", "depends_on", "depends_on_category", "depends_on_kind", "depth"], TrackingSchema.Table("metadata_dependency").Columns.Select(c => c.Name));
+        Assert.True(TrackingSchema.Table("metadata_dependency").Columns.Single(c => c.Name == "depends_on_kind").Nullable);        // a macro or an unknown table is no model, so it has no model kind
+        Assert.False(TrackingSchema.Table("metadata_dependency").Columns.Single(c => c.Name == "depends_on_category").Nullable);
         foreach (var target in new[] { "sqlserver", "postgres" })
         {
             var script = TrackingDdl.Render(TrackingDdl.For(target).InitScript("dbdatabuild", "x"));

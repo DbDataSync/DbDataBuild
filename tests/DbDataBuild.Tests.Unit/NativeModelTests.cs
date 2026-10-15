@@ -164,7 +164,7 @@ public class NativeModelTests
         Assert.Equal("native", (string?)source["kind"]);
         Assert.Equal("dbdatabuild.model/3", (string?)source["schema"]);
         Assert.Null(source["native"]);
-        Assert.Equal(["marts.stock:view"], source["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["kind"]}").Select(x => x.Replace(":model", ":view")));
+        Assert.Equal(["marts.stock:model/full"], source["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["category"]}/{(string?)u["kind"]}"));
         Assert.Equal("select", (string?)source["kind_settings"]!["access"]);
         Assert.Equal(["marts.stock"], source["kind_settings"]!["reads"]!.AsArray().Select(r => (string?)r));
         Assert.Matches("^[0-9a-f]{64}$", (string?)source["kind_settings"]!["text_hash"]);

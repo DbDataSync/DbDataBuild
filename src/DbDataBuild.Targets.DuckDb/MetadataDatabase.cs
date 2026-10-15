@@ -23,7 +23,7 @@ public sealed class MetadataDatabase : IDisposable
 {
     private const string Table = "CREATE TABLE metadata_current(connection VARCHAR, subject_kind VARCHAR, subject VARCHAR, document JSON, document_hash VARCHAR, recorded_utc TIMESTAMP, tool_version VARCHAR, plan_id VARCHAR, git_commit VARCHAR, model_kind VARCHAR)";
 
-    private const string DependencyTable = "CREATE TABLE metadata_dependency(connection VARCHAR, subject VARCHAR, depends_on VARCHAR, depends_on_kind VARCHAR, depth INTEGER)";
+    private const string DependencyTable = "CREATE TABLE metadata_dependency(connection VARCHAR, subject VARCHAR, depends_on VARCHAR, depends_on_category VARCHAR, depends_on_kind VARCHAR, depth INTEGER)";
 
     private const string Views = """
 CREATE VIEW metadata_columns AS
@@ -43,10 +43,10 @@ SELECT m.subject AS model, m.model_kind AS kind, m.document->'kind_settings' AS 
 FROM metadata_current m WHERE m.subject_kind = 'model';
 
 CREATE VIEW metadata_upstream AS
-SELECT d.subject AS model, d.depends_on AS upstream, d.depends_on_kind AS upstream_kind FROM metadata_dependency d WHERE d.depth = 1;
+SELECT d.subject AS model, d.depends_on AS upstream, d.depends_on_category AS upstream_category, d.depends_on_kind AS upstream_kind FROM metadata_dependency d WHERE d.depth = 1;
 
 CREATE VIEW metadata_ancestors AS
-SELECT d.subject AS model, d.depends_on AS ancestor, d.depth AS depth FROM metadata_dependency d;
+SELECT d.subject AS model, d.depends_on AS ancestor, d.depth AS depth, d.depends_on_category AS ancestor_category, d.depends_on_kind AS ancestor_kind FROM metadata_dependency d;
 
 CREATE VIEW metadata_lineage AS
 SELECT m.subject AS model, c->>'name' AS column_name, c->'lineage'->>'transform' AS transform, c->'lineage'->>'cast_type' AS cast_type,
@@ -145,9 +145,10 @@ FROM metadata_current m, unnest(CAST(m.document->'index_advice' AS JSON[])) AS t
             foreach (var row in dependencies ?? MetadataDependencies.FromDocuments(all.Select(d => (d.SubjectKind, d.Subject, d.Json))))
             {
                 using var cmd = db.CreateCommand();
-                cmd.CommandText = "INSERT INTO metadata_dependency VALUES (NULL, $subject, $depends_on, $kind, $depth)";
+                cmd.CommandText = "INSERT INTO metadata_dependency VALUES (NULL, $subject, $depends_on, $category, $kind, $depth)";
                 cmd.Parameters.Add(new DuckDBParameter("subject", row.Subject));
                 cmd.Parameters.Add(new DuckDBParameter("depends_on", row.DependsOn));
+                cmd.Parameters.Add(new DuckDBParameter("category", row.DependsOnCategory));
                 cmd.Parameters.Add(new DuckDBParameter("kind", row.DependsOnKind));
                 cmd.Parameters.Add(new DuckDBParameter("depth", row.Depth));
                 cmd.ExecuteNonQuery();

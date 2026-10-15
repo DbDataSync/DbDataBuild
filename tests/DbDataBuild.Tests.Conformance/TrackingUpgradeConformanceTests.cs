@@ -304,8 +304,8 @@ public class TrackingUpgradeConformanceTests
             var published = Cli("connection", "publish", name);
             Assert.True(published.Exit == 0, published.Out + published.Err);
             Assert.Equal(["marts.v2|view", "src.t|mapped", "staging.v1|view"], (await engine.RowsAsync($"SELECT {Q("subject")} + '|' + {Q("model_kind")} FROM {Q(schema)}.{Q("metadata_current")} WHERE {Q("model_kind")} IS NOT NULL ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "))));
-            var rows = await engine.RowsAsync($"SELECT {Q("subject")} + '>' + {Q("depends_on")} + '|' + {Q("depends_on_kind")} + '|' + CAST({Q("depth")} AS VARCHAR(5)) FROM {Q(schema)}.{Q("metadata_dependency")} ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "));
-            Assert.Equal(["marts.v2>src.t|mapped|2", "marts.v2>staging.v1|model|1", "staging.v1>src.t|mapped|1"], rows);
+            var rows = await engine.RowsAsync($"SELECT {Q("subject")} + '>' + {Q("depends_on")} + '|' + {Q("depends_on_category")} + '|' + {Q("depends_on_kind")} + '|' + CAST({Q("depth")} AS VARCHAR(5)) FROM {Q(schema)}.{Q("metadata_dependency")} ORDER BY 1".Replace(" + ", name == "postgres" ? " || " : " + "));
+            Assert.Equal(["marts.v2>src.t|model|mapped|2", "marts.v2>staging.v1|model|view|1", "staging.v1>src.t|model|mapped|1"], rows);
             var again = Cli("connection", "publish", name);
             Assert.Contains("dependencies of 0 model(s) written", again.Out);                                   // nothing changed, nothing is written
         }
@@ -357,6 +357,10 @@ public class TrackingUpgradeConformanceTests
             await RenameColumn(engine, name, schema, "metadata_document", "subject_kind", "kind");
             await engine.ExecAsync($"UPDATE {Q(schema)}.{Q("metadata_document")} SET {Q("kind")} = 'source' WHERE {Q("subject")} = 'src.t'");
             await engine.ExecAsync($"UPDATE {Q(schema)}.{Q("object_info")} SET {Q("subject_kind")} = 'source' WHERE {Q("subject")} = 'src.t'");
+            // the dependency table as it was: no category column, the kind (model, mapped, native, macro, unknown) never null
+            Assert.Equal(["marts.v1>src.t|model|mapped|1"], await engine.RowsAsync(Concat($"SELECT {Q("subject")} + '>' + {Q("depends_on")} + '|' + {Q("depends_on_category")} + '|' + {Q("depends_on_kind")} + '|' + CAST({Q("depth")} AS VARCHAR(5)) FROM {Q(schema)}.{Q("metadata_dependency")}")));
+            await engine.ExecAsync($"ALTER TABLE {Q(schema)}.{Q("metadata_dependency")} DROP COLUMN {Q(TrackingSchema.DependencyCategoryColumn)}");
+            await engine.ExecAsync(name == "postgres" ? $"ALTER TABLE {Q(schema)}.{Q("metadata_dependency")} ALTER COLUMN {Q("depends_on_kind")} SET NOT NULL" : $"ALTER TABLE {Q(schema)}.{Q("metadata_dependency")} ALTER COLUMN {Q("depends_on_kind")} varchar(128) NOT NULL");
             await engine.ExecAsync($"DELETE FROM {Q(schema)}.{Q("tracking_version")} WHERE {Q("version")} = 9");
             await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("tracking_version")} ({Q("version")}, {Q("tool_version")}, {Q("applied_utc")}) VALUES (8, 'old', {timestamp})");
 
@@ -381,10 +385,14 @@ public class TrackingUpgradeConformanceTests
             Assert.NotEmpty(await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("object_info")} WHERE {Q("subject_kind")} = 'model' AND {Q("subject")} = 'src.t'"));
             Assert.Equal(["src.t"], await engine.RowsAsync($"SELECT {Q("model")} FROM {Q(schema)}.{Q("metadata_columns")} WHERE {Q("model_kind")} = 'mapped'"));      // the view of columns names the model kind, and a mapped model is among them
 
-            // a publish works again and has nothing to write (the documents are as they were)
+            // the dependency rows are derived from the project: the upgrade emptied the table (the category column is new, the kind may be null), and a publish writes them again; the documents are as they were
+            Assert.Empty(await engine.RowsAsync($"SELECT {Q("subject")} FROM {Q(schema)}.{Q("metadata_dependency")}"));
             var again = Cli("connection", "publish", name);
             Assert.True(again.Exit == 0, again.Out + again.Err);
             Assert.Contains("Stored 0 document(s)", again.Out);
+            Assert.Contains("dependencies of 1 model(s) written", again.Out);
+            Assert.Equal(["marts.v1>src.t|model|mapped|1"], await engine.RowsAsync(Concat($"SELECT {Q("subject")} + '>' + {Q("depends_on")} + '|' + {Q("depends_on_category")} + '|' + {Q("depends_on_kind")} + '|' + CAST({Q("depth")} AS VARCHAR(5)) FROM {Q(schema)}.{Q("metadata_dependency")}")));
+            await engine.ExecAsync($"INSERT INTO {Q(schema)}.{Q("metadata_dependency")} ({Q("connection")}, {Q("subject")}, {Q("depends_on")}, {Q("depends_on_category")}, {Q("depends_on_kind")}, {Q("depth")}) VALUES ('{name}', 'marts.v1', 'mac()', 'macro', NULL, 1)");        // a macro has a category and no model kind
         }
         finally
         {

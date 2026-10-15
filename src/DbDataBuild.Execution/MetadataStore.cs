@@ -76,9 +76,9 @@ public static class MetadataStore
     public static async Task<IReadOnlyList<DependencyRow>> DependenciesAsync(ReadSession read, TrackingScope scope, CancellationToken ct = default)
     {
         string c(string n) => C(scope.Engine, n);
-        var rows = await read.QueryAsync($"SELECT d.{c("subject")}, d.{c("depends_on")}, d.{c("depends_on_kind")}, d.{c("depth")} FROM {c(scope.SchemaName)}.{c("metadata_dependency")} d WHERE d.{c("connection")} = @connection",
+        var rows = await read.QueryAsync($"SELECT d.{c("subject")}, d.{c("depends_on")}, d.{c("depends_on_category")}, d.{c("depends_on_kind")}, d.{c("depth")} FROM {c(scope.SchemaName)}.{c("metadata_dependency")} d WHERE d.{c("connection")} = @connection",
             [new GateParameter("connection", DbType.String, scope.Connection)], ct);
-        return rows.Select(r => new DependencyRow((string)r[0]!, (string)r[1]!, ((string)r[2]!).Trim(), Convert.ToInt32(r[3]))).ToList();
+        return rows.Select(r => new DependencyRow((string)r[0]!, (string)r[1]!, ((string)r[2]!).Trim(), (r[3] as string)?.Trim(), Convert.ToInt32(r[4]))).ToList();
     }
 
     /// <summary>
@@ -87,7 +87,7 @@ public static class MetadataStore
     /// </summary>
     public static IReadOnlyList<string> DependencySubjectsToWrite(IReadOnlyList<DependencyRow> computed, IReadOnlyList<DependencyRow> stored, IReadOnlySet<string> subjects, bool all)
     {
-        static string Shape(IEnumerable<DependencyRow> rows) => string.Join("\n", rows.OrderBy(r => r.DependsOn, StringComparer.Ordinal).Select(r => $"{r.DependsOn}|{r.DependsOnKind}|{r.Depth}"));
+        static string Shape(IEnumerable<DependencyRow> rows) => string.Join("\n", rows.OrderBy(r => r.DependsOn, StringComparer.Ordinal).Select(r => $"{r.DependsOn}|{r.DependsOnCategory}|{r.DependsOnKind}|{r.Depth}"));
         var want = computed.GroupBy(r => r.Subject, StringComparer.Ordinal).ToDictionary(g => g.Key, g => Shape(g), StringComparer.Ordinal);
         var have = stored.GroupBy(r => r.Subject, StringComparer.Ordinal).ToDictionary(g => g.Key, g => Shape(g), StringComparer.Ordinal);
         var names = want.Keys.Where(k => all || subjects.Contains(k)).Concat(all ? have.Keys : have.Keys.Where(subjects.Contains)).Distinct(StringComparer.Ordinal);
@@ -108,7 +108,7 @@ public static class MetadataStore
                 [new("connection", DbType.String, scope.Connection), new("subject", DbType.String, subject)]), ct);
         var set = subjects.ToHashSet(StringComparer.Ordinal);
         var rows = computed.Where(r => set.Contains(r.Subject)).ToList();
-        const int PerStatement = 100;      // 4 values a row and the connection: far below the 2100 parameters SQL Server takes in one statement
+        const int PerStatement = 100;      // 5 values a row and the connection: far below the 2100 parameters SQL Server takes in one statement
         for (var start = 0; start < rows.Count; start += PerStatement)
         {
             var chunk = rows.Skip(start).Take(PerStatement).ToList();
@@ -116,12 +116,13 @@ public static class MetadataStore
             var values = new List<string>();
             for (var i = 0; i < chunk.Count; i++)
             {
-                values.Add($"(@connection, @subject{i}, @depends_on{i}, @kind{i}, @depth{i})");
+                values.Add($"(@connection, @subject{i}, @depends_on{i}, @category{i}, @kind{i}, @depth{i})");
                 parameters.Add(new($"subject{i}", DbType.String, chunk[i].Subject)); parameters.Add(new($"depends_on{i}", DbType.String, chunk[i].DependsOn));
-                parameters.Add(new($"kind{i}", DbType.AnsiString, chunk[i].DependsOnKind)); parameters.Add(new($"depth{i}", DbType.Int32, chunk[i].Depth));
+                parameters.Add(new($"category{i}", DbType.AnsiString, chunk[i].DependsOnCategory)); parameters.Add(new($"kind{i}", DbType.AnsiString, chunk[i].DependsOnKind));
+                parameters.Add(new($"depth{i}", DbType.Int32, chunk[i].Depth));
             }
             await gate.ExecuteAsync(GateStatement.Tracking($"{stepId}-dep-{start / PerStatement + 1:000}",
-                $"INSERT INTO {table} ({c("connection")}, {c("subject")}, {c("depends_on")}, {c("depends_on_kind")}, {c("depth")}) VALUES {string.Join(", ", values)}", parameters), ct);
+                $"INSERT INTO {table} ({c("connection")}, {c("subject")}, {c("depends_on")}, {c("depends_on_category")}, {c("depends_on_kind")}, {c("depth")}) VALUES {string.Join(", ", values)}", parameters), ct);
         }
     }
 

@@ -89,25 +89,28 @@ internal static class MetadataBuilder
         _ => new { },
     };
 
-    /// <summary>The kind of a table name in the project: model (view, full, incremental or copy), native, mapped or unknown.</summary>
-    private static Func<string, string> KindLookup(ProjectContext ctx)
+    /// <summary>What a model depends on: a name, what sort of thing it is (a model, a macro, or a table that is none of the project's) and, for a model, its model kind (any of the seven).</summary>
+    public sealed record Upstream(string Name, string Category, string? Kind);
+
+    /// <summary>The category and model kind of a table name in the project: a model of one of the seven kinds (a copy's staging table counts as a mapped model), else an unknown table.</summary>
+    private static Func<string, (string Category, string? Kind)> KindLookup(ProjectContext ctx)
     {
-        var models = ctx.Project.BuiltModels.Select(m => m.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var natives = ctx.Project.NativeModels.Select(n => n.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var sources = ctx.Project.DeclaredModelsAndStaging.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return n => models.Contains(n) ? "model" : natives.Contains(n) ? "native" : sources.Contains(n) ? DeclaredModelLoader.MappedKind : "unknown";
+        var kinds = ctx.Project.BuiltModels.Select(m => (m.Definition.Name, m.Definition.Kind)).Concat(ctx.Project.DeclaredModelsAndStaging.Select(d => (d.Name, d.Kind)))
+            .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Item2, StringComparer.OrdinalIgnoreCase);
+        return n => kinds.TryGetValue(n, out var kind) ? (DependencyCategories.Model, kind) : (DependencyCategories.Unknown, null);
     }
 
     /// <summary>
-    /// What a model's query reads, with the kind of each (model, native, mapped, unknown) and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the query could not be
-    /// read and calls no macro, so the document says nothing rather than something wrong.
+    /// What a model's query reads, with the category of each (model, macro, unknown) and the model kind of each model, and the macros it calls: the `upstream` of its document, and the direct edges of the dependency rows. Null when the
+    /// query could not be read and calls no macro, so the document says nothing rather than something wrong.
     /// </summary>
-    public static List<(string Name, string Kind)>? UpstreamOf(ProjectContext ctx, BuiltModel built, string sql, bool analysed, Func<string, string>? kindOf = null)
+    public static List<Upstream>? UpstreamOf(ProjectContext ctx, BuiltModel built, string sql, bool analysed, Func<string, (string Category, string? Kind)>? kindOf = null)
     {
         var macros = ctx.MacrosCalledBy(sql);
         if (!analysed && macros.Count == 0) return null;
         kindOf ??= KindLookup(ctx);
-        return ctx.BaseTablesOf(built, sql).Select(n => (n, kindOf(n))).Concat(macros.Select(m => (m, "macro"))).ToList();
+        return ctx.BaseTablesOf(built, sql).Select(n => { var (category, kind) = kindOf(n); return new Upstream(n, category, kind); })
+            .Concat(macros.Select(m => new Upstream(m, DependencyCategories.Macro, null))).ToList();
     }
 
     /// <summary>
@@ -118,18 +121,18 @@ internal static class MetadataBuilder
     public static IReadOnlyList<DependencyRow> Dependencies(ProjectContext ctx)
     {
         var kindOf = KindLookup(ctx);
-        var direct = new List<(string, string, string)>();
+        var direct = new List<(string, string, string, string?)>();
         foreach (var m in ctx.Project.BuiltModels)
         {
             // a model that names something by a parameter reads other tables on connections that give other names: every variant of its query counts (as in the dependency graph selectors and a refresh use)
             foreach (var sql in ctx.QueryVariants(m))
             {
                 var analysed = AnalyzeAgainstUpstream(ctx, m.Definition.Name, ctx.AnalysisSql(m, sql)).Facts != null;
-                foreach (var (name, kind) in UpstreamOf(ctx, m, sql, analysed, kindOf) ?? []) direct.Add((m.Definition.Name, name, kind));
+                foreach (var u in UpstreamOf(ctx, m, sql, analysed, kindOf) ?? []) direct.Add((m.Definition.Name, u.Name, u.Category, u.Kind));
             }
         }
         foreach (var n in ctx.Project.NativeModels)
-            foreach (var read in n.Native?.Reads ?? []) direct.Add((n.Name, read, kindOf(read)));
+            foreach (var read in n.Native?.Reads ?? []) { var (category, kind) = kindOf(read); direct.Add((n.Name, read, category, kind)); }
         return MetadataDependencies.Closure(direct);
     }
 
@@ -226,7 +229,7 @@ internal static class MetadataBuilder
             connections = targets,
             files = new { definition = ModelFile(d), query = (string?)null },
             definition_hash = DefinitionHash(d),
-            upstream = d.Native?.Reads.Select(r => new { name = r, kind = kindOf(r) }).ToList(),
+            upstream = d.Native?.Reads.Select(r => { var (category, kind) = kindOf(r); return new { name = r, category, kind }; }).ToList(),
             columns = d.Columns.Select(c => new { name = c.Name, title = c.Info?.Title, description = c.Info?.Description, tags = c.Info?.TagsForDocument, properties = c.Info?.PropertiesForDocument, logical_type = c.Type, nullable = c.Nullable, collation = c.Collation, native = Native(c) }).ToList(),
             indexes = d.Indexes.Select(i => new { name = i.Name, title = i.Info?.Title, description = i.Info?.Description, tags = i.Info?.TagsForDocument, properties = i.Info?.PropertiesForDocument, columns = i.Columns, unique = i.Unique, include = i.Include }).ToList(),
             foreign_keys = d.ForeignKeys.Select(f => new { name = f.Name, columns = f.Columns, references = new { table = f.Table, columns = f.ReferencedColumns } }).ToList(),
@@ -306,7 +309,7 @@ internal static class MetadataBuilder
             files = new { definition = built.DefinitionFile, query = built.QueryFile },
             inherited = built.Inherited.Select(o => new { path = o.Path, file = o.File, line = o.Line, value = o.Value }).ToList(),
             definition_hash = hash,
-            upstream = UpstreamOf(ctx, built, sql, facts != null)?.Select(u => new { name = u.Name, kind = u.Kind }).ToList(),
+            upstream = UpstreamOf(ctx, built, sql, facts != null)?.Select(u => new { name = u.Name, category = u.Category, kind = u.Kind }).ToList(),
             rewrites_off = RewriteCatalog.For(ctx.Config, def).Disabled.Order(StringComparer.Ordinal).ToList(),
             lowered = lowered == null ? null : new
             {

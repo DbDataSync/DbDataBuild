@@ -2,8 +2,19 @@ using System.Text.Json;
 
 namespace DbDataBuild.Core;
 
-/// <summary>One row of the tracking table `metadata_dependency` (and of the in-memory table of the same name): <paramref name="Subject"/> depends on <paramref name="DependsOn"/>, a thing of kind <paramref name="DependsOnKind"/> (model, mapped, native, macro or unknown), <paramref name="Depth"/> steps away: 1 is a direct edge, more is the transitive closure.</summary>
-public sealed record DependencyRow(string Subject, string DependsOn, string DependsOnKind, int Depth);
+/// <summary>The sorts of thing a model can depend on: another model (of any of the seven kinds), a macro of the project, or a table that is none of the project's.</summary>
+public static class DependencyCategories
+{
+    public const string Model = "model";
+    public const string Macro = "macro";
+    public const string Unknown = "unknown";
+}
+
+/// <summary>
+/// One row of the tracking table `metadata_dependency` (and of the in-memory table of the same name): <paramref name="Subject"/> depends on <paramref name="DependsOn"/>, a thing of <paramref name="DependsOnCategory"/> (model, macro or unknown),
+/// <paramref name="Depth"/> steps away: 1 is a direct edge, more is the transitive closure. <paramref name="DependsOnKind"/> is the model kind of the thing (any of the seven) and is null when it is not a model.
+/// </summary>
+public sealed record DependencyRow(string Subject, string DependsOn, string DependsOnCategory, string? DependsOnKind, int Depth);
 
 /// <summary>
 /// The dependency rows (DESIGN.md 12): each model, and each native model that says what it reads, with everything it depends on, directly (depth 1) and through the things it depends on (greater depths, the shortest path
@@ -12,15 +23,15 @@ public sealed record DependencyRow(string Subject, string DependsOn, string Depe
 /// </summary>
 public static class MetadataDependencies
 {
-    /// <param name="direct">The direct edges: a subject, what it depends on and the kind of that. The things a subject is made of are its model or native model's own; a thing that is no subject (a mapped model, a macro, an unknown table) has no edges of its own.</param>
-    public static IReadOnlyList<DependencyRow> Closure(IEnumerable<(string Subject, string DependsOn, string Kind)> direct)
+    /// <param name="direct">The direct edges: a subject, what it depends on, the category of that and, for a model, its model kind. A thing that is not a model with edges of its own (a mapped model, a macro, an unknown table) has none in the closure.</param>
+    public static IReadOnlyList<DependencyRow> Closure(IEnumerable<(string Subject, string DependsOn, string Category, string? Kind)> direct)
     {
-        var edges = new Dictionary<string, List<(string DependsOn, string Kind)>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (subject, dependsOn, kind) in direct)
+        var edges = new Dictionary<string, List<(string DependsOn, string Category, string? Kind)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (subject, dependsOn, category, kind) in direct)
         {
             if (string.Equals(subject, dependsOn, StringComparison.OrdinalIgnoreCase)) continue;
             if (!edges.TryGetValue(subject, out var list)) edges[subject] = list = [];
-            if (!list.Any(e => string.Equals(e.DependsOn, dependsOn, StringComparison.OrdinalIgnoreCase))) list.Add((dependsOn, kind));
+            if (!list.Any(e => string.Equals(e.DependsOn, dependsOn, StringComparison.OrdinalIgnoreCase))) list.Add((dependsOn, category, kind));
         }
         var rows = new List<DependencyRow>();
         foreach (var subject in edges.Keys.OrderBy(s => s, StringComparer.Ordinal))
@@ -31,10 +42,10 @@ public static class MetadataDependencies
             {
                 var next = new List<string>();
                 foreach (var node in frontier)
-                    foreach (var (dependsOn, kind) in edges.GetValueOrDefault(node) ?? [])
+                    foreach (var (dependsOn, category, kind) in edges.GetValueOrDefault(node) ?? [])
                     {
                         if (string.Equals(dependsOn, subject, StringComparison.OrdinalIgnoreCase) || seen.ContainsKey(dependsOn)) continue;
-                        seen[dependsOn] = new DependencyRow(subject, dependsOn, kind, depth);
+                        seen[dependsOn] = new DependencyRow(subject, dependsOn, category, kind, depth);
                         next.Add(dependsOn);
                     }
                 frontier = next;
@@ -49,14 +60,14 @@ public static class MetadataDependencies
     /// </summary>
     public static IReadOnlyList<DependencyRow> FromDocuments(IEnumerable<(string SubjectKind, string Subject, string Json)> documents)
     {
-        var direct = new List<(string, string, string)>();
+        var direct = new List<(string, string, string, string?)>();
         foreach (var (subjectKind, subject, json) in documents)
         {
             if (subjectKind != "model") continue;
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("upstream", out var upstream) && upstream.ValueKind == JsonValueKind.Array)
                 foreach (var u in upstream.EnumerateArray())
-                    direct.Add((subject, u.GetProperty("name").GetString()!, u.GetProperty("kind").GetString()!));
+                    direct.Add((subject, u.GetProperty("name").GetString()!, u.GetProperty("category").GetString()!, u.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() : null));
         }
         return Closure(direct);
     }

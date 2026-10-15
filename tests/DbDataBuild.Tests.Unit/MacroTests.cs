@@ -131,9 +131,12 @@ public class MacroTests
         Assert.Equal(["marts.snap_totals:full", "snapshot_at():macro", "src.orders_snap:mapped", "status_totals():macro"], graph["nodes"]!.AsArray().Select(n => $"{(string?)n!["name"]}:{(string?)n["kind"] ?? (string?)n["category"]}").Order(StringComparer.Ordinal));
 
         var metadata = System.Text.Json.Nodes.JsonNode.Parse(Cli("project", "show", "metadata", "--project", dir, "--format", "json").Out)!["data"]!["models"]!.AsArray();
-        var upstream = metadata.Single(m => (string?)m!["name"] == "marts.snap_totals")!["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["kind"]}");
-        Assert.Contains("status_totals():macro", upstream);
-        Assert.Contains("src.orders_snap:mapped", upstream);
+        var upstream = metadata.Single(m => (string?)m!["name"] == "marts.snap_totals")!["upstream"]!.AsArray().Select(u => $"{(string?)u!["name"]}:{(string?)u["category"]}/{(string?)u["kind"]}");
+        Assert.Contains("status_totals():macro/", upstream);
+        Assert.Contains("src.orders_snap:model/mapped", upstream);
+        var rows = MetadataBuilder.Dependencies(ctx);                                                  // the same facts as rows: what sort of thing, and the model kind only for a model
+        Assert.Contains(rows, r => r is { Subject: "marts.snap_totals", DependsOn: "status_totals()", DependsOnCategory: "macro", DependsOnKind: null, Depth: 1 });
+        Assert.Contains(rows, r => r is { Subject: "marts.snap_totals", DependsOn: "src.orders_snap", DependsOnCategory: "model", DependsOnKind: "mapped", Depth: 1 });
     }
 
     [Fact]

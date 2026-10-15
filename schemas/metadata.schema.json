@@ -737,6 +737,7 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "upstream": {
+          "description": "What the model depends on directly (a built model's query, a native model's `reads`), by name: `category` says what sort of thing it is (a model of the project, a macro of the project, or a table that is none of the project's) and `kind` which of the seven model kinds when it is a model.",
           "type": "array",
           "items": {
             "type": "object",
@@ -745,19 +746,29 @@
               "name": {
                 "type": "string"
               },
-              "kind": {
+              "category": {
                 "enum": [
                   "model",
-                  "mapped",
-                  "native",
                   "macro",
                   "unknown"
+                ]
+              },
+              "kind": {
+                "description": "The model kind; absent for a macro or an unknown table.",
+                "enum": [
+                  "view",
+                  "full",
+                  "incremental_by_unique_key",
+                  "incremental_by_time_range",
+                  "copy",
+                  "mapped",
+                  "native"
                 ]
               }
             },
             "required": [
               "name",
-              "kind"
+              "category"
             ]
           }
         },
