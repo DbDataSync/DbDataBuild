@@ -78,6 +78,22 @@ public class LoadGraphTests
     }
 
     [Fact]
+    public void Project_show_refresh_shows_the_graph_of_the_loads_file_for_each_plan_in_text_and_in_json()
+    {
+        var dir = Project();
+        Assert.Equal(0, Cli(dir, "project", "compile").Exit);
+        var (exit, text, _) = Cli(dir, "project", "show", "refresh", "default");
+        Assert.Equal(0, exit);
+        Assert.Contains("dependency graph of the loads file:", text);
+        Assert.Contains("waits for: marts.fct_events [incremental_by_time_range] (2 steps)", text);          // summary reaches fct_events through the view that is not loaded
+        var json = System.Text.Json.Nodes.JsonNode.Parse(Cli(dir, "project", "show", "refresh", "default", "--format", "json").Out)!["data"]!["plans"]![0]!;
+        var edges = json["dependencies"]!.AsArray().Select(e => $"{(string?)e!["model"]}[{(string?)e!["model_kind"]}]>{(string?)e!["depends_on"]}[{(string?)e!["depends_on_kind"]}]@{(int)e!["depth"]!}").ToList();
+        Assert.Equal(Edges(ReadLoads(dir)).Split(';').Order(), edges.Order());                              // the document is the graph the file carries, complete
+        var summary = json["load_members"]!.AsArray().Single(m => (string?)m!["model"] == "marts.summary")!["waits_for"]!.AsArray();
+        Assert.Equal(("marts.fct_events", "incremental_by_time_range", 2), ((string?)summary[0]!["depends_on"], (string?)summary[0]!["depends_on_kind"], (int)summary[0]!["depth"]!));
+    }
+
+    [Fact]
     public void An_edited_graph_is_refused_like_an_edited_plan_and_so_is_a_graph_taken_out_or_a_count_that_does_not_fit()
     {
         var dir = Project();

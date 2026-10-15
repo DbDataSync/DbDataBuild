@@ -131,6 +131,7 @@ internal static class RefreshViews
             return result;
         }
         var resolvedByPlan = rows.ToDictionary(r => (r.Connection, r.Plan.Name), r => Resolved(r.Connection, r.Plan, r.Loads));
+        var graphs = rows.ToDictionary(r => (r.Connection, r.Plan.Name), r => GraphOf(r.Plan, r.Loads));
 
         string Describe(RefreshParameter i, RefreshInputValue? given) =>
             given != null ? $"{given.Value}  (membership)"
@@ -141,7 +142,14 @@ internal static class RefreshViews
             : i.Source == RefreshParameter.Provided ? $"found when it runs  (provided by `{i.ProvidedBy}`){(i.OnNull != "fail" ? $"  on_null {i.OnNull}" : "")}"
             : "no default";
 
-        object Member(string connection, string plan, RefreshMember m, LoadsFile loads)
+        // the dependency graph the loads file carries, among the models of one plan: what each member waits for, with the model kind of each side and how many steps away it is (1 is direct)
+        static List<LoadDependency>? GraphOf(RefreshPlanFile plan, LoadsFile loads)
+        {
+            if (loads.Dependencies == null) return null;
+            var models = plan.Members.Select(m => m.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return loads.Dependencies.Where(d => models.Contains(d.Model) && models.Contains(d.DependsOn)).ToList();
+        }
+        object Member(string connection, string plan, RefreshMember m, LoadsFile loads, List<LoadDependency>? graph)
         {
             var entry = loads.Loads.FirstOrDefault(l => l.Model == m.Model && l.Load == m.Load && l.Hash == m.LoadPlanHash);
             resolvedByPlan[(connection, plan)].TryGetValue(m.FullName, out var res);
@@ -158,14 +166,16 @@ internal static class RefreshViews
                     resolved_value = resolve && found != null && found.IsComputed ? found.Value : null, resolved_source = resolve && found != null ? found.Source : null,
                 };
             }).ToList();
-            return new { member = m.Name, model = m.Model, load = m.Load, load_plan = m.LoadPlanHash, strategy = entry?.Strategy, on_failure = m.OnFailure, inputs, resolve_error = res?.Failure, not_resolved = res is { NotResolved.Count: > 0 } ? res.NotResolved : null };
+            var waits = graph?.Where(d => string.Equals(d.Model, m.Model, StringComparison.OrdinalIgnoreCase)).Select(d => new { depends_on = d.DependsOn, depends_on_kind = d.DependsOnKind, depth = d.Depth }).ToList();
+            return new { member = m.Name, model = m.Model, load = m.Load, load_plan = m.LoadPlanHash, strategy = entry?.Strategy, on_failure = m.OnFailure, inputs, waits_for = waits, resolve_error = res?.Failure, not_resolved = res is { NotResolved.Count: > 0 } ? res.NotResolved : null };
         }
         if (resolve) output.Payload("resolved_at", instant.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
         output.Payload("plans", rows.Select(r => new
         {
             connection = r.Connection, name = r.Plan.Name, title = r.Plan.Info.Title, description = r.Plan.Info.Description, hash = r.Plan.Hash, members = r.Plan.Members.Count,
             settings = new { on_failure = r.Plan.Settings.OnFailure, on_busy = r.Plan.Settings.OnBusy, expected_every = r.Plan.Settings.ExpectedEvery, parallel = r.Plan.Settings.Parallel, check = r.Plan.Settings.Check, on_fail = r.Plan.Settings.OnFail },
-            load_members = planArg == null ? null : r.Plan.Members.Select(m => Member(r.Connection, r.Plan.Name, m, r.Loads)).ToList(),
+            load_members = planArg == null ? null : r.Plan.Members.Select(m => Member(r.Connection, r.Plan.Name, m, r.Loads, GraphOf(r.Plan, r.Loads))).ToList(),
+            dependencies = GraphOf(r.Plan, r.Loads)?.Select(d => new { model = d.Model, model_kind = d.ModelKind, depends_on = d.DependsOn, depends_on_kind = d.DependsOnKind, depth = d.Depth }).ToList(),
             excluded = r.Plan.Excluded.Select(x => new { model = x.Model, member = x.Member, reason = x.Reason }).ToList(),
         }).ToList());
 
@@ -188,6 +198,9 @@ internal static class RefreshViews
             var s = r.Plan.Settings;
             var settings = new[] { s.OnFailure != null ? $"on_failure {s.OnFailure}" : null, s.OnBusy != null ? $"on_busy {s.OnBusy}" : null, s.ExpectedEvery != null ? $"expected_every {s.ExpectedEvery}" : null, s.Parallel != null ? $"parallel {s.Parallel}" : null, s.Check != null ? $"check {s.Check}" : null, s.OnFail != null ? $"on_fail {s.OnFail}" : null }.Where(x => x != null);
             if (settings.Any()) output.WriteLine($"  settings: {string.Join(", ", settings)}");
+            output.WriteLine(graphs[(r.Connection, r.Plan.Name)] is { } shown
+                ? $"  dependency graph of the loads file: {shown.Count} edge(s) among these members (direct and through others; a member waits for what it reads)"
+                : "  the loads file carries no dependency graph (compiled by an older version): its loads run one at a time, in plan order; `project compile` writes it");
             output.WriteLine($"  members, in the order they run ({r.Plan.Members.Count}):");
             var position = 0;
             foreach (var m in r.Plan.Members)
@@ -203,6 +216,8 @@ internal static class RefreshViews
                     else if (resolution != null && resolution.NotResolved.Contains(i.Name)) output.WriteLine("             not resolved here: it reads a database (`connection refresh --dry-run` runs it)");
                 }
                 if (resolution?.Failure != null) output.WriteLine($"         {resolution.Failure}");
+                if (graphs[(r.Connection, r.Plan.Name)] is { } graph && graph.Where(d => string.Equals(d.Model, m.Model, StringComparison.OrdinalIgnoreCase)).ToList() is { Count: > 0 } waits)
+                    output.WriteLine($"         waits for: {string.Join(", ", waits.Select(d => $"{d.DependsOn} [{d.DependsOnKind}]{(d.Depth > 1 ? $" ({d.Depth} steps)" : "")}"))}");
             }
             if (r.Plan.Excluded.Count > 0)
             {

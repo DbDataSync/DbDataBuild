@@ -1270,3 +1270,10 @@ Operator decision: correlated subqueries are a hard requirement.
 - **What broke**: a project that still writes `kind: {type: ...}` (anywhere) no longer compiles; `project model update` no longer rewrites it (do it by hand: the message says how). `data.old_kind_forms` is gone from two documents.
 - **Tests**: unit 2335 passed (`ModelKindShapeTests` loses the old-form-loads, warn-once, byte-identical rendering and rewriter tests and has the refusal in four shapes, a folder-file case through `project compile`, and a new-form project that `project model update --check` finds clean; the fuzz test for the kind loses the rewriter half; fixtures that still wrote the old form (`GraphTests`, `HistoryConcernsTests`, `ModelDefinitionTests`, `YamlMergeTests`) are in the new form). The conformance projects write only the new form (entry 163 converted them), so they were not run again for this subject; they run at the end of the run.
 - **Not verified**: none beyond the above; Fabric is unaffected.
+
+## 170. `project show refresh` shows the dependency graph of `loads.yml` (OPEN-ITEMS section U)
+
+- **Built** (DESIGN.md 10.6 "Seeing the graph"): for each plan, the edges of the loads file between the plan's members: text (a line saying how many edges, and "waits for: marts.fct_events [incremental_by_time_range] (2 steps)" under each member), JSON `plans[].dependencies` (`model`, `model_kind`, `depends_on`, `depends_on_kind`, `depth`, all of them) and, with a plan named, `load_members[].waits_for`. A loads file without the graph gives null and the text says why. `schemas/output.schema.json` (closed `data_project_show_refresh`), the command description and so `docs/commands.md`, `docs/operations.md`.
+- **Interfaces**: the terminal interface runs `project show refresh` from its command catalog and shows the text; neither it nor the web page has a refresh-plan screen (they show deploy plans), so there was nothing else to extend.
+- **Tests**: unit 2336 passed (`LoadGraphTests`: the text, the JSON equal to the edges the file carries, `waits_for` with kind and depth through a view that is not loaded).
+- **Not verified**: Fabric; the TUI by hand.

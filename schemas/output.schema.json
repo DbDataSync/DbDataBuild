@@ -5209,6 +5209,23 @@
                             "null"
                           ]
                         },
+                        "waits_for": {
+                          "description": "What this member's model waits for among the models of the plan, from the dependency graph in loads.yml: the model, its model kind and how many steps away (1 is direct). Null when the loads file carries no graph.",
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "depends_on": { "type": "string" },
+                              "depends_on_kind": { "type": "string" },
+                              "depth": { "type": "integer" }
+                            },
+                            "required": [ "depends_on", "depends_on_kind", "depth" ]
+                          }
+                        },
                         "inputs": {
                           "type": "array",
                           "items": {
@@ -5303,6 +5320,25 @@
                     "type": "null"
                   }
                 ]
+              },
+              "dependencies": {
+                "description": "The dependency graph loads.yml carries, among the models of this plan: one edge per model and thing it waits for, direct (depth 1) and through others, with the model kind of each side. Null when the loads file carries no graph (compiled by an older version).",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "model": { "type": "string" },
+                    "model_kind": { "type": "string" },
+                    "depends_on": { "type": "string" },
+                    "depends_on_kind": { "type": "string" },
+                    "depth": { "type": "integer" }
+                  },
+                  "required": [ "model", "model_kind", "depends_on", "depends_on_kind", "depth" ]
+                }
               },
               "excluded": {
                 "type": "array",
