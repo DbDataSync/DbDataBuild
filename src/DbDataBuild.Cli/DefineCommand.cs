@@ -38,18 +38,6 @@ internal static class DefineCommand
             return CliApp.ExitUsage;
         }
 
-        // ---- the kind written in the old form (`kind: {type: copy, ...}`) is rewritten first, so the rest reads the files as they will be ----
-        var kindForms = FindOldKindForms(projectRoot, paths);
-        var kindFormFiles = kindForms.Select(f => f.File).ToList();
-        var kindWritten = new List<string>();
-        if (!check && kindForms.Count > 0)
-        {
-            var kindExit = RewriteOldKindForms(projectRoot, kindForms, write, output, error, input, kindWritten);
-            if (kindExit != CliApp.ExitOk) return kindExit;
-            kindFormFiles = kindWritten;
-        }
-        output.Payload("old_kind_forms", kindFormFiles);
-
         // ---- load the project ----
         var configDiags = new List<Diagnostic>();
         var config = ProjectConfigLoader.LoadFromProject(projectRoot, configDiags);
@@ -138,11 +126,7 @@ internal static class DefineCommand
             var found = new List<Diagnostic>(shown);
             found.AddRange(engine.Check(targets));
             foreach (var d in found) error.Diag(d);
-            foreach (var f in kindForms)
-                error.Diag(new Diagnostic(DiagnosticCatalog.KindWrittenOldWay, new(f.File, 0, 0), f.Result.Problem == null
-                    ? $"`{f.File}` writes the kind of {(f.Result.Count == 1 ? "a model" : f.Result.Count + " models")} in the old form (`kind: {{type: ...}}`)."
-                    : $"`{f.File}` writes a kind in the old form, and the rewrite is left to a person: {f.Result.Problem}."));
-            var errors = found.Count(d => d.Severity == Severity.Error) + kindForms.Count;
+            var errors = found.Count(d => d.Severity == Severity.Error);
             output.Payload("mode", "check");
             output.Payload("definitions", targets.Count);
             output.Payload("differences", errors);
@@ -171,7 +155,6 @@ internal static class DefineCommand
         foreach (var d in shown.Concat(run.Diagnostics)) error.Diag(d);
 
         output.Payload("mode", write ? "write" : "interactive");
-        output.Payload("written", kindWritten.ToList());       // replaced below once files are written
         output.Payload("models", run.Outcomes.Select(o => new
         {
             query = o.Target.QueryFile, definition = o.Target.DefinitionFile, status = o.Status, notes = o.Notes,
@@ -217,7 +200,7 @@ internal static class DefineCommand
         }
 
         var failed = false;
-        var written = new List<string>(kindWritten);
+        var written = new List<string>();
         foreach (var o in changed)
         {
             var path = Path.Combine(projectRoot, o.Target.DefinitionFile);
@@ -233,67 +216,6 @@ internal static class DefineCommand
                 throw new InvalidOperationException($"`{file}` changed while define was running. define never writes query files, so something else touched it.");
 
         if (!failed && written.Count > 0) output.Next("project compile");
-        return failed ? CliApp.ExitFindings : CliApp.ExitOk;
-    }
-
-    /// <summary>A file whose model kind is written in the old form, with what rewriting it would make.</summary>
-    private sealed record OldKindForm(string File, string Text, string Hash, KindFormRewriter.Result Result);
-
-    /// <summary>The definition files (and project files) under the given paths, or all of them, that write a kind in the old form.</summary>
-    private static List<OldKindForm> FindOldKindForms(string projectRoot, string[] paths)
-    {
-        var modelsRoot = Path.GetFullPath(Path.Combine(projectRoot, ProjectValidator.ModelsDir));
-        var files = new SortedSet<string>(StringComparer.Ordinal);
-        if (paths.Length == 0)
-        {
-            if (Directory.Exists(modelsRoot)) foreach (var f in Directory.EnumerateFiles(modelsRoot, "*.yml", SearchOption.AllDirectories)) files.Add(Path.GetFullPath(f));
-            var config = Path.GetFullPath(Path.Combine(projectRoot, Core.ProductInfo.ConfigFile));
-            if (File.Exists(config)) files.Add(config);
-        }
-        foreach (var p in paths)
-        {
-            var full = new[] { Path.GetFullPath(Path.Combine(projectRoot, p)), Path.GetFullPath(p) }.FirstOrDefault(c => File.Exists(c) || Directory.Exists(c));
-            if (full == null) continue;                                     // the selection says so, with its own message
-            if (Directory.Exists(full)) { foreach (var f in Directory.EnumerateFiles(full, "*.yml", SearchOption.AllDirectories)) files.Add(Path.GetFullPath(f)); }
-            else if (full.EndsWith(".sql", StringComparison.Ordinal) && File.Exists(full[..^".sql".Length] + ".yml")) files.Add(full[..^".sql".Length] + ".yml");
-            else if (full.EndsWith(".yml", StringComparison.Ordinal)) files.Add(full);
-        }
-        var found = new List<OldKindForm>();
-        foreach (var full in files)
-        {
-            var relative = Path.GetRelativePath(projectRoot, full).Replace('\\', '/');
-            var name = Path.GetFileName(full);
-            var projectFile = name == Core.ProductInfo.FolderConfigFile || relative == Core.ProductInfo.ConfigFile;
-            if (!projectFile && !relative.StartsWith(ProjectValidator.ModelsDir + "/", StringComparison.Ordinal)) continue;
-            var bytes = File.ReadAllBytes(full);
-            var result = KindFormRewriter.Rewrite(Utf8Text(bytes), relative, projectFile);
-            if (result.Count > 0) found.Add(new OldKindForm(relative, Utf8Text(bytes), DefinitionFile.Hash(bytes), result));
-        }
-        return found;
-    }
-
-    /// <summary>Shows the rewrite of each file with a kind in the old form, asks (unless --write), and writes the files whose rewrite was safe.</summary>
-    private static int RewriteOldKindForms(string projectRoot, List<OldKindForm> forms, bool write, TextWriter output, TextWriter error, TextReader input, List<string> written)
-    {
-        output.WriteLine();
-        output.WriteLine($"{forms.Count} file(s) write a model kind in the old form (`kind: {{type: ...}}`); the kind is now the key:");
-        var rewritable = forms.Where(f => f.Result.NewText != null).ToList();
-        foreach (var f in forms.Where(f => f.Result.NewText == null))
-            error.Diag(new Diagnostic(DiagnosticCatalog.KindWrittenOldWay, new(f.File, 0, 0), $"`{f.File}` writes a kind in the old form, and the rewrite is left to a person: {f.Result.Problem}."));
-        foreach (var f in rewritable) output.Write(UnifiedDiff.Create(f.Text, f.Result.NewText!, f.File));
-        if (rewritable.Count == 0) return CliApp.ExitOk;
-        if (!write)
-        {
-            output.Write($"Rewrite {rewritable.Count} file(s)? [y/N] ");
-            if (input.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes")) { output.WriteLine("Nothing was rewritten."); return CliApp.ExitOk; }
-        }
-        var failed = false;
-        foreach (var f in rewritable)
-        {
-            var problem = DefinitionFile.WriteIfUnchanged(Path.Combine(projectRoot, f.File), f.File, f.Hash, f.Result.NewText!);
-            if (problem != null) { error.Diag(problem); failed = true; }
-            else { output.WriteLine($"wrote {f.File}"); written.Add(f.File); }
-        }
         return failed ? CliApp.ExitFindings : CliApp.ExitOk;
     }
 

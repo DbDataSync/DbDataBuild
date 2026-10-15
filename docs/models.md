@@ -44,7 +44,7 @@ kind:
 kind: {copy: {from: pos.orders, unique_key: [order_id]}}    # flow style
 ```
 
-Exactly one key is allowed under `kind`, and a setting that does not belong to the kind is an error (unknown keys are refused), because each kind's settings are a closed set in `schemas/model.schema.json`. A key such as `kind.copy:` is an ordinary key with a dot in its name; it does not nest and is not supported. A folder's `_dbdatabuild.yml` (or the project file) may give a default `kind` under `defaults:`; a model's own `kind` replaces it whole, never key by key. The form of the earlier releases, `kind: {type: copy, from: pos.orders}`, still loads for one more release with a warning (DDB-247); `dbdatabuild project model update` (or `project update`) rewrites it, and `--check` lists the files that have it.
+Exactly one key is allowed under `kind`, and a setting that does not belong to the kind is an error (unknown keys are refused), because each kind's settings are a closed set in `schemas/model.schema.json`. A key such as `kind.copy:` is an ordinary key with a dot in its name; it does not nest and is not supported. A folder's `_dbdatabuild.yml` (or the project file) may give a default `kind` under `defaults:`; a model's own `kind` replaces it whole, never key by key. The form of the first releases, `kind: {type: copy, from: pos.orders}`, is not read: it is an error (DDB-248) that says how to write it now.
 
 The kind names are closed: `view`, `full`, `incremental_by_unique_key`, `incremental_by_time_range`, `copy`, `mapped`, `native`. Closed sets of values are marked.
 

@@ -139,7 +139,6 @@ public static class ProjectValidator
         var mappedStems = new HashSet<string>(StringComparer.Ordinal);      // files with no query: mapped models, native models and copies
         var nativeStems = new HashSet<string>(StringComparer.Ordinal);
         var copies = new List<(ModelDefinition Definition, string File)>();
-        var oldKindWarned = new HashSet<(string File, int Line)>();         // one warning for each place the old form is written, however many models inherit it
         var declared = new List<(string Name, string File)>();               // every model, mapped model and copy by the name its definition gives it
         // the parameters each file sees from the project files above it: the root's, overridden by each folder's, and the connection parameters the folders override
         var parameterFiles = new Dictionary<string, (IReadOnlyDictionary<string, ParameterValue> Project, IReadOnlyDictionary<string, IReadOnlyDictionary<string, ParameterValue>> Connections)>(StringComparer.Ordinal);
@@ -216,7 +215,6 @@ public static class ProjectValidator
                     if (DeclaredModelLoader.LoadMerged(merged, file, expected, diags, connections, nativeFile) is { } mapped)
                     {
                         CheckLayout(effectiveConfig.Layout, file, mapped.Name, diags);
-                        WarnOldKindForm(merged, file, oldKindWarned, diags);
                         declared.Add((mapped.Name, file));
                         descriptors.Add((kindName == NativeQuery.Kind ? CheckNative(mapped, file, projectParameters, connectionOverrides, effectiveConfig, diags) : mapped) with { File = file });
                     }
@@ -229,7 +227,6 @@ public static class ProjectValidator
                 if (ModelDefinitionLoader.LoadMerged(merged, file, expected, diags, connections) is { } def)
                 {
                     CheckLayout(effectiveConfig.Layout, file, def.Name, diags);
-                    WarnOldKindForm(merged, file, oldKindWarned, diags);
                     declared.Add((def.Name, file));
                     CheckRefreshPlans(def, file, effectiveConfig, diags);
                     CheckDestinations(def, file, effectiveConfig, diags);
@@ -267,17 +264,6 @@ public static class ProjectValidator
 
         ResolveCopies(copies, models, descriptors, effectiveConfig, diags, WithParameters);
         return new(models, diags, descriptors, macros);
-    }
-
-    /// <summary>The old form of `kind` (`{type: copy, ...}`) reads as before; it is said once for the file that wrote it (the model's own, or a project file above it that gave the kind).</summary>
-    private static void WarnOldKindForm(MergedYaml merged, string file, HashSet<(string File, int Line)> warned, List<Diagnostic> diags)
-    {
-        if (merged.Root.Get("kind") is not { } node || !ModelKindShape.IsOldForm(node)) return;
-        var where = merged.FileOf.TryGetValue(node, out var origin) ? origin : file;
-        if (!warned.Add((where, node.Line))) return;
-        var name = ModelKindShape.NameOf(node);
-        diags.Add(new Diagnostic(DiagnosticCatalog.KindWrittenOldWay, new(where, node.Line, node.Column),
-            $"`kind` is written in the old form (`type: {name}`); the kind is now the key: `kind: {{{name}: {{...}}}}`, or `kind: {name}` when it has no settings."));
     }
 
     /// <summary>

@@ -5,35 +5,31 @@ namespace DbDataBuild.Models;
 
 /// <summary>
 /// What a `kind:` node says: the model kind's name and the mapping of its settings. A kind is keyed by its name (`kind: {copy: {from: pos.orders}}`), or is a plain value when it has no settings
-/// (`kind: view`). The form of the releases before (`kind: {type: copy, from: pos.orders}`) still reads, as the same kind with the same settings, and <see cref="OldForm"/> says so.
+/// (`kind: view`). The form of the first releases (`kind: {type: copy, from: pos.orders}`) is not read: it is an error that names the form to write (DDB-248).
 /// </summary>
 /// <param name="Name">The kind's name, as written.</param>
 /// <param name="NameNode">The node the name was written in (for a diagnostic).</param>
-/// <param name="Settings">The kind's settings; an empty mapping at the name for a kind written as a plain value. In the old form this is the whole mapping, with its `type` key.</param>
-public sealed record KindReading(string Name, YamlNode NameNode, YamlMapping Settings, bool OldForm);
+/// <param name="Settings">The kind's settings; an empty mapping at the name for a kind written as a plain value. </param>
+public sealed record KindReading(string Name, YamlNode NameNode, YamlMapping Settings);
 
 public static class ModelKindShape
 {
-    /// <summary>The key of the form before the kind was keyed by its name. No kind has this name.</summary>
-    public const string OldKey = "type";
-
-    public static bool IsOldForm(YamlNode? node) => node is YamlMapping m && m.Entries.Any(e => e.Key.Value == OldKey);
+    /// <summary>The key of the form before the kind was keyed by its name (not read any more; only recognised, to say what to write). No kind has this name.</summary>
+    private const string RemovedKey = "type";
 
     /// <summary>The kind a `kind:` node names, without reporting anything: null when it names none (or more than one).</summary>
     public static string? NameOf(YamlNode? node) => node switch
     {
         YamlScalar { Value.Length: > 0 } s => s.Value,
-        YamlMapping m when m.Get(OldKey) is YamlScalar { Value.Length: > 0 } t => t.Value,
-        YamlMapping { Entries.Count: 1 } m when m.Get(OldKey) == null => m.Entries[0].Key.Value,
+        YamlMapping { Entries.Count: 1 } m when m.Get(RemovedKey) == null => m.Entries[0].Key.Value,
         _ => null,
     };
 
-    /// <summary>The settings mapping of a `kind:` node that names a kind: the mapping under the name (empty for a plain value), or the whole mapping in the old form.</summary>
+    /// <summary>The settings mapping of a `kind:` node that names a kind: the mapping under the name (empty for a plain value), </summary>
     public static YamlMapping? SettingsOf(YamlNode? node) => node switch
     {
         YamlScalar { Value.Length: > 0 } s => new YamlMapping([], s.Line, s.Column),
-        YamlMapping m when m.Get(OldKey) != null => m,
-        YamlMapping { Entries.Count: 1 } m => m.Entries[0].Value as YamlMapping ?? new YamlMapping([], m.Entries[0].Value.Line, m.Entries[0].Value.Column),
+        YamlMapping { Entries.Count: 1 } m when m.Get(RemovedKey) == null => m.Entries[0].Value as YamlMapping ?? new YamlMapping([], m.Entries[0].Value.Line, m.Entries[0].Value.Column),
         _ => null,
     };
 
@@ -49,16 +45,17 @@ public static class ModelKindShape
                 add(DiagnosticCatalog.MissingKey, owner, "Required key `kind` is missing.", $"Add `kind:` naming the model kind: {Example}.");
                 return null;
             case YamlScalar { Value.Length: > 0 } s:
-                return new KindReading(s.Value, s, new YamlMapping([], s.Line, s.Column), false);
+                return new KindReading(s.Value, s, new YamlMapping([], s.Line, s.Column));
             case YamlScalar empty:
                 add(DiagnosticCatalog.KindShapeInvalid, empty, "`kind` is empty.", $"Name the kind: {Example}.");
                 return null;
             case YamlMapping m when m.Entries.Count == 0:
                 add(DiagnosticCatalog.KindShapeInvalid, m, "`kind` is an empty mapping: it names no kind.", $"Name one kind: {Example}.");
                 return null;
-            case YamlMapping m when m.Entries.Any(e => e.Key.Value == OldKey):
-                if (m.Get(OldKey) is YamlScalar { Value.Length: > 0 } name) return new KindReading(name.Value, name, m, true);
-                add(DiagnosticCatalog.KindShapeInvalid, m.Get(OldKey) ?? m, "The old form of `kind` needs the kind's name as the value of `type`.", $"Write {Example}.");
+            case YamlMapping m when m.Entries.Any(e => e.Key.Value == RemovedKey):
+                var written = m.Get(RemovedKey) is YamlScalar { Value.Length: > 0 } kindName ? kindName.Value : "<kind>";
+                add(DiagnosticCatalog.KindShapeInvalid, m.Get(RemovedKey) ?? m, $"`kind: {{type: {written}, ...}}` is not read any more: the kind's name is the key and its settings are beneath it.",
+                    $"Write `kind: {{{written}: {{...}}}}` with the other keys of this mapping as the settings, or `kind: {written}` when it has none. {Example}.");
                 return null;
             case YamlMapping m when m.Entries.Count > 1:
                 add(DiagnosticCatalog.KindShapeInvalid, m.Entries[1].Key, $"`kind` names {m.Entries.Count} kinds ({string.Join(", ", m.Entries.Select(e => e.Key.Value))}): a model has exactly one.", "Keep one key under `kind`; the settings of the kind go beneath it.");
@@ -68,9 +65,9 @@ public static class ModelKindShape
                 switch (entry.Value)
                 {
                     case YamlMapping settings:
-                        return new KindReading(entry.Key.Value, entry.Key, settings, false);
+                        return new KindReading(entry.Key.Value, entry.Key, settings);
                     case YamlScalar { Value.Length: 0 }:
-                        return new KindReading(entry.Key.Value, entry.Key, new YamlMapping([], entry.Value.Line, entry.Value.Column), false);
+                        return new KindReading(entry.Key.Value, entry.Key, new YamlMapping([], entry.Value.Line, entry.Value.Column));
                     default:
                         add(DiagnosticCatalog.KindShapeInvalid, entry.Value, $"The settings of `{entry.Key.Value}` are a mapping, for example `kind: {{{entry.Key.Value}: {{...}}}}`.", $"A kind with no settings is written `kind: {entry.Key.Value}`.");
                         return null;

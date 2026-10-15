@@ -134,13 +134,13 @@ public class FuzzTests
         "name: marts.k\nkind: {copy: {from: staging.events, slice: {column: s, value: \"${origin.s}\", type: \"VARCHAR(5)\"}, unique_key: [event_id], watermark: {column: event_ts, lookback: 1 days}}}\n",
         "name: staging.k\nkind:\n  native:\n    access: select\n    query: SELECT 1 AS n\ncolumns:\n  - {name: n, type: INTEGER}\n",
         "name: marts.k\nkind: view\ncolumns:\n  - {name: n, type: INTEGER}\n",
-        // the old form, which still reads and is rewritten
+        // the earlier form, which is an error that names the new one
         "name: marts.k\nkind:\n  type: incremental_by_unique_key   # keyed\n  unique_key: [event_id]\ngrain: [event_id]\ncolumns:\n  - {name: event_id, type: BIGINT}\n",
         "name: marts.k\nkind: {type: copy, from: staging.events, unique_key: [event_id]}\n",
     ];
 
     [Fact]
-    public void A_damaged_kind_is_answered_with_diagnostics_and_the_rewrite_never_makes_a_file_that_does_not_load()
+    public void A_damaged_kind_is_answered_with_diagnostics_not_an_exception()
     {
         var n = 0;
         foreach (var text in KindTexts)
@@ -153,13 +153,6 @@ public class FuzzTests
                 Assert.DoesNotContain(diags, d => d.Code == "DDB-900");
                 var source = new List<Diagnostic>();
                 DeclaredModelLoader.Load(mutated, "models/staging/k.yml", null, source);
-                var rewritten = DbDataBuild.Define.KindFormRewriter.Rewrite(mutated, "models/marts/k.yml", projectFile: false);
-                if (rewritten.NewText != null)
-                {
-                    var again = new List<Diagnostic>();
-                    Assert.NotNull(DbDataBuild.Models.Yaml.StrictYamlReader.Read(rewritten.NewText, "k.yml", again));
-                    Assert.Empty(again);
-                }
             }
     }
 

@@ -59,7 +59,7 @@ public class ModelDefinitionTests
     [InlineData("name: x\ncolumns: [{name: a, type: INT}]\n", "DDB-105")]               // missing kind
     [InlineData("kind: full\ncolumns: [{name: a, type: INT}]\n", "DDB-105")]       // missing name
     [InlineData("name: marts.fct_orders\nkind: full\n", "DDB-105")]                // columns required for all models
-    [InlineData("name: marts.fct_orders\nkind: {type: nope}\ncolumns: [{name: a, type: INT}]\n", "DDB-106")]
+    [InlineData("name: marts.fct_orders\nkind: nope\ncolumns: [{name: a, type: INT}]\n", "DDB-106")]
     [InlineData("name: marts.fct_orders\nkind: {full: {unique_key: [a]}}\ncolumns: [{name: a, type: INT}]\n", "DDB-104")]
     [InlineData("name: marts.fct_orders\nkind: incremental_by_time_range\ngrain: [a]\ncolumns: [{name: a, type: INT}]\n", "DDB-215")]
     [InlineData("name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [a]}}\ncolumns: [{name: a, type: INT}]\n", "DDB-216")]

@@ -90,7 +90,7 @@ public class GraphTests
     private static void Model(string dir, string path, string name, string kind, string sql, string columns, string? targets = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, "models", path))!);
-        File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {{type: {kind}}}\n{(targets != null ? $"connections=: [{targets}]\n" : "")}columns:\n{columns}");
+        File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {kind}\n{(targets != null ? $"connections=: [{targets}]\n" : "")}columns:\n{columns}");
         File.WriteAllText(Path.Combine(dir, "models", path + ".sql"), sql + "\n");
     }
 

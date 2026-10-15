@@ -106,8 +106,8 @@ public static class DeclaredModelLoader
             {
                 if (reading.Name != MappedKind)
                     Add(DiagnosticCatalog.InvalidValue, reading.NameNode, $"A model with no query is `kind: mapped` or `kind: native`, not `{reading.Name}`.");
-                else if (reading.Settings.Entries.Any(e => e.Key.Value != ModelKindShape.OldKey))
-                    Add(DiagnosticCatalog.InvalidValue, reading.Settings.Entries.First(e => e.Key.Value != ModelKindShape.OldKey).Key, "A mapped model's kind is `kind: mapped` and nothing else.");
+                else if (reading.Settings.Entries.Count > 0)
+                    Add(DiagnosticCatalog.InvalidValue, reading.Settings.Entries[0].Key, "A mapped model's kind is `kind: mapped` and nothing else.");
                 foreach (var k in new[] { "reads", "parameters", "track_definition" }.Where(k => top.Get(k) != null))
                     Add(DiagnosticCatalog.UnknownKey, top.Entries.First(e => e.Key.Value == k).Key, $"`{k}` belongs to a native model; a mapped model declares a table that exists.");
             }
@@ -133,7 +133,7 @@ public static class DeclaredModelLoader
         private NativeQuery? ReadNative(YamlMapping top, KindReading reading)
         {
             var kind = reading.Settings;
-            CheckKeys(kind, reading.OldForm ? [ModelKindShape.OldKey, "access", "query"] : ["access", "query"], "kind `native`");
+            CheckKeys(kind, ["access", "query"], "kind `native`");
             var access = (kind.Get("access") as YamlScalar)?.Value ?? NativeQuery.Select;
             if (access is not (NativeQuery.Select or NativeQuery.Command)) Add(DiagnosticCatalog.InvalidValue, kind.Get("access") ?? kind, $"`access` is `select` (a query can contain it) or `command` (it can only be run), not `{access}`.");
             var inline = (kind.Get("query") as YamlScalar)?.Value;

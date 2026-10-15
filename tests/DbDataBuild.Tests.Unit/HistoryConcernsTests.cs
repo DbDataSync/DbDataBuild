@@ -18,7 +18,7 @@ public class HistoryConcernsTests
         File.WriteAllText(Path.Combine(dir, "models/staging/orders.yml"), "name: staging.orders\nkind: mapped\ncolumns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");
         void Model(string path, string name, string kind, string sql, string columns)
         {
-            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {{type: {kind}}}\ncolumns:\n{columns}");
+            File.WriteAllText(Path.Combine(dir, "models", path + ".yml"), $"name: {name}\nkind: {kind}\ncolumns:\n{columns}");
             File.WriteAllText(Path.Combine(dir, "models", path + ".sql"), sql + "\n");
         }
         Model("stg/orders", "stg.orders", "view", "SELECT order_id, amount FROM staging.orders", "  - {name: order_id, type: BIGINT}\n  - {name: amount, type: \"DECIMAL(14, 2)\"}\n");

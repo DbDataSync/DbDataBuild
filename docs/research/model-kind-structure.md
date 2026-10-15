@@ -1,6 +1,6 @@
 # Model kind: one word, one structure (decided 2026-10-14; built in entries 163 and 164)
 
-Status: decided by the owner; built after `project update` was merged (entry 163: the structure, the old form read with a warning and rewritten by `project model update`; entry 164: the metadata exposure). The words of the old name for the key (a dotted path ending in "type") are kept out of the docs on purpose: a search of `docs/` and `DESIGN.md` for them finds only history.
+Status: decided by the owner; the migration described below (old form read with a warning, rewritten by `project model update`) was built in entry 163 and **removed in entry 169** (the old form is DDB-248 now); built after `project update` was merged (entry 163: the structure, the old form read with a warning and rewritten by `project model update`; entry 164: the metadata exposure). The words of the old name for the key (a dotted path ending in "type") are kept out of the docs on purpose: a search of `docs/` and `DESIGN.md` for them finds only history.
 
 ## The problem
 

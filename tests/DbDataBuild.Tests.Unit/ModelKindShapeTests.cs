@@ -1,12 +1,11 @@
 using DbDataBuild.Cli;
 using DbDataBuild.Core;
-using DbDataBuild.Define;
 using DbDataBuild.Models;
 using static DbDataBuild.Tests.Unit.TestSupport;
 
 namespace DbDataBuild.Tests.Unit;
 
-/// <summary>The kind of a model is a key named for the kind with its settings beneath it (`kind: {copy: {from: x}}`), a plain value for a kind with none (`kind: view`); the old form still reads, with a warning.</summary>
+/// <summary>The kind of a model is a key named for the kind with its settings beneath it (`kind: {copy: {from: x}}`), a plain value for a kind with none (`kind: view`); the earlier form (`kind: {type: copy, ...}`) is an error that names the form to write.</summary>
 public class ModelKindShapeTests
 {
     private const string Cols = "columns:\n  - {name: order_id, type: BIGINT, nullable: false}\n  - {name: ordered_on, type: DATE, nullable: false}\n";
@@ -63,22 +62,41 @@ public class ModelKindShapeTests
         Assert.Contains(diags, d => d.Code == "DDB-105" && d.Found.Contains("`kind`", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void The_old_form_still_loads_as_the_same_kind()
+    [Theory]
+    [InlineData("kind: {type: view}", "view")]
+    [InlineData("kind: {type: incremental_by_unique_key, unique_key: [order_id]}", "incremental_by_unique_key")]
+    [InlineData("kind:\n  type: copy\n  from: a.b", "copy")]
+    [InlineData("kind:\n  unique_key: [order_id]\n  type: incremental_by_unique_key", "incremental_by_unique_key")]
+    public void The_earlier_form_is_an_error_that_names_the_form_to_write(string kind, string name)
     {
-        var (old, oldDiags) = Load("name: marts.fct_orders\nkind: {type: incremental_by_unique_key, unique_key: [order_id]}\ngrain: [order_id]\n" + Cols);
-        var (now, nowDiags) = Load("name: marts.fct_orders\nkind: {incremental_by_unique_key: {unique_key: [order_id]}}\ngrain: [order_id]\n" + Cols);
-        Assert.Empty(oldDiags);
-        Assert.Empty(nowDiags);
-        Assert.Equal(now!.Kind, old!.Kind);
-        Assert.Equal(now.UniqueKey, old.UniqueKey);
+        var (def, diags) = LoadWith(kind, "grain: [order_id]\n");
+        Assert.Null(def);
+        var d = Assert.Single(diags, x => x.Code == "DDB-248");
+        Assert.Equal(Severity.Error, d.Severity);
+        Assert.Contains($"kind: {{{name}: {{...}}}}", d.Fix);                 // the fix writes the new form with the kind named
+        Assert.DoesNotContain(diags, x => x.Code == "DDB-247");              // the warning of the release that still read it is retired
     }
 
-    // ---- a project: the warning, and the same output either way ----
-
-    private static string Project(bool old)
+    [Fact]
+    public void A_project_that_writes_the_earlier_form_in_a_folder_file_or_a_model_does_not_compile()
     {
-        string K(string name, string settings = "") => old ? $"kind: {{type: {name}{(settings.Length > 0 ? ", " + settings : "")}}}" : settings.Length > 0 ? $"kind: {{{name}: {{{settings}}}}}" : $"kind: {name}";
+        var dir = Project();
+        File.WriteAllText(Path.Combine(dir, "models/marts/_dbdatabuild.yml"), "defaults:\n  kind: {type: view}\n");
+        File.WriteAllText(Path.Combine(dir, "models/marts/v.yml"), $"name: marts.v\n{Cols}");
+        File.WriteAllText(Path.Combine(dir, "models/marts/v.sql"), "SELECT order_id, CAST(NULL AS DATE) AS ordered_on FROM staging.orders\n");
+        var result = ProjectValidator.Validate(dir);
+        Assert.Contains(result.Diagnostics, d => d.Code == "DDB-248" && d.Location.File == "models/marts/_dbdatabuild.yml");
+        Assert.DoesNotContain(result.Diagnostics, d => d.Code == "DDB-247");
+        var (exit, _, err) = Cli("project", "compile", "--project", dir);
+        Assert.Equal(CliApp.ExitFindings, exit);
+        Assert.Contains("DDB-248", err);
+    }
+
+    // ---- a project in the new form ----
+
+    private static string Project()
+    {
+        string K(string name, string settings = "") => settings.Length > 0 ? $"kind: {{{name}: {{{settings}}}}}" : $"kind: {name}";
         var dir = NewProjectDir();
         Directory.CreateDirectory(Path.Combine(dir, "models/staging"));
         File.WriteAllText(Path.Combine(dir, "dbdatabuild.yml"), "connections:\n  wh: { engine: sqlserver }\ndefaults:\n  connections: [wh]\n");
@@ -100,32 +118,21 @@ public class ModelKindShapeTests
         return dir;
     }
 
-    [Fact]
-    public void The_old_form_warns_once_for_each_file_and_the_new_form_does_not()
+    private static (int Exit, string Out, string Err) Cli(params string[] args)
     {
-        var old = ProjectValidator.Validate(Project(old: true));
-        Assert.False(old.HasErrors, string.Join("\n", old.Diagnostics.Select(DiagnosticFormatter.Format)));
-        var warned = old.Diagnostics.Where(d => d.Code == "DDB-247").ToList();
-        Assert.Equal(5, warned.Count);
-        Assert.All(warned, d => Assert.Equal(Severity.Warning, d.Severity));
-        Assert.DoesNotContain(ProjectValidator.Validate(Project(old: false)).Diagnostics, d => d.Code == "DDB-247");
+        var o = new StringWriter();
+        var e = new StringWriter();
+        var exit = CliApp.Run(args, o, e, new StringReader(""), false);
+        return (exit, o.ToString(), e.ToString());
     }
 
     [Fact]
-    public void The_old_form_and_the_new_render_the_same_files_byte_for_byte()
+    public void A_project_in_the_new_form_validates_without_a_word_about_the_kind()
     {
-        string Render(bool old)
-        {
-            var dir = Project(old);
-            var (exit, _, err) = RenderFiles("--project", dir, "--write");
-            Assert.True(exit == 0, err);
-            var root = Path.Combine(dir, "rendered");
-            return string.Join("\n", Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)
-                .Select(f => Path.GetRelativePath(root, f) + "\n" + File.ReadAllText(f)));
-        }
-        var (a, b) = (Render(old: true), Render(old: false));
-        Assert.NotEmpty(a);
-        Assert.Equal(a, b);
+        var result = ProjectValidator.Validate(Project());
+        Assert.False(result.HasErrors, string.Join("\n", result.Diagnostics.Select(DiagnosticFormatter.Format)));
+        Assert.DoesNotContain(result.Diagnostics, d => d.Code is "DDB-247" or "DDB-248");
+        Assert.Equal(CliApp.ExitOk, Cli("project", "model", "update", "--project", Project(), "--check").Exit);
     }
 
     [Fact]
@@ -144,129 +151,5 @@ public class ModelKindShapeTests
         Assert.False(result.HasErrors, string.Join("\n", result.Diagnostics.Select(DiagnosticFormatter.Format)));
         Assert.Equal((ModelKinds.Full, 0), (result.Models.Single(m => m.Name == "marts.f").Kind, result.Models.Single(m => m.Name == "marts.f").UniqueKey.Count));
         Assert.Equal(["order_id"], result.Models.Single(m => m.Name == "marts.u").UniqueKey);
-    }
-
-    // ---- the rewrite ----
-
-    private static string Rewritten(string text, bool projectFile = false)
-    {
-        var r = KindFormRewriter.Rewrite(text, "models/m.yml", projectFile);
-        Assert.Null(r.Problem);
-        return r.NewText ?? text;
-    }
-
-    [Theory]
-    [InlineData("name: a\nkind: {type: view}\ncolumns: []\n", "name: a\nkind: view\ncolumns: []\n")]
-    [InlineData("name: a\nkind: {type: copy, from: pos.orders, slice: {column: s, value: \"${origin.s}\"}}\n", "name: a\nkind: {copy: {from: pos.orders, slice: {column: s, value: \"${origin.s}\"}}}\n")]
-    [InlineData("name: a\nkind:\n  type: full   # reloaded\ncolumns: []\n", "name: a\nkind: full   # reloaded\ncolumns: []\n")]
-    [InlineData("# c\nname: a\nkind:\n  type: incremental_by_unique_key   # keyed upsert\n  unique_key: [id]   # the key\n\ngrain: [id]\n", "# c\nname: a\nkind:\n  incremental_by_unique_key:   # keyed upsert\n    unique_key: [id]   # the key\n\ngrain: [id]\n")]
-    [InlineData("name: a\nkind:\n  unique_key: [id]\n  type: incremental_by_unique_key\ngrain: [id]\n", "name: a\nkind:\n  incremental_by_unique_key:\n    unique_key: [id]\ngrain: [id]\n")]
-    [InlineData("name: a\nkind:\n  type: native\n  access: select\n  query: |\n    SELECT 1\n      FROM t\nconnections: [x]\n", "name: a\nkind:\n  native:\n    access: select\n    query: |\n      SELECT 1\n        FROM t\nconnections: [x]\n")]
-    [InlineData("name: a\r\nkind:\r\n  type: copy\r\n  from: a.b\r\n", "name: a\r\nkind:\r\n  copy:\r\n    from: a.b\r\n")]
-    [InlineData("name: a\nkind=: {type: view}\n", "name: a\nkind=: view\n")]
-    public void The_old_form_is_rewritten_by_splices_that_keep_everything_else(string old, string expected)
-    {
-        Assert.Equal(expected, Rewritten(old));
-    }
-
-    [Fact]
-    public void A_file_in_the_new_form_is_left_alone()
-    {
-        var r = KindFormRewriter.Rewrite("name: a\nkind: {copy: {from: a.b}}\n", "m.yml", projectFile: false);
-        Assert.Equal((null, 0, null), (r.NewText, r.Count, r.Problem));
-    }
-
-    [Fact]
-    public void A_project_file_is_rewritten_under_defaults()
-    {
-        Assert.Equal("defaults:\n  kind: full\n  connections: [a]\n", Rewritten("defaults:\n  kind:\n    type: full\n  connections: [a]\n", projectFile: true));
-        Assert.Null(KindFormRewriter.Rewrite("kind: {type: full}\n", "dbdatabuild.yml", projectFile: true).NewText);
-    }
-
-    [Fact]
-    public void A_rewritten_definition_loads_to_the_same_model()
-    {
-        const string old = "name: marts.fct_orders\nkind:\n  type: incremental_by_time_range\n  time_column: ordered_on\n  lookback: 3 days\ngrain: [ordered_on]\n" + Cols;
-        var (before, _) = Load(old);
-        var (after, diags) = Load(Rewritten(old));
-        Assert.Empty(diags);
-        Assert.Equal((before!.Kind, before.TimeColumn, before.Lookback), (after!.Kind, after.TimeColumn, after.Lookback));
-    }
-
-    // ---- `project model update` and `project update` ----
-
-    private static (int Exit, string Out, string Err) Cli(params string[] args)
-    {
-        var o = new StringWriter();
-        var e = new StringWriter();
-        var exit = CliApp.Run(args, o, e, new StringReader(""), false);
-        return (exit, o.ToString(), e.ToString());
-    }
-
-    private static string OldProject()
-    {
-        var dir = Project(old: true);
-        File.WriteAllText(Path.Combine(dir, "models/marts/_dbdatabuild.yml"), "defaults:\n  tags: [x]\n");
-        return dir;
-    }
-
-    private static string Snapshot(string dir) => string.Join("\n", Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => f + ":" + File.ReadAllText(f)));
-
-    [Fact]
-    public void Check_lists_the_files_in_the_old_form_and_writes_nothing()
-    {
-        var dir = OldProject();
-        var before = Snapshot(dir);
-        var (exit, _, err) = Cli("project", "model", "update", "--project", dir, "--check");
-        Assert.Equal(CliApp.ExitFindings, exit);
-        Assert.Contains("DDB-247  models/marts/f.yml", err);
-        Assert.Contains("DDB-247  models/staging/orders.yml", err);
-        Assert.Equal(before, Snapshot(dir));
-        var (jsonExit, json, _) = Cli("project", "model", "update", "--project", dir, "--check", "--format", "json");
-        Assert.Equal(CliApp.ExitFindings, jsonExit);
-        Assert.Contains("\"old_kind_forms\"", json);
-    }
-
-    [Fact]
-    public void Write_rewrites_them_and_the_project_then_says_nothing_about_the_kind_and_renders_the_same()
-    {
-        var dir = OldProject();
-        var oldRendered = RenderedOf(OldCopy(dir));
-        var (exit, output, err) = Cli("project", "model", "update", "--project", dir, "--write");
-        Assert.True(exit == CliApp.ExitOk, err + output);
-        Assert.Contains("wrote models/marts/u.yml", output);
-        Assert.Contains("kind: {incremental_by_unique_key: {unique_key: [order_id]}}", File.ReadAllText(Path.Combine(dir, "models/marts/u.yml")));
-        Assert.DoesNotContain(ProjectValidator.Validate(dir).Diagnostics, d => d.Code == "DDB-247");
-        Assert.Equal(CliApp.ExitOk, Cli("project", "model", "update", "--project", dir, "--check").Exit);
-        Assert.Equal(oldRendered, RenderedOf(dir));
-    }
-
-    private static string OldCopy(string dir)
-    {
-        var copy = dir + "-copy";
-        foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-        {
-            var target = Path.Combine(copy, Path.GetRelativePath(dir, f));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(f, target);
-        }
-        return copy;
-    }
-
-    private static string RenderedOf(string dir)
-    {
-        var (exit, _, err) = RenderFiles("--project", dir, "--write");
-        Assert.True(exit == 0, err);
-        var root = Path.Combine(dir, "rendered");
-        return string.Join("\n", Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => Path.GetRelativePath(root, f) + "\n" + File.ReadAllText(f)));
-    }
-
-    [Fact]
-    public void Project_update_check_reports_them_too()
-    {
-        var dir = OldProject();
-        var (exit, output, _) = Cli("project", "update", "--project", dir, "--offline", "--check");
-        Assert.Equal(CliApp.ExitFindings, exit);
-        Assert.Contains("difference(s)", output);
     }
 }

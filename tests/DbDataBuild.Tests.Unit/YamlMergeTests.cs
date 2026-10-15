@@ -33,7 +33,7 @@ public class YamlMergeTests
     [InlineData("kind: {incremental_by_unique_key: {unique_key: [id]}}", "kind: {incremental_by_unique_key: {time_column: ts}}", "kind.incremental_by_unique_key.time_column=ts")]
     [InlineData("kind: {incremental_by_unique_key: {unique_key: [id]}}", "kind: full", "kind=full")]
     [InlineData("kind: full", "kind: {copy: {from: a.b}}", "kind.copy.from=a.b")]
-    [InlineData("kind: {type: full, unique_key: [id]}", "kind: {type: view}", "kind.type=view")]
+    [InlineData("kind: {full: {unique_key: [id]}}", "kind: {view: {time_column: ts}}", "kind.view.time_column=ts")]
     // lists append, the inherited first, a repeated scalar once
     [InlineData("connections: [a, b]", "connections: [b, c]", "connections[0]=a;connections[1]=b;connections[2]=c")]
     // a list of mappings with a name merges by name; the others append

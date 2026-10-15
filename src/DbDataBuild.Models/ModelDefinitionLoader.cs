@@ -192,7 +192,6 @@ public static class ModelDefinitionLoader
                 Add(DiagnosticCatalog.InvalidValue, reading.NameNode, $"Unknown kind `{name}`.", $"One of: {string.Join(", ", ModelKinds.All)}.");
 
             var allowed = new List<string>();
-            if (reading.OldForm) allowed.Add(ModelKindShape.OldKey);
             if (name == ModelKinds.IncrementalByUniqueKey) allowed.Add("unique_key");
             if (name == ModelKinds.IncrementalByTimeRange) { allowed.Add("time_column"); allowed.Add("lookback"); }
             if (name == ModelKinds.Copy) { allowed.Add("from"); allowed.Add("slice"); allowed.Add("on_mismatch"); allowed.Add("unique_key"); allowed.Add("watermark"); }
