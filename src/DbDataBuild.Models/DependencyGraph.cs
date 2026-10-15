@@ -4,7 +4,14 @@ namespace DbDataBuild.Models;
 /// Which tables each model reads (DESIGN.md 9.9). Pure data: names only, so selectors and the `graph` command work on it without parsing anything. An edge runs from the table that is read to the model that
 /// reads it. Unbuilt nodes are the ones no model builds (declared models, macros); a name that is neither built nor unbuilt is an unknown table (DDB-218 elsewhere) and is kept so the graph still shows it.
 /// </summary>
-public sealed class DependencyGraph
+/// <summary>What a selector needs of a graph: the things a name depends on and the things that depend on it, with their distance. The project's graph and the graph a loads file carries both answer it, so one selector grammar serves both.</summary>
+public interface IModelGraph
+{
+    IReadOnlyDictionary<string, int> Ancestors(string name, int? depth = null);
+    IReadOnlyDictionary<string, int> Descendants(string name, int? depth = null);
+}
+
+public sealed class DependencyGraph : IModelGraph
 {
     private readonly Dictionary<string, HashSet<string>> reads = new(StringComparer.OrdinalIgnoreCase);        // model -> tables it reads
     private readonly Dictionary<string, HashSet<string>> readBy = new(StringComparer.OrdinalIgnoreCase);       // table -> models that read it
@@ -104,7 +111,7 @@ public static class ModelSelector
     }
 
     /// <summary>The set a term selects, given the models its core names. <paramref name="isModel"/> says which names of the graph are models of the project (all seven kinds; macros and unknown tables are not).</summary>
-    public static HashSet<string> Expand(SelectorTerm term, IEnumerable<string> core, DependencyGraph graph, Func<string, bool> isModel)
+    public static HashSet<string> Expand(SelectorTerm term, IEnumerable<string> core, IModelGraph graph, Func<string, bool> isModel)
     {
         var result = new HashSet<string>(core, StringComparer.OrdinalIgnoreCase);
         var start = result.ToList();

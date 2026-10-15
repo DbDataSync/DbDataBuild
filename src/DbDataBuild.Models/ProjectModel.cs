@@ -42,14 +42,18 @@ public static class ProjectModels
 
 /// <summary>What the selector grammar needs from outside the model list: the connections (for the hint on a term that names none) and the one term that reads the working tree and git.</summary>
 /// <param name="Changed">The models a `changed:&lt;git ref&gt;` term chooses, or null with the problem written; null when the caller has no project to ask (a refresh of a compiled plan), which is said where the term is used.</param>
-public sealed record SelectionHost(IReadOnlyCollection<string> Connections, Func<string, TextWriter, IReadOnlySet<string>?>? Changed = null);
+public sealed record SelectionHost(IReadOnlyCollection<string> Connections, Func<string, TextWriter, IReadOnlySet<string>?>? Changed = null)
+{
+    /// <summary>Said in the error for a name that is none of the models, when the models are not all the project's ("among the models this loads file loads").</summary>
+    public string? Scope { get; init; }
+}
 
 /// <summary>
 /// The model selector grammar (DESIGN.md 9.9), once, over <see cref="ProjectModel"/>s and a <see cref="DependencyGraph"/>: a model name or pattern (`*` and `?`), a file or a directory, the graph operators `+model`,
 /// `model+`, `2+model`, `model+1`, `@model`, the filters `kind:`, `tag:`, `property:key=value`, `connection:`, `path:`, `changed:&lt;git ref&gt;`, a comma for an intersection, and `exclude:&lt;selector&gt;`. It is the grammar of every command that
 /// selects models, project selectors and refresh selectors alike, and it works the same on a mapped or native model as on a built one.
 /// </summary>
-public sealed class ModelSelection(IReadOnlyList<ProjectModel> models, DependencyGraph graph, SelectionHost host)
+public sealed class ModelSelection(IReadOnlyList<ProjectModel> models, IModelGraph graph, SelectionHost host)
 {
     /// <summary>The names the arguments select (every model when there are none), in name order. Null, with the problem written, when a term selects nothing.</summary>
     public List<string>? Select(IReadOnlyList<string> args, TextWriter error)
@@ -130,7 +134,7 @@ public sealed class ModelSelection(IReadOnlyList<ProjectModel> models, Dependenc
         var found = byName.Count > 0 ? byName : byPath.Count > 0 ? byPath : byDir;
         if (found.Count == 0)
         {
-            error.WriteLine($"`{core}` does not name a valid model, a model file, or a directory containing models.{(Regex.IsMatch(core, "^[A-Za-z][A-Za-z0-9_]*$") ? $" (If it was meant to be a connection: the project's are {string.Join(", ", host.Connections.Order(StringComparer.Ordinal))}.)" : "")}");
+            error.WriteLine($"`{core}` does not name a valid model, a model file, or a directory containing models{(host.Scope == null ? "" : " among " + host.Scope)}.{(Regex.IsMatch(core, "^[A-Za-z][A-Za-z0-9_]*$") ? $" (If it was meant to be a connection: the project's are {string.Join(", ", host.Connections.Order(StringComparer.Ordinal))}.)" : "")}");
             return null;
         }
         return found.Select(m => m.Name).ToList();

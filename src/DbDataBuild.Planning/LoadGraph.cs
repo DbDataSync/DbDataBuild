@@ -6,7 +6,7 @@ namespace DbDataBuild.Planning;
 /// The dependency graph a loads file carries (<see cref="LoadsFile.Dependencies"/>), read for what a refresh needs of it: which loads a load waits for, which loads a failed load makes unreachable, and the model
 /// selectors that need only the graph and the kinds. It is built from the rows alone, so a refresh needs no project files. The rows are already the transitive closure with the shortest depth, so a walk is a lookup.
 /// </summary>
-public sealed class LoadGraph
+public sealed class LoadGraph : IModelGraph
 {
     private readonly Dictionary<string, Dictionary<string, int>> ancestors = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, int>> descendants = new(StringComparer.OrdinalIgnoreCase);
@@ -44,20 +44,4 @@ public sealed class LoadGraph
 
     private static IReadOnlyDictionary<string, int> Within(Dictionary<string, Dictionary<string, int>> map, string model, int? depth) =>
         !map.TryGetValue(model, out var all) ? new Dictionary<string, int>() : all.Where(e => depth == null || e.Value <= depth).ToDictionary(e => e.Key, e => e.Value, StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>The set a selector term chooses, with the same meaning as <see cref="ModelSelector.Expand"/> has on the project graph (every model it reaches is a loaded one here).</summary>
-    public HashSet<string> Expand(SelectorTerm term, IEnumerable<string> core)
-    {
-        var result = new HashSet<string>(core, StringComparer.OrdinalIgnoreCase);
-        var start = result.ToList();
-        if (term.At)
-        {
-            foreach (var m in start) result.UnionWith(Descendants(m).Keys);
-            foreach (var m in result.ToList()) result.UnionWith(Ancestors(m).Keys);
-            return result;
-        }
-        if (term.Upstream) foreach (var m in start) result.UnionWith(Ancestors(m, term.UpstreamDepth).Keys);
-        if (term.Downstream) foreach (var m in start) result.UnionWith(Descendants(m, term.DownstreamDepth).Keys);
-        return result;
-    }
 }

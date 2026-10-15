@@ -149,7 +149,7 @@ public class LoadGraphTests
         Assert.Equal("incremental_by_time_range", graph.KindOf("MARTS.FCT_EVENTS"));
         Assert.Empty(graph.Descendants("marts.report"));
         Assert.Empty(graph.Descendants("nothing"));
-        Assert.Equal(["marts.fct_events", "marts.report", "marts.summary"], graph.Expand(ModelSelector.Parse("marts.summary"), ["marts.summary"]).Concat(graph.Expand(ModelSelector.Parse("+marts.report"), ["marts.report"])).Distinct().Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.fct_events", "marts.report", "marts.summary"], ModelSelector.Expand(ModelSelector.Parse("marts.summary"), ["marts.summary"], graph, graph.Has).Concat(ModelSelector.Expand(ModelSelector.Parse("+marts.report"), ["marts.report"], graph, graph.Has)).Distinct().Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -163,10 +163,10 @@ public class LoadGraphTests
         var plan = RefreshPlanDocument.Parse(File.ReadAllText(Path.Combine(dir, "rendered/sqlserver/refresh/default.yml")), "default.yml", []);
         Assert.NotNull(plan);
         var error = new StringWriter();
-        Assert.Equal(["marts.fct_events.incremental", "marts.report.default", "marts.summary.default"], RefreshCommand.Select(plan!, ["+marts.report"], dir, error, LoadGraph.Of(loads))!.Order(StringComparer.Ordinal));
-        Assert.Equal(["marts.fct_events.incremental", "marts.summary.default"], RefreshCommand.Select(plan!, ["marts.fct_events+2"], dir, error, LoadGraph.Of(loads))!.Order(StringComparer.Ordinal));      // two steps down: summary, not report
-        Assert.Equal(["marts.report.default", "marts.summary.default"], RefreshCommand.Select(plan!, ["kind:full"], dir, error, LoadGraph.Of(loads))!.Order(StringComparer.Ordinal));
-        Assert.Equal(["marts.fct_events.incremental"], RefreshCommand.Select(plan!, ["exclude:kind:full"], dir, error, LoadGraph.Of(loads))!.Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.fct_events.incremental", "marts.report.default", "marts.summary.default"], RefreshCommand.Select(plan!, ["+marts.report"], dir, error, loads)!.Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.fct_events.incremental", "marts.summary.default"], RefreshCommand.Select(plan!, ["marts.fct_events+2"], dir, error, loads)!.Order(StringComparer.Ordinal));      // two steps down: summary, not report
+        Assert.Equal(["marts.report.default", "marts.summary.default"], RefreshCommand.Select(plan!, ["kind:full"], dir, error, loads)!.Order(StringComparer.Ordinal));
+        Assert.Equal(["marts.fct_events.incremental"], RefreshCommand.Select(plan!, ["exclude:kind:full"], dir, error, loads)!.Order(StringComparer.Ordinal));
         Assert.Equal("", error.ToString());
 
         // a file compiled before the graph carries none: LoadGraph.Of is null, and the command asks for one load at a time with the warning (the engines' test, RefreshParallelConformanceTests, runs it)
@@ -174,6 +174,58 @@ public class LoadGraphTests
         Assert.Null(LoadGraph.Of(old!));
         Assert.Equal(1, RefreshCommand.ParallelFor(4, LoadGraph.Of(old!) != null).Parallel);
         Assert.Equal(4, RefreshCommand.ParallelFor(4, LoadGraph.Of(loads) != null).Parallel);
+    }
+
+    [Fact]
+    public void Every_term_but_changed_selects_from_the_facts_in_the_loads_file_with_the_models_folder_gone_and_gives_what_the_project_gives()
+    {
+        var dir = Project();
+        File.AppendAllText(Path.Combine(dir, "models/marts/fct_events.yml"), "tags: [fct]\nproperties: {tier: 1}\n");
+        File.AppendAllText(Path.Combine(dir, "models/marts/summary.yml"), "tags: [report]\nproperties: {tier: 2}\nconnections: [sqlserver]\n");
+        Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);
+        var loads = ReadLoads(dir);
+        Assert.Equal(["marts.fct_events", "marts.report", "marts.summary"], loads.Models!.Select(m => m.Name));                       // the loaded models only, by name
+        var summary = loads.Models!.Single(m => m.Name == "marts.summary");
+        Assert.Equal(("full", "models/marts/summary.yml", "models/marts/summary.sql"), (summary.Kind, summary.DefinitionFile, summary.QueryFile));
+        Assert.Equal("report;sqlserver;tier|number|2", $"{string.Join(",", summary.Tags)};{string.Join(",", summary.Connections)};{summary.Properties[0].Key}|{summary.Properties[0].Type}|{summary.Properties[0].Value}");
+        var plan = RefreshPlanDocument.Parse(File.ReadAllText(Path.Combine(dir, "rendered/sqlserver/refresh/default.yml")), "default.yml", [])!;
+        string[] Terms = ["tag:fct", "tag:report", "property:tier=2", "property:tier", "path:models/marts", "connection:sqlserver", "kind:full", "kind:incremental_by_time_range", "marts.s*", "models/marts/summary.sql", "models/marts", "+marts.summary", "marts.fct_events+", "@marts.summary", "tag:fct,kind:incremental_by_time_range", "exclude:tag:fct"];
+        var withProject = Terms.ToDictionary(x => x, x => RefreshCommand.Select(plan, [x], dir, new StringWriter())?.Order(StringComparer.Ordinal).ToList());          // the project is there: its files answer
+        Directory.Delete(Path.Combine(dir, "models"), recursive: true);
+        foreach (var term in Terms)
+        {
+            var error = new StringWriter();
+            var fromFacts = RefreshCommand.Select(plan, [term], dir, error, loads)?.Order(StringComparer.Ordinal).ToList();
+            Assert.True(fromFacts != null, $"{term}: {error}");
+            Assert.Equal(withProject[term], fromFacts);                                                                               // the same members, with no project file read
+        }
+        var none = new StringWriter();
+        Assert.Null(RefreshCommand.Select(plan, ["tag:nothing"], dir, none, loads));
+        Assert.Contains("selects no model", none.ToString());
+        var unloaded = new StringWriter();
+        Assert.Null(RefreshCommand.Select(plan, ["marts.recent"], dir, unloaded, loads));                                             // the view is no load of this file
+        Assert.Contains("among the models this loads file loads", unloaded.ToString());
+        // `changed:` is the one term that reads the working tree: with the models folder gone the project has nothing, and the facts are not used for it
+        Assert.Null(RefreshCommand.Select(plan, ["changed:HEAD"], dir, new StringWriter(), loads));
+        // a file compiled before the facts were carried has none, and every term then asks the project
+        var old = LoadsDocument.Parse(LoadsDocument.Serialize(loads with { Models = null }), "loads.yml", []);
+        Assert.NotNull(old);
+        Assert.Null(old!.Models);
+    }
+
+    [Fact]
+    public void The_facts_are_deterministic_hashed_and_refused_when_edited_or_when_they_do_not_name_the_loaded_models()
+    {
+        var dir = Project();
+        Assert.Equal(0, RenderFiles("--write", "--project", dir).Exit);
+        var text = File.ReadAllText(LoadsPath(dir));
+        Assert.Contains("  models: 3", text);
+        string Damaged(string a, string b) => text.Replace(a, b);
+        Assert.Null(LoadsDocument.Parse(Damaged("    kind: \"full\"\n    file: \"models/marts/report.yml\"", "    kind: \"view\"\n    file: \"models/marts/report.yml\""), "loads.yml", []));        // an edited fact
+        Assert.Null(LoadsDocument.Parse(Damaged("  models: 3", "  models: 2"), "loads.yml", []));                                      // a recount
+        var diags = new List<Diagnostic>();
+        Assert.Null(LoadsDocument.Parse(Damaged("  - name: \"marts.report\"\n", "  - name: \"marts.other\"\n"), "loads.yml", diags));
+        Assert.NotEmpty(diags);
     }
 
     [Fact]

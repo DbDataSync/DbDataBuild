@@ -114,6 +114,16 @@ public partial class ApplyConformanceTests
                 var noProjectDoc = JsonNode.Parse(noProject.Out)!["data"]!;
                 Assert.Equal(3, (int)noProjectDoc["parallel_effective"]!);
                 Assert.Equal(Shape(oneDoc), Shape(noProjectDoc));
+                // the selectors of the grammar (a pattern, a kind, an exclusion, `+model`) read the facts in loads.yml, so they work with the models folder gone too, at the same effective parallel
+                foreach (var selector in new[] { "marts.p*", "kind:full", "+marts.d1", "exclude:marts.d*" })
+                {
+                    var picked = run.Cli("connection", "refresh", name, "par", selector, "--parallel", "3", "--format", "json");
+                    Ok(picked, $"parallel 3 without the project, {selector}");
+                    var pickedDoc = JsonNode.Parse(picked.Out)!["data"]!;
+                    Assert.Equal("completed", (string)pickedDoc["outcome"]!);
+                    Assert.Equal(3, (int)pickedDoc["parallel_effective"]!);
+                    Assert.NotEmpty(pickedDoc["results"]!.AsArray());
+                }
             }
             finally { Directory.Move(parked, modelsDir); }
             // a loads file compiled before the graph was carried: one load at a time, and the output says so

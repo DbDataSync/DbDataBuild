@@ -242,7 +242,8 @@ internal static class RefreshPlanBuilder
         // the dependency graph among the models these loads are of, from the rows `publish` writes as metadata_dependency; a refresh orders and skips by it and reads no project file
         var loadedKinds = loads.Select(l => l.Model).Distinct(StringComparer.Ordinal).ToDictionary(n => n, n => sources[n].Definition.Kind, StringComparer.OrdinalIgnoreCase);
         var loadsFile = new LoadsFile(connection, ProjectHash(ctx, connection, models.Select(x => x.Model).ToList()), loads, excluded.OrderBy(x => x.Model, StringComparer.Ordinal).ThenBy(x => x.Reason, StringComparer.Ordinal).ToList(),
-            MetadataBuilder.LoadDependencies(dependencies, loadedKinds));
+            MetadataBuilder.LoadDependencies(dependencies, loadedKinds),
+            ctx.Models.Where(m => loadedKinds.ContainsKey(m.Name)).OrderBy(m => m.Name, StringComparer.Ordinal).Select(ModelFacts.Of).ToList());
 
         // ---- the refresh plans: who is in which, in what order ----
         var members = new Dictionary<string, List<RefreshMember>>(StringComparer.Ordinal);

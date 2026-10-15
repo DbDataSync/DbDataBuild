@@ -94,7 +94,22 @@ public sealed record LoadDependency(string Model, string ModelKind, string Depen
 /// expects of the whole connection, which a deploy records, so a refresh can ask whether this project was deployed. <see cref="Dependencies"/> is the dependency graph among the models the file loads, compiled with the
 /// loads and hashed with them, so the order a refresh runs in cannot differ from the loads; null for a file compiled before the graph was carried (an empty list is a graph with no edges).
 /// </summary>
-public sealed record LoadsFile(string Connection, string ProjectHash, IReadOnlyList<LoadPlanEntry> Loads, IReadOnlyList<RefreshExclusion> Excluded, IReadOnlyList<LoadDependency>? Dependencies = null)
+/// <summary>A property of a model as a selector reads it (`property:key=value` compares the text; the type is kept so the model reads back as it was).</summary>
+public sealed record ModelFactProperty(string Key, string Type, string Value);
+
+/// <summary>
+/// What the selector grammar reads of one loaded model, kept in `loads.yml` so a refresh can select without the project's files: the model kind, the connections it is on, its tags and properties, and the paths of its
+/// files (for the `path:` term, a file and a directory). Only what depends on the working tree or on git (`changed:`) is not here.
+/// </summary>
+public sealed record ModelFacts(string Name, string Kind, IReadOnlyList<string> Connections, IReadOnlyList<string> Tags, IReadOnlyList<ModelFactProperty> Properties, string DefinitionFile, string? QueryFile)
+{
+    public static ModelFacts Of(ProjectModel m) => new(m.Name, m.Kind, m.Connections.Order(StringComparer.Ordinal).ToList(), m.Tags.Order(StringComparer.Ordinal).ToList(),
+        m.Info.Properties.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => new ModelFactProperty(p.Key, p.Value.Type, p.Value.Text)).ToList(), m.DefinitionFile, m.QueryFile);
+
+    public ProjectModel ToProjectModel() => new(Name, Kind, Connections, new ObjectInfo(null, null, Tags, Properties.ToDictionary(p => p.Key, p => new PropertyValue(p.Type, p.Value), StringComparer.Ordinal)), DefinitionFile, QueryFile);
+}
+
+public sealed record LoadsFile(string Connection, string ProjectHash, IReadOnlyList<LoadPlanEntry> Loads, IReadOnlyList<RefreshExclusion> Excluded, IReadOnlyList<LoadDependency>? Dependencies = null, IReadOnlyList<ModelFacts>? Models = null)
 {
     public LoadPlanEntry? Find(string model, string load) => Loads.FirstOrDefault(l => l.Model == model && l.Load == load);
 }
@@ -319,6 +334,7 @@ public static class LoadsDocument
         sb.Append("  project_hash: ").AppendLineLf(Q(f.ProjectHash));
         sb.Append("  loads: ").AppendLineLf(f.Loads.Count.ToString(CultureInfo.InvariantCulture));
         if (f.Dependencies != null) sb.Append("  dependencies: ").AppendLineLf(f.Dependencies.Count.ToString(CultureInfo.InvariantCulture));
+        if (f.Models != null) sb.Append("  models: ").AppendLineLf(f.Models.Count.ToString(CultureInfo.InvariantCulture));
         if (f.Loads.Count > 0) sb.AppendLineLf("loads:");
         foreach (var l in f.Loads)
         {
@@ -337,6 +353,24 @@ public static class LoadsDocument
                 sb.Append("    depth: ").AppendLineLf(d.Depth.ToString(CultureInfo.InvariantCulture));
             }
         }
+        if (f.Models is { Count: > 0 })
+        {
+            sb.AppendLineLf("models:");
+            foreach (var m in f.Models)
+            {
+                sb.Append("  - name: ").AppendLineLf(Q(m.Name));
+                sb.Append("    kind: ").AppendLineLf(Q(m.Kind));
+                sb.Append("    file: ").AppendLineLf(Q(m.DefinitionFile));
+                if (m.QueryFile != null) sb.Append("    query_file: ").AppendLineLf(Q(m.QueryFile));
+                if (m.Connections.Count > 0) { sb.AppendLineLf("    connections:"); foreach (var c in m.Connections) sb.Append("      - ").AppendLineLf(Q(c)); }
+                if (m.Tags.Count > 0) { sb.AppendLineLf("    tags:"); foreach (var tag in m.Tags) sb.Append("      - ").AppendLineLf(Q(tag)); }
+                if (m.Properties.Count > 0)
+                {
+                    sb.AppendLineLf("    properties:");
+                    foreach (var p in m.Properties) { sb.Append("      - key: ").AppendLineLf(Q(p.Key)); sb.Append("        type: ").AppendLineLf(Q(p.Type)); sb.Append("        value: ").AppendLineLf(Q(p.Value)); }
+                }
+            }
+        }
         if (f.Excluded.Count > 0) sb.AppendLineLf("excluded:");
         foreach (var x in f.Excluded)
         {
@@ -346,8 +380,8 @@ public static class LoadsDocument
         return sb.ToString();
     }
 
-    private static readonly string[] TopKeys = ["loads_file", "loads", "dependencies", "excluded"];
-    private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads", "dependencies"];
+    private static readonly string[] TopKeys = ["loads_file", "loads", "dependencies", "models", "excluded"];
+    private static readonly string[] HeaderKeys = ["hash", "connection", "project_hash", "loads", "dependencies", "models"];
     private static readonly string[] EntryKeys = ["hash", "model", "load", "strategy", "default", "file", "file_hash", "resolver_file", "resolver_hash", "definition_hash", "shape_hash", "on_null", "initial", "max_runtime", "inputs", "before", "after", "copy"];
     private static readonly string[] HookKeys = ["name", "event", "file", "file_hash", "effect", "risk"];
 
@@ -429,7 +463,28 @@ public static class LoadsDocument
         }
         else if (top.Get("dependencies") is { } stray) r.Bad(stray, "`dependencies:` is listed but the header does not carry them.");
 
-        var result = new LoadsFile(r.Req(header, "connection"), r.Req(header, "project_hash"), loads, excluded, dependencies);
+        // the facts selectors read: the header says whether the file carries them (and for how many models), so a file compiled before there were any reads as having none
+        List<ModelFacts>? facts = null;
+        if (header.Get("models") != null)
+        {
+            facts = [];
+            List<string> Strings(YamlMapping owner, string key) => (owner.Get(key) as YamlSequence)?.Items.OfType<YamlScalar>().Select(x => x.Value).ToList() ?? [];
+            foreach (var m in r.Maps(top, "models", "model"))
+            {
+                r.Keys(m, ["name", "kind", "file", "query_file", "connections", "tags", "properties"], "a model");
+                var properties = new List<ModelFactProperty>();
+                foreach (var pm in r.Maps(m, "properties", "property")) { r.Keys(pm, ["key", "type", "value"], "a property"); properties.Add(new(r.Req(pm, "key"), r.Req(pm, "type"), r.Req(pm, "value"))); }
+                facts.Add(new(r.Req(m, "name"), r.Req(m, "kind"), Strings(m, "connections"), Strings(m, "tags"), properties, r.Req(m, "file"), r.S(m, "query_file")));
+            }
+            if (int.TryParse(r.S(header, "models"), NumberStyles.None, CultureInfo.InvariantCulture, out var modelCount) ? modelCount != facts.Count : true)
+                r.Bad(header, "The count of `models` in the header is not the number of models listed.");
+            var loadedNames = loads.Select(l => l.Model).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+            if (!facts.Select(f => f.Name).Order(StringComparer.Ordinal).SequenceEqual(loadedNames))
+                r.Bad(top, "The `models:` section must list exactly the models the file loads.");
+        }
+        else if (top.Get("models") is { } strayModels) r.Bad(strayModels, "`models:` is listed but the header does not carry them.");
+
+        var result = new LoadsFile(r.Req(header, "connection"), r.Req(header, "project_hash"), loads, excluded, dependencies, facts);
         if (diags.Count > before) return null;
         var storedHash = r.S(header, "hash");
         if (storedHash == null) { r.Bad(header, "The loads file has no content hash."); return null; }

@@ -254,7 +254,7 @@ Parked on purpose: user-defined reload strategies and inputs of any type (includ
 * The metadata documents and `object_info` do not carry the plans; `refresh.plans` at connection level is refused by the loader though `config.schema.json` shares one definition for both levels.
 * Decision made, for the owner to confirm: membership names are unique per model inside a plan (two models may both have an `incremental` member); the implicit `default` membership of a load that needs a person is left out with a reason instead of failing the compile; a bare word that looks like a plan name is always read as the plan.
 * Not verified: Fabric (layout 7 DDL is generated for it and has never run; the upgrade is refused there); the terminal interface and the web page were not driven for the new arguments (covered by the tool-surface and form-model tests).
-* **The graph in `loads.yml` (entry 166).** Shown by `project show refresh` since entry 170; a selection with `tag:`, `property:`, `path:`, `connection:` or `changed:` still loads the project; the graph is the union over a model's per-connection query variants.
+* **The graph in `loads.yml` (entry 166).** Shown by `project show refresh` since entry 170; the facts selectors read are in `loads.yml` since entry 171, so only `changed:` (and any term, for a file compiled before) loads the project; the graph is the union over a model's per-connection query variants.
 
 ## V. Read-only origins: ODBC, Flight SQL, DuckDB, dialects (designed 2026-10-14, `docs/research/read-origins.md`; steps 1 to 6 built, entries 157 to 162)
 

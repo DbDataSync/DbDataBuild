@@ -145,7 +145,7 @@ internal static class RefreshCommand
                 error.Diag(new Diagnostic(DiagnosticCatalog.PlanFileInvalid, new(planRelative, 0, 0), $"The refresh plan is for `{plan.Name}` on `{plan.Connection}`, not `{planName}` on `{connection.Name}`."));
                 return CliApp.ExitFindings;
             }
-            var selected = Select(plan, rest, root, error, LoadGraph.Of(loadsFile));
+            var selected = Select(plan, rest, root, error, loadsFile);
             if (selected == null) return CliApp.ExitUsage;
             planHash = plan.Hash;
             selection = string.Join(' ', rest);
@@ -377,106 +377,47 @@ internal static class RefreshCommand
         return (1, $"parallel: 1 (the loads file has no dependency graph, as one compiled by an older version has none; loads run in plan order; `project compile` writes it); {parallel} was asked for");
     }
 
-    /// <summary>The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; a pattern with `*` or `?` chooses models by name; anything else is the model selector grammar of the other commands.</summary>
-    internal static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error, LoadGraph? graph = null)
+    /// <summary>
+    /// The members of a plan the selectors choose, by their `model.member` names. No selector chooses all. `load:name` chooses by the load's name; anything else is the model selector grammar of every command (<see cref="ModelSelection"/>:
+    /// names and patterns, files, `+model`, `kind:`, `tag:`, `property:`, `connection:`, `path:`, `exclude:`). When the loads file carries the facts the grammar reads and its dependency graph (entry 171), the grammar runs over them and the
+    /// project's files are not read; only `changed:` needs the working tree (and its revision history), and a file compiled before the facts were carried needs the project for every term.
+    /// </summary>
+    internal static HashSet<string>? Select(RefreshPlanFile plan, List<string> selectors, string root, TextWriter error, LoadsFile? loads = null)
     {
         var all = plan.Members.Select(m => m.FullName).ToHashSet(StringComparer.Ordinal);
         if (selectors.Count == 0) return all;
-        var loadTerms = new List<string>(); var notLoad = new List<string>(); var globs = new List<string>(); var modelTerms = new List<string>();
+        var loadTerms = new List<string>(); var notLoad = new List<string>(); var modelTerms = new List<string>();
         foreach (var s in selectors)
         {
             if (s.StartsWith("load:", StringComparison.Ordinal)) loadTerms.Add(s[5..]);
             else if (s.StartsWith("exclude:load:", StringComparison.Ordinal)) notLoad.Add(s[13..]);
-            else if (s.Any(c => c is '*' or '?') && s != "*" && !s.Contains(':')) globs.Add(s);
             else modelTerms.Add(s);
         }
         HashSet<string>? models = null;                                                    // null: every model
-        var positives = modelTerms.Where(t => !t.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
-        var excludes = modelTerms.Where(t => t.StartsWith("exclude:", StringComparison.Ordinal)).ToList();
-        if (positives.Count > 0 || excludes.Count > 0)
+        if (modelTerms.Count > 0)
         {
-            // terms the graph in the loads file can answer (a loaded model's name with the graph operators, `kind:`, `all`) are answered from it, so the project is not read; any other term (`tag:`, `property:`,
-            // `path:`, `connection:`, `changed:`, a file or a directory, a model that is not loaded) needs the project's settings or git, and the project is loaded for the whole selection
-            var fromGraph = graph == null ? null : SelectFromGraph(graph, positives, excludes);
-            ProjectContext? ctx = null;
-            if (positives.Count > 0)
+            var graph = loads == null ? null : LoadGraph.Of(loads);
+            List<string>? names;
+            if (loads?.Models != null && graph != null && !modelTerms.Any(NeedsTheProject))
             {
-                HashSet<string>? picked;
-                if (fromGraph != null) picked = fromGraph.Picked;
-                else
-                {
-                    ctx = ProjectContext.Load(root);
-                    var chosen = ctx.Select(positives, error);
-                    picked = chosen?.Select(p => p.Model.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                }
-                if (picked == null) return null;
-                models = picked;
+                var facts = loads.Models.Select(f => f.ToProjectModel()).ToList();
+                var host = new SelectionHost(facts.SelectMany(f => f.Connections).Distinct(StringComparer.Ordinal).ToList()) { Scope = "the models this loads file loads" };
+                names = new ModelSelection(facts, graph, host).Select(modelTerms, error);
             }
-            if (globs.Count > 0) models = [.. models ?? [], .. GlobModels(plan, globs)];
-            if (excludes.Count > 0)
-            {
-                HashSet<string>? keptNames;
-                if (fromGraph != null) keptNames = fromGraph.Kept;
-                else
-                {
-                    ctx ??= ProjectContext.Load(root);
-                    var kept = ctx.Select(excludes, error);
-                    keptNames = kept?.Select(p => p.Model.Definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                }
-                if (keptNames == null) return null;
-                models = models == null ? keptNames : models.Where(keptNames.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            }
+            else names = ProjectContext.Load(root).SelectModels(modelTerms, error)?.Select(m => m.Name).ToList();
+            if (names == null) return null;
+            models = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
-        else if (globs.Count > 0) models = GlobModels(plan, globs);
         var result = new HashSet<string>(StringComparer.Ordinal);
         foreach (var m in plan.Members)
             if ((models == null || models.Contains(m.Model)) && (loadTerms.Count == 0 || loadTerms.Contains(m.Load)) && !notLoad.Contains(m.Load)) result.Add(m.FullName);
         return result;
     }
 
-    /// <summary>The models the positive terms pick and the models the `exclude:` terms leave, from the graph alone.</summary>
-    private sealed record GraphSelection(HashSet<string>? Picked, HashSet<string>? Kept);
-
-    /// <summary>
-    /// The selection answered from the loads file's graph, or null when a term needs more than it holds (see the caller). A term is a loaded model's name or `all`/`*` or `kind:`, with the graph operators, joined by commas
-    /// into an intersection as the model selector grammar has it; the same grammar and the same result as <see cref="ProjectContext.Select"/> gives for the loaded models.
-    /// </summary>
-    private static GraphSelection? SelectFromGraph(LoadGraph graph, List<string> positives, List<string> excludes)
-    {
-        HashSet<string>? Evaluate(string argument)
-        {
-            HashSet<string>? result = null;
-            foreach (var part in argument.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var term = ModelSelector.Parse(part);
-                List<string> core;
-                if (term.Core is "all" or "*") core = graph.Models.ToList();
-                else if (term.Core.StartsWith("kind:", StringComparison.Ordinal)) core = graph.Models.Where(m => string.Equals(graph.KindOf(m), term.Core[5..], StringComparison.OrdinalIgnoreCase)).ToList();
-                else if (graph.Has(term.Core)) core = [term.Core];
-                else return null;
-                if (core.Count == 0) return null;                                                      // "selects no model" is said by the project's selector
-                var set = term is { Upstream: false, Downstream: false, At: false } ? new HashSet<string>(core, StringComparer.OrdinalIgnoreCase) : graph.Expand(term, core);
-                if (result == null) result = set; else result.IntersectWith(set);
-            }
-            return result ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        }
-        HashSet<string>? picked = null, kept = null;
-        if (positives.Count > 0)
-        {
-            picked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var arg in positives) { var one = Evaluate(arg); if (one == null) return null; picked.UnionWith(one); }
-        }
-        if (excludes.Count > 0)
-        {
-            var left = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var arg in excludes) { var one = Evaluate(arg["exclude:".Length..]); if (one == null) return null; left.UnionWith(one); }
-            kept = graph.Models.Where(m => !left.Contains(m)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        }
-        return new GraphSelection(picked, kept);
-    }
-
-    private static HashSet<string> GlobModels(RefreshPlanFile plan, List<string> globs) =>
-        plan.Members.Select(m => m.Model).Distinct().Where(n => globs.Any(g => Regex.IsMatch(n, "^" + Regex.Escape(g).Replace("\\*", ".*").Replace("\\?", ".") + "$", RegexOptions.IgnoreCase))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    /// <summary>True for the one kind of term the loads file cannot answer: `changed:` reads the working tree.</summary>
+    private static bool NeedsTheProject(string argument) =>
+        (argument.StartsWith("exclude:", StringComparison.Ordinal) ? argument["exclude:".Length..] : argument)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(part => ModelSelector.Parse(part).Core.StartsWith("changed:", StringComparison.Ordinal));
 
     /// <summary>
     /// The value each input of each load runs with, and its source, strongest first: a `--input` flag, the membership's value, the project's parameter, and (found when the load runs) the resolver, then `initial`. An override
