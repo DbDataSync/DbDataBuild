@@ -312,6 +312,7 @@ public sealed class PlanLowerer
             {
                 // a branch chosen by a condition that is constant (a macro's `CASE WHEN col IS NULL ...` over a column name or NULL given as an argument) is the query for that argument: only the
                 // chosen branch is written, so nothing is left for the engine to decide
+                if (IsAnyAllGuard(e)) throw new LoweringException("a subquery comparison (ANY or ALL) in the form DuckDB 2.0 plans it (a CASE over the count and the min or max of the subquery); only 1.x's form is lowered so far");
                 if (FoldConstantCase(e, outs) is { } folded) return folded;
                 var sb = new StringBuilder("CASE ");
                 var checks = Arr(e, "case_checks").ToList();
@@ -327,6 +328,18 @@ public sealed class PlanLowerer
         if (Comparisons.TryGetValue(t, out var op)) return Compare(e.GetProperty("left"), Expr(e.GetProperty("left"), outs), op, e.GetProperty("right"), Expr(e.GetProperty("right"), outs));
         if (t.StartsWith("WINDOW_", StringComparison.Ordinal)) return Window(e, outs);
         throw new LoweringException($"expression kind {t}");
+    }
+
+    /// <summary>
+    /// `CASE WHEN count IS NULL THEN FALSE ELSE CASE WHEN count = 0 THEN FALSE ELSE ...`: how DuckDB 2.0 writes `x op ANY (S)` for an uncorrelated S, over a one-row aggregate of S (min or max, count(*), count(x)).
+    /// A boolean CASE is not an expression SQL Server can use as a condition, so it is refused rather than written.
+    /// </summary>
+    private static bool IsAnyAllGuard(JsonElement e)
+    {
+        static bool FalseConstant(JsonElement x) => Str(x, "type") == "VALUE_CONSTANT" && x.GetProperty("value").TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.False;
+        if (Arr(e, "case_checks").ToList() is not [{ } first] || Str(first.GetProperty("when_expr"), "type") != "OPERATOR_IS_NULL" || !FalseConstant(first.GetProperty("then_expr"))) return false;
+        return e.TryGetProperty("else_expr", out var rest) && Str(rest, "type") == "CASE_EXPR" && Arr(rest, "case_checks").ToList() is [{ } second] && FalseConstant(second.GetProperty("then_expr")) &&
+               Str(second.GetProperty("when_expr"), "type") == "COMPARE_EQUAL";
     }
 
     /// <summary>
