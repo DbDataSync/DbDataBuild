@@ -1132,7 +1132,12 @@ public sealed class PlanLowerer
                 var joinType = joinKind switch { "INNER" => "JOIN", "LEFT" => "LEFT JOIN", "RIGHT" => "RIGHT JOIN", "OUTER" or "FULL" => "FULL JOIN", var other => throw new LoweringException($"the join type {other}") };
                 if (p.TryGetProperty("expression", out _)) throw new LoweringException("a join with an extra expression");
                 var lo = l.Outs(); var ro = r.Outs();
-                var conditions = Arr(p, "conditions").Select(c => Compare(c.GetProperty("left"), Expr(c.GetProperty("left"), lo), Comparisons[Str(c, "comparison")!], c.GetProperty("right"), Expr(c.GetProperty("right"), ro)));
+                // 2.0 also lists, among the conditions, a predicate that is not a comparison of the two sides (the OR of `ON a.k = b.k AND (b.to IS NULL OR a.d <= b.to)`): it has only a `left`, over the columns of both sides
+                var both = lo.Concat(ro).ToList();
+                var conditions = Arr(p, "conditions").Where(c => c.TryGetProperty("right", out _)).Select(c => Compare(c.GetProperty("left"), Expr(c.GetProperty("left"), lo), Comparisons[Str(c, "comparison")!], c.GetProperty("right"), Expr(c.GetProperty("right"), ro))).ToList();
+                var predicates = Arr(p, "conditions").Where(c => !c.TryGetProperty("right", out _)).Select(c => Expr(c.GetProperty("left"), both)).ToList();
+                if (joinKind == "INNER") { rel.Where.AddRange(predicates); if (conditions.Count == 0 && filled.Count == 0) { rel.Frm = $"{l.Frm}\nCROSS JOIN {r.Frm}"; return rel; } }
+                else conditions.AddRange(predicates);
                 rel.Frm = $"{l.Frm}\n{joinType} {r.Frm}\n  ON {string.Join(" AND ", conditions.Concat(filled))}";
                 return rel;
             }
@@ -1289,8 +1294,14 @@ public sealed class PlanLowerer
     /// </summary>
     private Rel FinishDelimJoin(JsonElement p, Rel left, IReadOnlyList<string> lo, Rel right, string? joinTypeOverride = null)
     {
+        RequireComparisons(p);
         var joinType = joinTypeOverride ?? Str(p, "join_type")!;
         left = MapLeft(p, left);
+        // DuckDB 2.0 hands a scalar subquery that is an ungrouped aggregate over as a LEFT join (1.x: SINGLE), with any expression over it above the join; an aggregate without groups returns one row, so
+        // the two are the same. (A LEFT JOIN LATERAL written by the author over such an aggregate reads as scalar subqueries too: the same rows.)
+        if (joinType == "LEFT" && right.HasAgg && right.Group.Count == 0 && right.Having.Count == 0 && !right.HasWindow && right.SetOp == null && !right.Distinct && right.Limit == null && right.Offset == null &&
+            !Arr(p, "conditions").Any(c => Str(c, "comparison") != "COMPARE_NOT_DISTINCT_FROM"))
+            joinType = "SINGLE";
         if (right.SetOp != null) throw new LoweringException("a correlated subquery over a set operation (UNION, INTERSECT, EXCEPT)");
         var ro = right.Outs();
         // conditions that tie a duplicate-eliminated column to its carried copy on the right are plumbing; any other condition is the comparison of an IN
@@ -1443,7 +1454,7 @@ public sealed class PlanLowerer
         var keys = new List<(int, string)>();
         foreach (var c in Arr(p, "conditions"))
         {
-            var r = c.GetProperty("right");
+            if (!c.TryGetProperty("right", out var r)) return null;
             if (Str(c, "comparison") != "COMPARE_NOT_DISTINCT_FROM" || Str(r, "type") != "BOUND_REF") return null;
             keys.Add((r.GetProperty("index").GetInt32(), Requalify(Expr(c.GetProperty("left"), lo))));
         }
@@ -1604,8 +1615,15 @@ public sealed class PlanLowerer
     /// the subquery's WHERE as predicates on the outer columns. The null-safe equality (NOT DISTINCT FROM) DuckDB uses for a correlated `=` is written as `=` again when the
     /// subquery side already filters that column to not NULL, which is exactly what makes the two the same.
     /// </summary>
+    private static void RequireComparisons(JsonElement p)
+    {
+        if (p.TryGetProperty("conditions", out var cs) && cs.ValueKind == JsonValueKind.Array && cs.EnumerateArray().Any(c => !c.TryGetProperty("right", out _)))
+            throw new LoweringException("a correlated join condition that is not a comparison of its two sides");
+    }
+
     private Rel MarkJoin(JsonElement p, List<JsonElement> kids)
     {
+        RequireComparisons(p);
         var left = Node(kids[0]);
         if (!left.Mergeable() || left.HasWindow) left = Wrap(left);
         var right = Node(kids[1]);
@@ -1758,11 +1776,21 @@ public sealed class PlanLowerer
     /// <summary>A join where one side is the duplicate-eliminated outer values: those are not a table here, they are the outer query, so the join disappears.</summary>
     private Rel JoinWithDelim(JsonElement p, string type, Rel l, Rel r)
     {
+        RequireComparisons(p);
         var other = l.IsDelim ? r : l;
         if (l.IsDelim && r.IsDelim) throw new LoweringException("a join of two sets of correlated values");
         if (type == "LOGICAL_COMPARISON_JOIN")
         {
             var jt = Str(p, "join_type");
+            if (jt == "SEMI" && r.IsDelim && !l.IsDelim && !l.HasAgg && l.Mergeable() && p.TryGetProperty("conditions", out _) && Arr(p, "conditions").All(c => Str(c, "comparison") == "COMPARE_EQUAL"))
+            {
+                // DuckDB 2.0 keeps the rows of a subquery whose key is among the outer values (a SEMI join against them) before grouping by the key. For each outer row that is the equality with its value,
+                // which the keyed join above puts back; here the key is only known to be a value, not NULL (an `IS NOT NULL` that the keyed join turns into the equality).
+                var semi = l.Clone();
+                var lOuts = l.Outs();
+                foreach (var c in Arr(p, "conditions")) semi.Where.Add($"({Expr(c.GetProperty("left"), lOuts)} IS NOT NULL)");
+                return semi;
+            }
             if (jt is not ("INNER" or "LEFT") || (jt == "LEFT" && !l.IsDelim)) throw new LoweringException($"the correlated join type {jt}");
             var lo = l.Outs();
             // DuckDB 2.0 joins the outer values to a subquery that is keyed by them (`delim.a IS NOT DISTINCT FROM g.a` over a group by `a`) instead of filtering inside it: the key goes back inside
