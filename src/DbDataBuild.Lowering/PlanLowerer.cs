@@ -448,9 +448,10 @@ public sealed class PlanLowerer
         {
             var v = child.GetProperty("value");
             var lit = v.GetProperty("type").GetProperty("id").GetString()!;
-            if (lit == to && to is "VARCHAR" or "INTEGER" or "BIGINT" or "SMALLINT" or "BOOLEAN" or "DOUBLE") return Literal(v);
+            // (in a VALUES cell only the types whose bare literal the engines type the same way: SQL Server types 7 as INT, 2147483648 as NUMERIC, TRUE as 1 and 1.5 as NUMERIC)
+            if (lit == to && (to is "VARCHAR" or "INTEGER" || (!exactCasts && to is "BIGINT" or "SMALLINT" or "BOOLEAN" or "DOUBLE"))) return Literal(v);
             if (!exactCasts && lit is "INTEGER" or "BIGINT" or "SMALLINT" && to is "INTEGER" or "BIGINT" or "SMALLINT" or "DECIMAL" or "DOUBLE" or "HUGEINT") return Literal(v);
-            if (lit == "VARCHAR" && to == "BOOLEAN" && v.GetProperty("value").GetString() is "t" or "f" or "true" or "false") return v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE";
+            if (lit == "VARCHAR" && to == "BOOLEAN" && v.GetProperty("value").GetString() is "t" or "f" or "true" or "false") return exactCasts ? $"CAST({(v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE")} AS BOOLEAN)" : v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE";
             if (lit == "VARCHAR" && to is "DATE" or "TIMESTAMP" or "TIME") return $"{to} {Literal(v)}";
         }
         var fn = e.TryGetProperty("try_cast", out var tc) && tc.ValueKind == JsonValueKind.True ? "TRY_CAST" : "CAST";
@@ -480,7 +481,9 @@ public sealed class PlanLowerer
             inner = $"round(CAST({inner} AS DOUBLE), {decimalScale.GetInt32()})";
             rules.Add("double-to-decimal");
         }
-        return $"{fn}({inner} AS {TypeName(e.GetProperty("return_type"))})";
+        // (a FLOAT cell is written REAL in a VALUES list: the polyglot reader takes FLOAT for the 8-byte type, which SQL Server then makes of it, where DuckDB's is the 4-byte one)
+        var toType = TypeName(e.GetProperty("return_type"));
+        return $"{fn}({inner} AS {(exactCasts && toType == "FLOAT" ? "REAL" : toType)})";
     }
 
     private string Function(JsonElement e, IReadOnlyList<string> outs)
@@ -1028,7 +1031,7 @@ public sealed class PlanLowerer
             foreach (var row in rows)
             {
                 if (row.Any(c => ContainsReference(c))) throw new LoweringException("a VALUES list that reads a column of another table (a lateral list)");
-                lines.Add("(" + string.Join(", ", row.Select(c => Expr(c, []))) + ")");
+                lines.Add("(" + string.Join(", ", row.Select((c, j) => ValuesCell(c, TypeName(types[j])))) + ")");
             }
         }
         finally { exactCasts = saved; }
@@ -1041,6 +1044,22 @@ public sealed class PlanLowerer
             Sel = names.Select((n, j) => new Item(Token(alias, n), n, TypeName(types[j]))).ToList(),
         };
     }
+
+    /// <summary>
+    /// One cell, lowered like any expression and given the column's type: a constant that is not already a cast (and not one of the two whose bare literal has the type on every engine) is cast to it, and a boolean
+    /// expression is written as a CASE with a cast to BOOLEAN, because SQL Server has no boolean values and its transpile only rewrites a condition that stands in a select list, not in a VALUES row.
+    /// </summary>
+    private string ValuesCell(JsonElement cell, string type)
+    {
+        var text = Expr(cell, []);
+        if (IsConstant(cell)) return Str(cell, "type") == "VALUE_CONSTANT" && (IsNullConstant(cell) || type is not ("VARCHAR" or "INTEGER" or "DECIMAL" or "DATE" or "TIMESTAMP")) ? $"CAST({text} AS {(type == "FLOAT" ? "REAL" : type)})" : text;
+        return type == "BOOLEAN" ? $"CAST(CASE WHEN {text} THEN TRUE WHEN NOT {text} THEN FALSE END AS BOOLEAN)" : text;
+    }
+
+    private static bool IsNullConstant(JsonElement e) => e.GetProperty("value").TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True;
+
+    /// <summary>A constant or a cast of one.</summary>
+    private static bool IsConstant(JsonElement e) => Str(e, "type") switch { "VALUE_CONSTANT" => true, "OPERATOR_CAST" => IsConstant(e.GetProperty("child")), _ => false };
 
     private static bool ContainsReference(JsonElement e) =>
         e.ValueKind switch

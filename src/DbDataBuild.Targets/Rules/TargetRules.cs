@@ -48,6 +48,7 @@ public static partial class TargetRules
     public const string HyperbolicFunctionsRule = FunctionTemplates.HyperbolicFunctions;
     public const string IntervalAsDateAdd = "interval-dateadd";
     public const string ValuesInChunks = "values-chunks";
+    public const string ValuesAsSelects = "values-selects";
 
     /// <summary>SQL Server (and Fabric, which follows it) takes at most 1000 row value expressions in one VALUES constructor (error 10738).</summary>
     public const int ValuesRowLimit = 1000;
@@ -118,8 +119,8 @@ public static partial class TargetRules
 
     private static HashSet<string> BaseRules(string target, int? version) => target switch
     {
-        "sqlserver" => [ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "sqlserver" => [ValuesAsSelects, ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [ValuesAsSelects, ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
         "postgres" => [CovarianceExact, NormalizedIntervalStrip, AgeSecond, LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
@@ -308,6 +309,9 @@ public static partial class TargetRules
                     },
                 };
             }
+            case "subquery" when rules.Contains(ValuesAsSelects) && ValuesAsSelectsOf(body):
+                fired.Add(ValuesAsSelects);
+                return o;
             case "subquery" when rules.Contains(ValuesInChunks) && ValuesInChunksOf(body):
                 fired.Add(ValuesInChunks);
                 return o;
@@ -699,10 +703,7 @@ public static partial class TargetRules
     private static bool ValuesInChunksOf(JsonObject subquery)
     {
         if (subquery["this"] is not JsonObject { Count: 1 } inner || inner["values"] is not JsonObject values || values["expressions"] is not JsonArray rows || rows.Count <= ValuesRowLimit) return false;
-        if (subquery["column_aliases"] is not JsonArray { Count: > 0 } aliases) return false;
-        var names = aliases.Select(a => a?["name"]?.GetValue<string>()).ToList();
-        if (names.Any(n => n is null)) return false;
-        var list = string.Join(", ", names.Select(n => System.Text.RegularExpressions.Regex.IsMatch(n!, "^[a-z_][a-z0-9_]*$") ? n! : "\"" + n!.Replace("\"", "\"\"") + "\""));
+        if (ColumnList(subquery) is not { } list) return false;
         var parsed = Polyglot.Parse($"SELECT {list} FROM (VALUES (1)) AS ddb_chunk({list})", Dialects.Canonical);
         if (!parsed.Ok) throw new InvalidOperationException($"The VALUES chunk template does not parse: {parsed.Error}. This is a tool bug.");
         var template = JsonNode.Parse(parsed.Data!)![0]!["select"]!;
@@ -712,6 +713,53 @@ public static partial class TargetRules
             var select = template.DeepClone();
             var chunkValues = select["from"]!["expressions"]![0]!["subquery"]!["this"]!["values"]!;
             chunkValues["expressions"] = new JsonArray(chunk.Select(r => r!.DeepClone()).ToArray());
+            var branch = new JsonObject { ["select"] = select };
+            chain = chain is null ? branch : new JsonObject
+            {
+                ["union"] = new JsonObject
+                {
+                    ["left"] = chain, ["right"] = branch, ["all"] = true, ["distinct"] = false, ["with"] = null, ["order_by"] = null, ["limit"] = null, ["offset"] = null,
+                    ["by_name"] = false, ["corresponding"] = false, ["strict"] = false,
+                },
+            };
+        }
+        subquery["this"] = chain;
+        return true;
+    }
+
+    /// <summary>The column names of `(VALUES ...) AS t(a, b)` as a list of identifiers, or null when the list has none.</summary>
+    private static string? ColumnList(JsonObject subquery)
+    {
+        if (subquery["column_aliases"] is not JsonArray { Count: > 0 } aliases) return null;
+        var names = aliases.Select(a => a?["name"]?.GetValue<string>()).ToList();
+        return names.Any(n => n is null) ? null : string.Join(", ", names.Select(n => System.Text.RegularExpressions.Regex.IsMatch(n!, "^[a-z_][a-z0-9_]*$") ? n! : "\"" + n!.Replace("\"", "\"\"") + "\""));
+    }
+
+    private static bool Contains(JsonNode? node, string key) => node switch
+    {
+        JsonObject o => o.Any(p => p.Key == key || Contains(p.Value, key)),
+        JsonArray a => a.Any(i => Contains(i, key)),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A VALUES row whose cell still holds an interval after the other rules (a date plus an interval, a date plus a number of days) is written as a SELECT per row joined by UNION ALL. The transpile turns
+    /// `date + INTERVAL n UNIT` into DATEADD only in a select list, never inside a VALUES row, so the cell would reach SQL Server as text it does not parse.
+    /// </summary>
+    private static bool ValuesAsSelectsOf(JsonObject subquery)
+    {
+        if (subquery["this"] is not JsonObject { Count: 1 } inner || inner["values"] is not JsonObject values || values["expressions"] is not JsonArray rows || !Contains(rows, "interval")) return false;
+        if (ColumnList(subquery) is not { } list) return false;
+        var count = list.Split(", ").Length;
+        var parsed = Polyglot.Parse("SELECT " + string.Join(", ", Enumerable.Range(0, count).Select(i => $"1 AS ddb_c{i}")), Dialects.Canonical);
+        if (!parsed.Ok) throw new InvalidOperationException($"The VALUES row template does not parse: {parsed.Error}. This is a tool bug.");
+        var template = JsonNode.Parse(parsed.Data!)![0]!["select"]!;
+        JsonNode? chain = null;
+        foreach (var row in rows)
+        {
+            if (row?["expressions"] is not JsonArray { } cells || cells.Count != count) return false;
+            var select = template.DeepClone();
+            for (var j = 0; j < count; j++) select["expressions"]![j]!["alias"]!["this"] = cells[j]!.DeepClone();
             var branch = new JsonObject { ["select"] = select };
             chain = chain is null ? branch : new JsonObject
             {

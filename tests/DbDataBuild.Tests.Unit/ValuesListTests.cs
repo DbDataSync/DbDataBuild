@@ -62,9 +62,9 @@ public class ValuesListTests
     [InlineData("SELECT * FROM (VALUES (1, 2.5), (2, 3), (NULL, 1 + 1)) AS v(a, b)",
         "SELECT col0 AS a, col1 AS b\nFROM (VALUES\n  (1, CAST(2.5 AS DECIMAL(11, 1))),\n  (2, CAST(3 AS DECIMAL(11, 1))),\n  (CAST(NULL AS INTEGER), CAST((1 + 1) AS DECIMAL(11, 1)))\n) AS vals(col0, col1)")]
     [InlineData("SELECT * FROM (VALUES (DATE '2024-01-01', TIMESTAMP '2024-01-01 10:00:00.5', true), (NULL, NULL, NULL)) AS v(d, ts, b)",
-        "SELECT col0 AS d, col1 AS ts, col2 AS b\nFROM (VALUES\n  (DATE '2024-01-01', TIMESTAMP '2024-01-01 10:00:00.5', TRUE),\n  (CAST(NULL AS DATE), CAST(NULL AS TIMESTAMP), CAST(NULL AS BOOLEAN))\n) AS vals(col0, col1, col2)")]
-    [InlineData("SELECT * FROM (VALUES (1, 2147483648)) AS v(a, b)", "SELECT col0 AS a, col1 AS b\nFROM (VALUES\n  (1, 2147483648)\n) AS vals(col0, col1)")]
-    [InlineData("SELECT * FROM (VALUES (1), (2147483648)) AS v(a)", "SELECT col0 AS a\nFROM (VALUES\n  (CAST(1 AS BIGINT)),\n  (2147483648)\n) AS vals(col0)")]
+        "SELECT col0 AS d, col1 AS ts, col2 AS b\nFROM (VALUES\n  (DATE '2024-01-01', TIMESTAMP '2024-01-01 10:00:00.5', CAST(TRUE AS BOOLEAN)),\n  (CAST(NULL AS DATE), CAST(NULL AS TIMESTAMP), CAST(NULL AS BOOLEAN))\n) AS vals(col0, col1, col2)")]
+    [InlineData("SELECT * FROM (VALUES (1, 2147483648)) AS v(a, b)", "SELECT col0 AS a, col1 AS b\nFROM (VALUES\n  (1, CAST(2147483648 AS BIGINT))\n) AS vals(col0, col1)")]
+    [InlineData("SELECT * FROM (VALUES (1), (2147483648)) AS v(a)", "SELECT col0 AS a\nFROM (VALUES\n  (CAST(1 AS BIGINT)),\n  (CAST(2147483648 AS BIGINT))\n) AS vals(col0)")]
     [InlineData("SELECT * FROM (VALUES (1 + 2, upper('a') || 'b')) AS v(a, b)", "SELECT col0 AS a, col1 AS b\nFROM (VALUES\n  ((1 + 2), (upper('a') || 'b'))\n) AS vals(col0, col1)")]
     public void A_VALUES_list_lowers_to_a_table_value_constructor_with_DuckDBs_column_types_and_names(string source, string expected)
     {
@@ -100,6 +100,12 @@ public class ValuesListTests
         "SELECT DISTINCT x FROM (VALUES (1), (1), (NULL), (NULL)) AS v(x)",
         "SELECT x FROM (VALUES (1), (2)) AS v(x) WHERE x > 1",
         "SELECT * FROM (SELECT * FROM (VALUES (1), (2)) AS v(x)) AS inner_q",
+        "SELECT * FROM (VALUES (1 = 1, 2 > 3), (NULL, 1 < 2), (1 IS NULL, NULL IS NULL)) AS v(a, b)",
+        "SELECT * FROM (VALUES (true), (1 = 1), (NULL)) AS v(a)",
+        "SELECT * FROM (VALUES (CAST(1.1 AS FLOAT)), (CAST(2 AS FLOAT))) AS v(a)",
+        "SELECT * FROM (VALUES (1.5e0), (2), (-1e10), (NULL)) AS v(a)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' + INTERVAL 1 MONTH, 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + 3), (DATE '2024-02-28' + 2)) AS v(d)",
     };
 
     [Theory]
@@ -118,7 +124,7 @@ public class ValuesListTests
     [Theory]
     [InlineData("SELECT * FROM (VALUES (1, 'a'), (2, NULL)) AS v(id, s)", "FROM (VALUES (1, 'a'), (2, CAST(NULL AS VARCHAR))) AS vals(col0, col1)")]
     [InlineData("SELECT * FROM (VALUES (1, 2.5), (2, 3)) AS v(a, b)", "(VALUES (1, CAST(2.5 AS DECIMAL(11, 1))), (2, CAST(3 AS DECIMAL(11, 1))))")]
-    [InlineData("SELECT * FROM (VALUES (DATE '2024-01-01', true), (NULL, NULL)) AS v(d, b)", "(VALUES (CAST('2024-01-01' AS DATE), TRUE), (CAST(NULL AS DATE), CAST(NULL AS BOOLEAN)))")]
+    [InlineData("SELECT * FROM (VALUES (DATE '2024-01-01', true), (NULL, NULL)) AS v(d, b)", "(VALUES (CAST('2024-01-01' AS DATE), CAST(TRUE AS BOOLEAN)), (CAST(NULL AS DATE), CAST(NULL AS BOOLEAN)))")]
     public void Each_target_gets_the_constructor_with_the_cells_typed(string source, string expected)
     {
         using var c = Open();
@@ -220,5 +226,45 @@ public class ValuesListTests
         using var c = Open();
         var ex = Assert.Throws<LoweringException>(() => Lower(c, source));
         Assert.Contains(named, ex.Message);
+    }
+
+    [Fact]
+    public void A_boolean_expression_in_a_cell_is_a_CASE_with_a_cast_so_SQL_Server_can_hold_it()
+    {
+        using var c = Open();
+        var lowered = Lower(c, "SELECT * FROM (VALUES (1 = 1), (NULL)) AS v(a)");
+        Assert.Contains("CAST(CASE WHEN (1 = 1) THEN TRUE WHEN NOT (1 = 1) THEN FALSE END AS BOOLEAN)", lowered);
+        Assert.Contains("CAST(CASE WHEN (1 = 1) THEN 1 WHEN NOT (1 = 1) THEN 0 END AS BIT)", Render(lowered, "sqlserver"));
+    }
+
+    [Fact]
+    public void A_float_cell_is_REAL_so_SQL_Server_keeps_four_bytes_as_DuckDB_does()
+    {
+        using var c = Open();
+        var lowered = Lower(c, "SELECT * FROM (VALUES (CAST(1.1 AS FLOAT)), (CAST(2 AS FLOAT))) AS v(a)");
+        Assert.Contains("CAST(1.1 AS REAL)", lowered);
+        Assert.Contains("REAL", Render(lowered, "sqlserver"));
+        Assert.DoesNotContain("FLOAT", Render(lowered, "sqlserver"));
+    }
+
+    [Fact]
+    public void A_cell_with_an_interval_makes_SQL_Server_a_SELECT_per_row_because_the_DATEADD_is_written_only_in_a_select_list()
+    {
+        using var c = Open();
+        var lowered = Lower(c, "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' + INTERVAL 1 MONTH, 2)) AS v(d, n)");
+        foreach (var target in new[] { "sqlserver", "fabric" })
+        {
+            Assert.Contains(TargetRules.ValuesAsSelects, TargetRules.Apply(lowered, target).Rules);
+            var text = Render(lowered, target);
+            Assert.Contains("DATEADD(MONTH, 1,", text);
+            Assert.DoesNotContain("INTERVAL", text);
+            Assert.Contains("UNION ALL", text);
+            Assert.DoesNotContain("VALUES", text);
+        }
+        Assert.Empty(TargetRules.Apply(lowered, "postgres").Rules);
+        Assert.Contains("(VALUES", Render(lowered, "postgres"));
+        // the select-per-row form is the same rows on DuckDB
+        var rewritten = TargetRules.Apply(lowered, "sqlserver").Sql;
+        Assert.Equal(Run(c, lowered).Rows, Run(c, rewritten).Rows);
     }
 }
