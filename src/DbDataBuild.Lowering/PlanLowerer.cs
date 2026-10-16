@@ -448,9 +448,10 @@ public sealed class PlanLowerer
         {
             var v = child.GetProperty("value");
             var lit = v.GetProperty("type").GetProperty("id").GetString()!;
-            if (lit == to && to is "VARCHAR" or "INTEGER" or "BIGINT" or "SMALLINT" or "BOOLEAN" or "DOUBLE") return Literal(v);
-            if (lit is "INTEGER" or "BIGINT" or "SMALLINT" && to is "INTEGER" or "BIGINT" or "SMALLINT" or "DECIMAL" or "DOUBLE" or "HUGEINT") return Literal(v);
-            if (lit == "VARCHAR" && to == "BOOLEAN" && v.GetProperty("value").GetString() is "t" or "f" or "true" or "false") return v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE";
+            // (in a VALUES cell only the types whose bare literal the engines type the same way: SQL Server types 7 as INT, 2147483648 as NUMERIC, TRUE as 1 and 1.5 as NUMERIC)
+            if (lit == to && (to is "VARCHAR" or "INTEGER" || (!exactCasts && to is "BIGINT" or "SMALLINT" or "BOOLEAN" or "DOUBLE"))) return Literal(v);
+            if (!exactCasts && lit is "INTEGER" or "BIGINT" or "SMALLINT" && to is "INTEGER" or "BIGINT" or "SMALLINT" or "DECIMAL" or "DOUBLE" or "HUGEINT") return Literal(v);
+            if (lit == "VARCHAR" && to == "BOOLEAN" && v.GetProperty("value").GetString() is "t" or "f" or "true" or "false") return exactCasts ? $"CAST({(v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE")} AS BOOLEAN)" : v.GetProperty("value").GetString() is "t" or "true" ? "TRUE" : "FALSE";
             if (lit == "VARCHAR" && to is "DATE" or "TIMESTAMP" or "TIME") return $"{to} {Literal(v)}";
         }
         var fn = e.TryGetProperty("try_cast", out var tc) && tc.ValueKind == JsonValueKind.True ? "TRY_CAST" : "CAST";
@@ -480,7 +481,9 @@ public sealed class PlanLowerer
             inner = $"round(CAST({inner} AS DOUBLE), {decimalScale.GetInt32()})";
             rules.Add("double-to-decimal");
         }
-        return $"{fn}({inner} AS {TypeName(e.GetProperty("return_type"))})";
+        // (a FLOAT cell is written REAL in a VALUES list: the polyglot reader takes FLOAT for the 8-byte type, which SQL Server then makes of it, where DuckDB's is the 4-byte one)
+        var toType = TypeName(e.GetProperty("return_type"));
+        return $"{fn}({inner} AS {(exactCasts && toType == "FLOAT" ? "REAL" : toType)})";
     }
 
     private string Function(JsonElement e, IReadOnlyList<string> outs)
@@ -996,6 +999,76 @@ public sealed class PlanLowerer
         return new Rel { Frm = from, Sources = [a, b], Plain = true, Sel = sel };
     }
 
+    /// <summary>
+    /// While a cell of a VALUES list is lowered, a cast of a constant keeps its cast unless the constant already has the type: the list gets its column types from the cells, so a literal
+    /// the binder widened to the column type (2 in a DECIMAL(11, 1) column) must not lose the widening that gives the column DuckDB's type on the engine.
+    /// </summary>
+    private bool exactCasts;
+
+    /// <summary>The types a VALUES column can have and an engine give back exactly: the others have no equal (TINYINT is unsigned on SQL Server, an unsigned or 128-bit integer, an interval, a zone, a list or a struct have none).</summary>
+    private static readonly HashSet<string> ValuesColumnTypes = ["BOOLEAN", "SMALLINT", "INTEGER", "BIGINT", "DECIMAL", "DOUBLE", "FLOAT", "VARCHAR", "DATE", "TIMESTAMP"];
+
+    /// <summary>
+    /// DuckDB's constant table (EXPRESSION_GET): `VALUES (...), (...)` inline or as `(VALUES ...) AS t(a, b)`. Every cell is already a cast to the column's type, so each cell is lowered like any expression and
+    /// the list is written as the engines' table value constructor (SQL Server takes 1000 rows in one, which a target rule splits). The columns are named col0, col1, ... as DuckDB names them.
+    /// </summary>
+    private Rel ValuesList(JsonElement p)
+    {
+        if (Arr(p, "children").Any(k => Str(k, "type") != "LOGICAL_DUMMY_SCAN")) throw new LoweringException("a VALUES list that reads a column of another table (a lateral list)");
+        var types = Arr(p, "expr_types").ToList();
+        for (var j = 0; j < types.Count; j++)
+        {
+            var id = types[j].GetProperty("id").GetString()!;
+            if (!ValuesColumnTypes.Contains(id)) throw new LoweringException($"a VALUES column of type {id} (the engines have no type that holds the same values; cast the cells to a type they have)");
+        }
+        var rows = p.GetProperty("expressions").EnumerateArray().Select(r => r.EnumerateArray().ToList()).ToList();
+        if (rows.Count == 0 || types.Count == 0 || rows.Any(r => r.Count != types.Count)) throw new LoweringException("a VALUES list without rows or with rows of different lengths");
+        var lines = new List<string>();
+        var saved = exactCasts;
+        exactCasts = true;
+        try
+        {
+            foreach (var row in rows)
+            {
+                if (row.Any(c => ContainsReference(c))) throw new LoweringException("a VALUES list that reads a column of another table (a lateral list)");
+                lines.Add("(" + string.Join(", ", row.Select((c, j) => ValuesCell(c, TypeName(types[j])))) + ")");
+            }
+        }
+        finally { exactCasts = saved; }
+        var alias = UniqueAlias("vals", "vals");
+        var names = Enumerable.Range(0, types.Count).Select(j => $"col{j}").ToList();
+        return new Rel
+        {
+            Frm = $"(VALUES\n{string.Join(",\n", lines.Select(l => "  " + l))}\n) AS {alias}({string.Join(", ", names)})",
+            Sources = [alias],
+            Sel = names.Select((n, j) => new Item(Token(alias, n), n, TypeName(types[j]))).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// One cell, lowered like any expression and given the column's type: a constant that is not already a cast (and not one of the two whose bare literal has the type on every engine) is cast to it, and a boolean
+    /// expression is written as a CASE with a cast to BOOLEAN, because SQL Server has no boolean values and its transpile only rewrites a condition that stands in a select list, not in a VALUES row.
+    /// </summary>
+    private string ValuesCell(JsonElement cell, string type)
+    {
+        var text = Expr(cell, []);
+        if (IsConstant(cell)) return Str(cell, "type") == "VALUE_CONSTANT" && (IsNullConstant(cell) || type is not ("VARCHAR" or "INTEGER" or "DECIMAL" or "DATE" or "TIMESTAMP")) ? $"CAST({text} AS {(type == "FLOAT" ? "REAL" : type)})" : text;
+        return type == "BOOLEAN" ? $"CAST(CASE WHEN {text} THEN TRUE WHEN NOT {text} THEN FALSE END AS BOOLEAN)" : text;
+    }
+
+    private static bool IsNullConstant(JsonElement e) => e.GetProperty("value").TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True;
+
+    /// <summary>A constant or a cast of one.</summary>
+    private static bool IsConstant(JsonElement e) => Str(e, "type") switch { "VALUE_CONSTANT" => true, "OPERATOR_CAST" => IsConstant(e.GetProperty("child")), _ => false };
+
+    private static bool ContainsReference(JsonElement e) =>
+        e.ValueKind switch
+        {
+            JsonValueKind.Object => (Str(e, "type") is "BOUND_REF" or "BOUND_COLUMN_REF" or "BOUND_SUBQUERY") || e.EnumerateObject().Any(x => ContainsReference(x.Value)),
+            JsonValueKind.Array => e.EnumerateArray().Any(ContainsReference),
+            _ => false,
+        };
+
     private static string UniqueName(List<string> taken, string wanted)
     {
         var name = wanted;
@@ -1076,6 +1149,7 @@ public sealed class PlanLowerer
                 return rel;
             }
             case "LOGICAL_DUMMY_SCAN": return new Rel();
+            case "LOGICAL_EXPRESSION_GET": return ValuesList(p);
             case "LOGICAL_PROJECTION" when TryUncorrelatedScalar(p, kids) is { } constant: return constant;
             case "LOGICAL_PROJECTION" when TryCountPatch(p, kids) is { } counted: return counted;
             case "LOGICAL_PROJECTION":

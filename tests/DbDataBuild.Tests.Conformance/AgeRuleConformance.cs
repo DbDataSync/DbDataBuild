@@ -23,13 +23,11 @@ public class AgeRuleConformance
         "age(x.s, y.s) <> INTERVAL '1 month 2 days 03:04:05'",
     ];
 
-    /// <summary>The queries that cover every ordered pair: the plan of a long UNION ALL is too deep for the plan reader (64 levels), so the stamps go in groups of eight on each side.</summary>
+    /// <summary>The query that covers every ordered pair: the stamps as one VALUES list on each side of a cross join.</summary>
     private static IEnumerable<string> Pairs(string expression)
     {
-        string List(IEnumerable<string> group) => string.Join(" UNION ALL ", group.Select(t => $"SELECT TIMESTAMP '{t}' AS s"));
-        foreach (var left in Stamps.Chunk(8))
-            foreach (var right in Stamps.Chunk(8))
-                yield return $"SELECT date_diff('second', TIMESTAMP '1900-01-01', x.s) AS a, date_diff('second', TIMESTAMP '1900-01-01', y.s) AS b, {expression} AS v FROM ({List(left)}) x CROSS JOIN ({List(right)}) y";
+        string List() => string.Join(", ", Stamps.Select(t => $"(TIMESTAMP '{t}')"));
+        yield return $"SELECT date_diff('second', TIMESTAMP '1900-01-01', x.s) AS a, date_diff('second', TIMESTAMP '1900-01-01', y.s) AS b, {expression} AS v FROM (VALUES {List()}) AS x(s) CROSS JOIN (VALUES {List()}) AS y(s)";
     }
 
     [SkippableTheory]

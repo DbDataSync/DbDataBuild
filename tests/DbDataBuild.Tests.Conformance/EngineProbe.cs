@@ -69,6 +69,17 @@ public sealed class EngineProbe : IDisposable
         catch (DuckDBException ex) { return new(string.Empty, FirstLine(ex.Message)); }
     }
 
+    /// <summary>DuckDB's name and type for each output column of the query (DESCRIBE).</summary>
+    public IReadOnlyList<(string Name, string Type)> DuckColumns(string sql)
+    {
+        using var cmd = duck.CreateCommand();
+        cmd.CommandText = "DESCRIBE " + sql;
+        using var r = cmd.ExecuteReader();
+        var columns = new List<(string, string)>();
+        while (r.Read()) columns.Add((r.GetString(0), r.GetString(1)));
+        return columns;
+    }
+
     /// <summary>What the tool would send the engine for this query, or the lowering's refusal.</summary>
     public (string? Sql, string? Refused) Render(string sql, DbDataBuild.Core.RewritePolicy? rewrites = null)
     {
