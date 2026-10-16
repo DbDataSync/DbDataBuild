@@ -387,6 +387,7 @@ public class FunctionRulesTests
         Run(c, "CREATE MACRO ddb_datepart_millisecond(x) AS date_part('millisecond', x) % 1000");        // T-SQL's DATEPART counts within the second
         Run(c, "CREATE MACRO ddb_datepart_microsecond(x) AS date_part('microsecond', x) % 1000000");
         Run(c, "CREATE MACRO ddb_idiv(a, b) AS CAST(trunc(CAST(a AS DOUBLE) / CAST(b AS DOUBLE)) AS BIGINT)");
+        Run(c, "CREATE MACRO ddb_numeric(x) AS CAST(x AS DECIMAL(38, 4))");
         Run(c, "CREATE MACRO ddb_pg_epoch(x) AS epoch(x)");
         Run(c, "CREATE MACRO ddb_pg_epoch_exact(x) AS CAST(epoch_us(x) AS DECIMAL(24, 0)) / 1000000");
         Run(c, "CREATE MACRO ddb_pg_julian(x) AS julian(x)");
@@ -619,5 +620,30 @@ public class FunctionRulesTests
         var linter = new DbDataBuild.Sql.Matrix.MatrixLinter(DbDataBuild.Sql.Matrix.MatrixLoader.LoadEmbedded([]));
         Assert.Contains(linter.Lint(r.Sql, "m.sql", ["sqlserver"]), d => d.Code == "DDB-301" && d.Found.Contains("fn.age"));
         Assert.DoesNotContain(linter.Lint(TargetRules.Apply(sql, "postgres").Sql, "m.sql", ["postgres"]), d => d.Code == "DDB-301");
+    }
+
+    [Theory]
+    [InlineData("covar_pop")]
+    [InlineData("covar_samp")]
+    [InlineData("regr_sxy")]
+    public void Covariance_on_PostgreSQL_is_the_exact_sums_and_gives_DuckDBs_value(string function)
+    {
+        using var c = ProbeTable();
+        foreach (var sql in new[]
+        {
+            $"SELECT {function}(a.d, b.d) AS v FROM probe a CROSS JOIN probe b",                                       // the outlier of 1e10 against independent columns: 0
+            $"SELECT {function}(i, j) AS v FROM probe",
+            $"SELECT {function}(d, i) FILTER (WHERE id > 2) AS v FROM probe",
+            $"SELECT {function}(d, d * 2) AS v FROM probe WHERE id < 4",
+            $"SELECT {function}(d, i) AS v FROM probe WHERE id = 1",                                                  // one row: 0 or NULL
+            $"SELECT {function}(d, i) AS v FROM probe WHERE id = 5",                                                  // no pair: NULL
+        })
+        {
+            var r = TargetRules.Apply(sql, "postgres");
+            Assert.Equal([TargetRules.CovarianceExact], r.Rules);
+            Assert.True(SameWithin(Rows(c, sql), Rows(c, r.Sql)), $"{sql}: DuckDB [{Rows(c, sql)}], rewritten [{Rows(c, r.Sql)}]");
+        }
+        Assert.Empty(TargetRules.Apply($"SELECT {function}(d, i) OVER () AS v FROM probe", "postgres").Rules);          // a window is left alone
+        Assert.Empty(TargetRules.Apply($"SELECT {function}(d, i) AS v FROM probe", "sqlserver").Rules);
     }
 }

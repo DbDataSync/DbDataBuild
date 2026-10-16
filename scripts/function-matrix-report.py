@@ -151,6 +151,9 @@ for f in funcs:
     for a in f["aliases"].split():
         by_name[a.lower()] = f
 OK = {"native", "translated", "emulated", "approximated"}
+def matrix_min_version(r, e):
+    entry = (r.get(e) or r.get("tsql")) if e == "sqlserver" else r.get(e)
+    return (entry or {}).get("min_version")
 def matrix_status(r, e):
     entry = r.get(e) or r.get("tsql") if e == "sqlserver" else r.get(e)
     return (entry or {}).get("status", "-")
@@ -177,7 +180,9 @@ for r in rows:
             ms = matrix_status(r, e)
             o = f[e + "_core"] if f[e + "_core"] != "n/a" else f[e + "_outcome"]
             cells.append(f"{ms} / {o}")
-            if ms in ("native", "translated") and o != "works":
+            if matrix_min_version(r, e) and o == "refused":
+                cells[-1] += f" (needs version {matrix_min_version(r, e)}; the run is at 16)"      # the row is right: the lint refuses below the version
+            elif ms in ("native", "translated") and o != "works":
                 verdicts.append(f"{label}: row says {ms}, measured {o}")
             elif ms == "approximated" and o not in ("works", "differs"):
                 verdicts.append(f"{label}: row says approximated, measured {o}")

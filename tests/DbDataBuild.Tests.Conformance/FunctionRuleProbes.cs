@@ -81,6 +81,11 @@ public class FunctionRuleProbes
         V("sf_dow", "strftime(ts, '%w %u')"), V("sf_percent", "strftime(ts, '100%% %Y')"), V("sf_date", "strftime(dt, '%Y/%m/%d %H:%M')"), V("sf_literal", "strftime(ts, 'week of it')"), V("sf_arg_order", "strftime('%d.%m.%Y', ts)"),
         V("sf_quote", "strftime(ts, 'it''s %Y')"), S("sf_midnight_noon", "strftime(TIMESTAMP '2024-03-04 00:02:03', '%I %p') || strftime(TIMESTAMP '2024-03-04 12:02:03', '%I %p')"), S("sf_year_small", "strftime(TIMESTAMP '0099-03-04 01:02:03', '%Y|%y')"),
         V("fmt_plain", "format('{}|{}', s, i)"), V("fmt_text", "format('x{}y', i)"), V("fmt_date", "format('on {}', dt)"), V("fmt_braces", "format('{{{}}}', i)"), V("fmt_none", "format('constant')"), V("fmt_bigint", "format('{}', CAST(i AS BIGINT) * 1000000000)"),
+        // PostgreSQL's covariance accumulates unstably next to an outlier (-334 for 0); the sums are exact now. (SQL Server has none of the three: matrix row fn.missing.statistics.sqlserver)
+        new("cov_pop_outlier", "SELECT covar_pop(a.d, b.d) AS v FROM probe a CROSS JOIN probe b", PostgresOnly), new("cov_samp_outlier", "SELECT covar_samp(a.d, b.d) AS v FROM probe a CROSS JOIN probe b", PostgresOnly),
+        new("regr_sxy_outlier", "SELECT regr_sxy(a.d, b.d) AS v FROM probe a CROSS JOIN probe b", PostgresOnly), new("cov_pop_ints", "SELECT covar_pop(i, j) AS v FROM probe", PostgresOnly),
+        new("cov_samp_filter", "SELECT covar_samp(i, j) FILTER (WHERE id > 2) AS v FROM probe", PostgresOnly), new("regr_sxy_small", "SELECT regr_sxy(d, d * 2) AS v FROM probe WHERE id < 4", PostgresOnly),
+        new("cov_pop_one_row", "SELECT covar_pop(d, i) AS v FROM probe WHERE id = 1", PostgresOnly), new("cov_samp_one_row", "SELECT covar_samp(d, i) AS v FROM probe WHERE id = 1", PostgresOnly),
         V("starts_op", "s ^@ 'a'"), V("starts_op_col", "s ^@ s"), V("starts_op_empty", "s ^@ ''"),
     ];
 

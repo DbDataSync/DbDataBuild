@@ -58,6 +58,7 @@ public static partial class TargetRules
     private static JsonNode? FunctionRewrite(string kind, JsonObject body, string target, HashSet<string> rules, SortedSet<string> fired)
     {
         if (AgeRewrite(kind, body, rules, fired) is { } aged) return aged;
+        if (StatisticsRewrite(kind, body, rules, fired) is { } statistic) return statistic;
         if (FromTemplate(kind, body, target, rules, fired) is { } templated) return templated;
         switch (kind)
         {
@@ -169,7 +170,7 @@ public static partial class TargetRules
 
     /// <summary>PostgreSQL's EXTRACT(EPOCH FROM x): polyglot reads DuckDB's epoch(x) and julian(x) and writes the functions of those names, which PostgreSQL does not have.</summary>
     private static string ExpandPostgresMarkers(string text) =>
-        ExpandMarker(ExpandMarker(ExpandMarker(text, "ddb_pg_epoch_exact", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_epoch", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_julian", a => $"EXTRACT(JULIAN FROM {a[0]})");
+        ExpandMarker(ExpandMarker(ExpandMarker(ExpandMarker(text, "ddb_numeric", a => $"CAST({a[0]} AS NUMERIC)"), "ddb_pg_epoch_exact", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_epoch", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_julian", a => $"EXTRACT(JULIAN FROM {a[0]})");
 
     private static string ExpandOperatorMarkers(string text)
     {
