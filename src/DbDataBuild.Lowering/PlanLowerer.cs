@@ -1012,15 +1012,22 @@ public sealed class PlanLowerer
     /// </summary>
     private Rel ValuesList(JsonElement p)
     {
-        if (Arr(p, "children").Any(k => Str(k, "type") != "LOGICAL_DUMMY_SCAN")) throw new LoweringException("a VALUES list that reads a column of another table (a lateral list)");
+        // a lateral list: the child is DuckDB's DELIM_GET, the outer values the cells read (entry 180). Its columns come first in the cells' references; the list's last columns carry them back for the join.
+        var children = Arr(p, "children").Where(k => Str(k, "type") != "LOGICAL_DUMMY_SCAN").ToList();     // (a list of constants has DuckDB's dummy scan under it)
+        if (children.Any(k => Str(k, "type") != "LOGICAL_DELIM_GET") || children.Count > 1) throw new LoweringException("a VALUES list with a subquery in a cell, or a lateral list with another operator under it (only a list that reads the outer query's columns is lowered)");
+        var delim = children.Count == 1 ? Node(children[0]) : null;
+        var carried = delim?.Sel.Count ?? 0;
         var types = Arr(p, "expr_types").ToList();
-        for (var j = 0; j < types.Count; j++)
+        var authored = types.Count - carried;
+        if (authored < 1) throw new LoweringException("a VALUES list without columns of its own");
+        for (var j = 0; j < authored; j++)
         {
             var id = types[j].GetProperty("id").GetString()!;
             if (!ValuesColumnTypes.Contains(id)) throw new LoweringException($"a VALUES column of type {id} (the engines have no type that holds the same values; cast the cells to a type they have)");
         }
         var rows = p.GetProperty("expressions").EnumerateArray().Select(r => r.EnumerateArray().ToList()).ToList();
         if (rows.Count == 0 || types.Count == 0 || rows.Any(r => r.Count != types.Count)) throw new LoweringException("a VALUES list without rows or with rows of different lengths");
+        var outs = delim?.Outs() ?? [];
         var lines = new List<string>();
         var saved = exactCasts;
         exactCasts = true;
@@ -1028,18 +1035,22 @@ public sealed class PlanLowerer
         {
             foreach (var row in rows)
             {
-                if (row.Any(c => ContainsReference(c))) throw new LoweringException("a VALUES list that reads a column of another table (a lateral list)");
-                lines.Add("(" + string.Join(", ", row.Select((c, j) => ValuesCell(c, TypeName(types[j])))) + ")");
+                if (row.Any(c => ContainsSubquery(c))) throw new LoweringException("a VALUES list with a subquery in a cell");
+                if (delim == null && row.Any(c => ContainsReference(c))) throw new LoweringException("a VALUES list that reads a column of another table in a plan shape this does not read");
+                // the last columns hand each outer value back (`a` as a column of the list) so that DuckDB can join the list to the outer rows; they are the outer values themselves, and are not written
+                for (var j = 0; j < carried; j++)
+                    if (Str(row[authored + j], "type") != "BOUND_REF" || row[authored + j].GetProperty("index").GetInt32() != j) throw new LoweringException("a lateral VALUES list in a plan shape this does not read (the outer values are not carried as the last columns)");
+                lines.Add("(" + string.Join(", ", row.Take(authored).Select((c, j) => ValuesCell(c, TypeName(types[j]), outs))) + ")");
             }
         }
         finally { exactCasts = saved; }
         var alias = UniqueAlias("vals", "vals");
-        var names = Enumerable.Range(0, types.Count).Select(j => $"col{j}").ToList();
+        var names = Enumerable.Range(0, authored).Select(j => $"col{j}").ToList();
         return new Rel
         {
             Frm = $"(VALUES\n{string.Join(",\n", lines.Select(l => "  " + l))}\n) AS {alias}({string.Join(", ", names)})",
             Sources = [alias],
-            Sel = names.Select((n, j) => new Item(Token(alias, n), n, TypeName(types[j]))).ToList(),
+            Sel = names.Select((n, j) => new Item(Token(alias, n), n, TypeName(types[j]))).Concat(delim?.Sel ?? []).ToList(),
         };
     }
 
@@ -1047,9 +1058,9 @@ public sealed class PlanLowerer
     /// One cell, lowered like any expression and given the column's type: a constant that is not already a cast (and not one of the two whose bare literal has the type on every engine) is cast to it, and a boolean
     /// expression is written as a CASE with a cast to BOOLEAN, because SQL Server has no boolean values and its transpile only rewrites a condition that stands in a select list, not in a VALUES row.
     /// </summary>
-    private string ValuesCell(JsonElement cell, string type)
+    private string ValuesCell(JsonElement cell, string type, IReadOnlyList<string> outs)
     {
-        var text = Expr(cell, []);
+        var text = Expr(cell, outs);
         if (IsConstant(cell)) return Str(cell, "type") == "VALUE_CONSTANT" && (IsNullConstant(cell) || type is not ("VARCHAR" or "INTEGER" or "DECIMAL" or "DATE" or "TIMESTAMP")) ? $"CAST({text} AS {(type == "FLOAT" ? "REAL" : type)})" : text;
         if (type == "BOOLEAN") return $"CAST(CASE WHEN {text} THEN TRUE WHEN NOT {text} THEN FALSE END AS BOOLEAN)";
         // a BIGINT cell that is a calculation (length, year, a number of days, a count) is an INT on SQL Server and a NUMERIC on PostgreSQL for several of these functions; the column is BIGINT in DuckDB
@@ -1066,6 +1077,14 @@ public sealed class PlanLowerer
         {
             JsonValueKind.Object => (Str(e, "type") is "BOUND_REF" or "BOUND_COLUMN_REF" or "BOUND_SUBQUERY") || e.EnumerateObject().Any(x => ContainsReference(x.Value)),
             JsonValueKind.Array => e.EnumerateArray().Any(ContainsReference),
+            _ => false,
+        };
+
+    private static bool ContainsSubquery(JsonElement e) =>
+        e.ValueKind switch
+        {
+            JsonValueKind.Object => Str(e, "type") == "BOUND_SUBQUERY" || e.EnumerateObject().Any(x => ContainsSubquery(x.Value)),
+            JsonValueKind.Array => e.EnumerateArray().Any(ContainsSubquery),
             _ => false,
         };
 
@@ -1450,6 +1469,27 @@ public sealed class PlanLowerer
         return Nested(copy);
     }
 
+    /// <summary>
+    /// Points the references of <paramref name="right"/> to the enclosing block's columns (written as the text of the column, marked as an outer reference) at the columns of that block's wrapped form:
+    /// `from[i]` is what the left block's column i was, `to[i]` what it is after the block became a derived table. Found by a lateral join over a filtered derived table, whose lateral side printed `t.a`
+    /// where the table in scope was `s1`.
+    /// </summary>
+    private static void RebaseOuterReferences(Rel right, IReadOnlyList<string> from, IReadOnlyList<string> to)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < from.Count && i < to.Count; i++)
+            if (from[i].Contains('\0') && Requalify(from[i]) is var key && key != Requalify(to[i])) map.TryAdd(key, Requalify(to[i]));
+        if (map.Count == 0) return;
+        var pattern = new Regex(string.Join("|", map.Keys.OrderByDescending(k => k.Length).Select(Regex.Escape)));
+        string Rebase(string text) => text.Contains('\u0002') ? pattern.Replace(text, m => map[m.Value]) : text;
+        right.Sel = right.Sel.Select(i => i with { Sql = Rebase(i.Sql) }).ToList();
+        right.Frm = Rebase(right.Frm);
+        for (var i = 0; i < right.Where.Count; i++) right.Where[i] = Rebase(right.Where[i]);
+        right.Group = right.Group.Select(Rebase).ToList();
+        for (var i = 0; i < right.Having.Count; i++) right.Having[i] = Rebase(right.Having[i]);
+        right.Order = right.Order.Select(Rebase).ToList();
+    }
+
     private Rel DelimJoin(JsonElement p, List<JsonElement> kids)
     {
         var left = Node(kids[0]);
@@ -1530,7 +1570,13 @@ public sealed class PlanLowerer
             case "INNER" or "LEFT":
             {
                 if (real.Count > 0) throw new LoweringException("a lateral join with a comparison");
-                if (!left.Plain && (joinType == "LEFT" || !left.Mergeable() || left.HasAgg || left.HasWindow || left.Where.Count > 0)) left = Wrap(left);
+                if (!left.Plain && (joinType == "LEFT" || !left.Mergeable() || left.HasAgg || left.HasWindow || left.Where.Count > 0))
+                {
+                    // the right side was lowered against the left block's own columns; wrapping the left makes them columns of the new derived table
+                    var before = left.Outs();
+                    left = Wrap(left);
+                    RebaseOuterReferences(right, before, left.Outs());
+                }
                 var alias = Fresh();
                 var rightNames = right.Aliases();
                 var lateral = Nested(right);

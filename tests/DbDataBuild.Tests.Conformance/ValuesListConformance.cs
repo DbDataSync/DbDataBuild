@@ -49,6 +49,30 @@ public class ValuesListConformance
         ("function_cells_many_rows", $"SELECT * FROM (VALUES {string.Join(", ", Enumerable.Range(1, 1200).Select(i => $"({i}, upper('a') || 'b{i}', CAST(length('x{i} ') AS BIGINT), ceil({i}.2), CAST(DATE '2024-03-01' - DATE '2024-01-{1 + i % 28:00}' AS BIGINT))"))}) AS v(a, b, c, d, e)"),
         ("interval_cells_1001", $"SELECT * FROM (VALUES {IntervalRows(1001)}) AS v(d, n, e, t)"),
         ("interval_cells_5000", $"SELECT * FROM (VALUES {IntervalRows(5000)}) AS v(d, n, e, t)"),
+        ("lateral_cross", "SELECT p.id, v.x, v.y FROM probe p, LATERAL (VALUES (p.i, 1), (p.j + 1, 2)) AS v(x, y)"),
+        ("lateral_two_outer_columns", "SELECT p.id, v.x, v.y FROM probe p CROSS JOIN LATERAL (VALUES (p.i, p.j), (p.j, p.i), (NULL, 0)) AS v(x, y)"),
+        ("lateral_left_join", "SELECT p.id, v.x, v.y FROM probe p LEFT JOIN LATERAL (VALUES (p.i, p.j), (p.j, p.i)) AS v(x, y) ON TRUE"),
+        ("lateral_nulls_filtered", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.i), (NULL), (p.j + 1)) AS v(x) WHERE v.x IS NOT NULL"),
+        ("lateral_one_row", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.i)) AS v(x)"),
+        ("lateral_text", "SELECT p.id, v.x, v.n FROM probe p, LATERAL (VALUES (p.s || '!', 1), (p.s, 2)) AS v(x, n)"),
+        ("lateral_decimal_mix", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.n), (2.5), (p.i)) AS v(x)"),
+        ("lateral_double", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.d), (p.d * 2), (1.5e0)) AS v(x)"),
+        ("lateral_dates", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.dt + INTERVAL 1 MONTH), (p.dt + 3), (p.dt - INTERVAL '2 days')) AS v(x)"),
+        ("lateral_timestamps", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.ts + INTERVAL '1 day 2 hours'), (p.ts)) AS v(x)"),
+        ("lateral_chained", "SELECT p.id, v.x, w.y FROM probe p, LATERAL (VALUES (p.j), (p.id)) AS v(x), LATERAL (VALUES (v.x + 1), (v.x * 2)) AS w(y)"),
+        ("lateral_aggregate", "SELECT p.id, CAST(sum(v.x) AS BIGINT) AS s, count(*) AS n, count(v.x) AS nx FROM probe p, LATERAL (VALUES (p.i), (p.id), (7)) AS v(x) GROUP BY p.id"),
+        ("lateral_exists", "SELECT p.id FROM probe p WHERE EXISTS (SELECT 1 FROM (VALUES (p.i), (p.id)) AS v(x) WHERE v.x = 2)"),
+        ("lateral_scalar_subquery", "SELECT p.id, (SELECT max(x) FROM (VALUES (p.i), (p.id)) AS v(x)) AS m FROM probe p"),
+        ("lateral_cte", "WITH c AS (SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.i), (p.id)) AS v(x)) SELECT * FROM c WHERE x > 1"),
+        ("lateral_empty_outer", "SELECT q.id, v.x FROM (SELECT * FROM probe WHERE id < 0) q, LATERAL (VALUES (q.i), (q.i + 1)) AS v(x)"),
+        ("lateral_empty_outer_left_join", "SELECT q.id, v.x FROM (SELECT * FROM probe WHERE id < 0) q LEFT JOIN LATERAL (VALUES (q.i), (q.i + 1)) AS v(x) ON TRUE"),
+        ("lateral_empty_outer_count", "SELECT count(*) AS n FROM (SELECT * FROM probe WHERE id < 0) q, LATERAL (VALUES (q.i), (q.i + 1)) AS v(x)"),
+        ("lateral_1100_rows", $"SELECT p.id, v.x FROM probe p, LATERAL (VALUES {string.Join(", ", Enumerable.Range(1, 1100).Select(k => $"(p.j + {k})"))}) AS v(x)"),
+        ("lateral_over_filtered_derived_outer", "SELECT q.id, v.x FROM (SELECT * FROM probe WHERE id > 2) q, LATERAL (VALUES (q.j), (q.id + 1)) AS v(x)"),
+        ("lateral_left_join_over_filtered_derived_outer", "SELECT q.id, v.x FROM (SELECT * FROM probe WHERE id > 2) q LEFT JOIN LATERAL (VALUES (q.j), (q.id + 1)) AS v(x) ON TRUE"),
+        ("lateral_subquery_over_filtered_derived_outer", "SELECT q.id, x.m FROM (SELECT * FROM probe WHERE id > 2) q, LATERAL (SELECT max(u.id) AS m FROM probe u WHERE u.id < q.id) x"),
+        ("lateral_ordered_limit", "SELECT p.id, v.x FROM probe p, LATERAL (VALUES (p.j), (p.id) ORDER BY 1 LIMIT 1) AS v(x)"),
+        ("lateral_with_join_to_other_list", "SELECT p.id, v.x, w.label FROM probe p, LATERAL (VALUES (p.id), (p.id + 1)) AS v(x) JOIN (VALUES (1, 'one'), (2, 'two'), (9, 'nine')) AS w(k, label) ON w.k = v.x"),
         ("join_side", "SELECT p.id, v.label FROM probe p JOIN (VALUES (1, 'one'), (2, 'two'), (7, 'seven'), (99, 'none')) AS v(k, label) ON p.id = v.k"),
         ("left_join_side", "SELECT p.id, v.label FROM probe p LEFT JOIN (VALUES (1, 'one'), (2, 'two')) AS v(k, label) ON p.id = v.k"),
         ("two_lists_joined", "SELECT v.id, w.n FROM (VALUES (1, 'x'), (2, 'y')) AS v(id, s) JOIN (VALUES (1, 10), (2, 20)) AS w(k, n) ON v.id = w.k"),
@@ -110,7 +134,7 @@ public class ValuesListConformance
         foreach (var (sql, named) in new[]
         {
             ("SELECT * FROM (VALUES (CAST(1 AS TINYINT)), (2)) AS v(a)", "TINYINT"), ("SELECT * FROM (VALUES (CAST(1 AS UBIGINT))) AS v(a)", "UBIGINT"), ("SELECT * FROM (VALUES (INTERVAL 3 DAY)) AS v(a)", "INTERVAL"),
-            ("SELECT * FROM (VALUES ([1, 2])) AS v(a)", "LIST"), ("SELECT * FROM (VALUES (TIME '10:00:00')) AS v(a)", "TIME"), ("SELECT * FROM probe, LATERAL (VALUES (probe.id), (probe.id + 1)) AS v(x)", "another table"),
+            ("SELECT * FROM (VALUES ([1, 2])) AS v(a)", "LIST"), ("SELECT * FROM (VALUES (TIME '10:00:00')) AS v(a)", "TIME"), ("SELECT * FROM probe, LATERAL (VALUES (probe.id), ((SELECT count(*) FROM probe p2))) AS v(x)", "subquery"),
         })
         {
             var (rendered, refused) = probe.Render(sql);
@@ -141,13 +165,18 @@ public class ValuesListConformance
         {
             var select = string.Join(", ", columns.Select(c => $"pg_typeof(q.\"{c.Name}\")::text" + (c.Type.StartsWith("DECIMAL", StringComparison.Ordinal) ? $", scale(q.\"{c.Name}\")" : "")));
             var described = await engine.QueryAsync($"SELECT {select} FROM ({rendered}) AS q LIMIT 1");
+            // a query with no rows has no row to ask the scale of: its types are read from the null row of an outer join, and the scale is not compared
+            var noRows = described.Rows.Count == 0;
+            if (noRows) described = await engine.QueryAsync($"SELECT {select} FROM (VALUES (1)) AS ddb_one LEFT JOIN ({rendered}) AS q ON false");
             var row = described.Rows[0];
             var at = 0;
             foreach (var c in columns)
             {
                 var engineType = (string)row[at++]!;
                 if (!PostgresType(c.Type, engineType)) problems.Append($" {c.Name}: {engineType} for DuckDB's {c.Type};");
-                if (c.Type.StartsWith("DECIMAL", StringComparison.Ordinal) && Convert.ToInt32(row[at++]) is var scale && c.Type != $"DECIMAL({c.Type.Split(',')[0].Split('(')[1]},{scale})") problems.Append($" {c.Name}: scale {scale} for DuckDB's {c.Type};");
+                if (!c.Type.StartsWith("DECIMAL", StringComparison.Ordinal)) continue;
+                var scaleValue = row[at++];
+                if (!noRows && Convert.ToInt32(scaleValue) is var scale && c.Type != $"DECIMAL({c.Type.Split(',')[0].Split('(')[1]},{scale})") problems.Append($" {c.Name}: scale {scale} for DuckDB's {c.Type};");
             }
         }
         return problems.Length == 0 ? null : problems.ToString().Trim();

@@ -509,6 +509,8 @@ public class PlanLowererTests
         "SELECT t.id, x.b FROM t, LATERAL (SELECT u.b FROM u WHERE u.a = t.a) x",
         "SELECT t.id, x.b FROM t LEFT JOIN LATERAL (SELECT u.b FROM u WHERE u.a = t.a) x ON TRUE",
         "SELECT t.id, x.m FROM t, LATERAL (SELECT max(u.b) AS m FROM u WHERE u.a = t.a) x",
+        "SELECT q.id, x.b FROM (SELECT * FROM t WHERE id > 1) q, LATERAL (SELECT u.b FROM u WHERE u.a = q.a) x",
+        "SELECT q.id, x.b FROM (SELECT * FROM t WHERE id > 1) q LEFT JOIN LATERAL (SELECT u.b + q.b AS b FROM u) x ON TRUE",
         "SELECT t.id FROM t JOIN u ON t.a = u.a WHERE EXISTS (SELECT 1 FROM u u2 WHERE u2.b > u.b AND u2.a = t.a)",
         "SELECT id FROM t WHERE id IN (SELECT id FROM t t2 WHERE t2.a = t.a AND t2.id <> t.id)",
         "WITH big AS (SELECT a FROM u WHERE b > 100) SELECT id FROM t WHERE EXISTS (SELECT 1 FROM big WHERE big.a = t.a)",

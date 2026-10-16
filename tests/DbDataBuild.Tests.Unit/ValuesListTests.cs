@@ -220,7 +220,8 @@ public class ValuesListTests
     [InlineData("SELECT * FROM (VALUES ([1, 2])) AS v(a)", "type LIST")]
     [InlineData("SELECT * FROM (VALUES (TIME '10:00:00')) AS v(a)", "TIME")]
     [InlineData("SELECT * FROM (VALUES (TIMESTAMPTZ '2024-01-01 10:00:00+00')) AS v(a)", "TIME ZONE")]
-    [InlineData("SELECT * FROM t, LATERAL (VALUES (t.a), (t.a + 1)) AS v(x)", "another table")]
+    [InlineData("SELECT * FROM t, LATERAL (VALUES (t.a), ((SELECT count(*) FROM t t2))) AS v(x)", "subquery")]
+    [InlineData("SELECT * FROM t, LATERAL (VALUES (CAST(t.a AS TINYINT))) AS v(x)", "TINYINT")]
     public void A_list_whose_column_type_the_engines_cannot_hold_exactly_is_refused_naming_it(string source, string named)
     {
         using var c = Open();
@@ -340,5 +341,94 @@ public class ValuesListTests
             Assert.DoesNotContain("INTERVAL", text);
         }
         Assert.Equal(Run(c, source).Rows, Run(c, TargetRules.Apply(lowered, "sqlserver").Sql).Rows);
+    }
+
+    // ---- lateral lists (entry 180) ---------------------------------------------------------------------------------------------------------------------------
+
+    private static DuckDBConnection OpenWithEmptyTable()
+    {
+        var c = Open();
+        Exec(c, "CREATE TABLE e (id INTEGER, a INTEGER)");
+        return c;
+    }
+
+    public static TheoryData<string> LateralQueries => new()
+    {
+        "SELECT t.id, v.x, v.y FROM t, LATERAL (VALUES (t.a, 1), (t.a + 1, 2)) AS v(x, y)",
+        "SELECT t.id, v.x, v.y FROM t CROSS JOIN LATERAL (VALUES (t.a, t.id), (t.id, t.a), (NULL, 0)) AS v(x, y)",
+        "SELECT t.id, v.x, v.y FROM t LEFT JOIN LATERAL (VALUES (t.a, t.id), (t.id, t.a)) AS v(x, y) ON TRUE",
+        "SELECT t.id, v.x FROM t, LATERAL (VALUES (t.a), (NULL), (t.id + 1)) AS v(x) WHERE v.x IS NOT NULL",
+        "SELECT t.id, v.x FROM t, LATERAL (VALUES (t.a)) AS v(x)",
+        "SELECT t.id, v.x, v.n FROM t, LATERAL (VALUES (upper(t.s) || '!', 1), (t.s, 2)) AS v(x, n)",
+        "SELECT t.id, v.x FROM t, LATERAL (VALUES (t.a), (2.5)) AS v(x)",
+        "SELECT t.id, v.x, w.y FROM t, LATERAL (VALUES (t.a), (t.id)) AS v(x), LATERAL (VALUES (v.x + 1), (v.x * 2)) AS w(y)",
+        "SELECT t.id, sum(v.x) AS s, count(*) AS n FROM t, LATERAL (VALUES (t.a), (t.id), (7)) AS v(x) GROUP BY t.id",
+        "SELECT t.id, v.x FROM t, LATERAL (VALUES (t.a), (t.id)) AS v(x) ORDER BY t.id, v.x",
+        "SELECT t.id FROM t WHERE EXISTS (SELECT 1 FROM (VALUES (t.a), (t.id)) AS v(x) WHERE v.x = 2)",
+        "SELECT t.id, (SELECT max(x) FROM (VALUES (t.a), (t.id)) AS v(x)) AS m FROM t",
+        "WITH c AS (SELECT t.id, v.x FROM t, LATERAL (VALUES (t.a), (t.id)) AS v(x)) SELECT * FROM c WHERE x > 1",
+        "SELECT t.id, v.x FROM t, LATERAL (VALUES (CAST(t.a AS VARCHAR)), (t.s)) AS v(x)",
+        "SELECT e.id, v.x FROM e, LATERAL (VALUES (e.a), (e.a + 1)) AS v(x)",
+        "SELECT e.id, v.x FROM e LEFT JOIN LATERAL (VALUES (e.a), (e.a + 1)) AS v(x) ON TRUE",
+        "SELECT count(*) AS n FROM e, LATERAL (VALUES (e.a), (e.a + 1)) AS v(x)",
+    };
+
+    [Theory]
+    [MemberData(nameof(LateralQueries))]
+    public void A_lateral_VALUES_list_lowers_with_DuckDBs_rows_names_and_types(string source)
+    {
+        using var c = OpenWithEmptyTable();
+        var (lowered, _) = LowerWithNames(c, source);
+        Assert.Contains("(VALUES", lowered);
+        var expected = Run(c, source);
+        var actual = Run(c, lowered);
+        Assert.Equal(expected.Names, actual.Names);
+        Assert.Equal(expected.Types, actual.Types);
+        Assert.Equal(expected.Rows, actual.Rows);
+    }
+
+    [Fact]
+    public void A_lateral_list_lowers_to_a_lateral_join_over_the_constructor_that_reads_the_outer_columns()
+    {
+        using var c = Open();
+        Assert.Equal(
+            "SELECT t.id, s1.col0 AS x, s1.col1 AS y\nFROM t\nCROSS JOIN LATERAL (\n  SELECT vals.col0, vals.col1, t.a\n  FROM (VALUES\n    (t.a, 1),\n    ((t.a + 1), 2)\n  ) AS vals(col0, col1)\n) AS s1",
+            Lower(c, "SELECT t.id, v.x, v.y FROM t, LATERAL (VALUES (t.a, 1), (t.a + 1, 2)) AS v(x, y)"));
+        var left = Lower(c, "SELECT t.id, v.x FROM t LEFT JOIN LATERAL (VALUES (t.a), (t.id)) AS v(x) ON TRUE");
+        Assert.Contains("LEFT JOIN LATERAL (", left);
+        Assert.EndsWith(") AS s1 ON TRUE", left);
+    }
+
+    [Fact]
+    public void A_lateral_list_is_CROSS_APPLY_or_OUTER_APPLY_on_SQL_Server_and_Fabric_and_LATERAL_on_PostgreSQL()
+    {
+        using var c = Open();
+        var cross = Lower(c, "SELECT t.id, v.x, v.y FROM t, LATERAL (VALUES (t.a, 1), (t.a + 1, 2)) AS v(x, y)");
+        var left = Lower(c, "SELECT t.id, v.x FROM t LEFT JOIN LATERAL (VALUES (t.a), (t.id)) AS v(x) ON TRUE");
+        foreach (var target in new[] { "sqlserver", "fabric" })
+        {
+            var text = Render(cross, target);
+            Assert.Contains("CROSS APPLY (", text);
+            Assert.Contains("(VALUES (t.a, 1), ((t.a + 1), 2)) AS vals(col0, col1)", text);
+            Assert.DoesNotContain("LATERAL", text);
+            Assert.Contains("OUTER APPLY (", Render(left, target));
+        }
+        Assert.Contains("CROSS JOIN LATERAL (", Render(cross, "postgres"));
+        Assert.Contains("LEFT JOIN LATERAL (", Render(left, "postgres"));
+        Assert.Contains("ON TRUE", Render(left, "postgres"));
+    }
+
+    [Fact]
+    public void A_lateral_list_of_more_than_1000_rows_is_chunked_with_the_outer_columns_in_every_chunk()
+    {
+        using var c = Open();
+        var source = "SELECT t.id, v.x FROM t, LATERAL (VALUES " + string.Join(", ", Enumerable.Range(1, 2100).Select(i => $"(t.a + {i})")) + ") AS v(x)";
+        var lowered = Lower(c, source);
+        var text = Render(lowered, "sqlserver");
+        Assert.Contains("CROSS APPLY (", text);
+        Assert.Equal(2, Regex.Count(text, "UNION ALL"));
+        Assert.Equal(2100, Regex.Count(text, @"t\.a \+ \d+"));
+        Assert.Equal(Run(c, source).Rows, Run(c, lowered).Rows);
+        Assert.DoesNotContain("LATERAL", text);
     }
 }
