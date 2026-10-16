@@ -13,8 +13,40 @@ findings_path = os.path.join(here, "function-matrix-findings.md")
 findings = open(findings_path, encoding="utf-8").read() if os.path.exists(findings_path) else ""
 
 ENG = [("sqlserver", "SQL Server"), ("postgres", "PostgreSQL")]
+SEVERITY = ["lowerer error", "differs", "engine error", "refused", "works", "arg type unsupported", "not probed"]
+
+# "common types": the overloads whose parameters are all among the types models use (integers up to BIGINT, FLOAT, DOUBLE, DECIMAL, text, boolean, DATE, TIMESTAMP, or a generic value);
+# a function is judged on these in the cross-check, so that an overload over INTERVAL, TIME, BLOB, UUID, HUGEINT or a list does not decide it
+COMMON = {"SMALLINT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR", "BOOLEAN", "DATE", "TIMESTAMP", "ANY", "T", "K", "V", "NULL", "..."}
+
+def params_of(sig):
+    inner = sig[sig.index("(") + 1: sig.rindex(") ->")]
+    parts, depth, cur = [], 0, ""
+    for ch in inner:
+        if ch in "([": depth += 1
+        if ch in ")]": depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    if cur.strip(): parts.append(cur.strip())
+    return [p_.replace("... ", "").strip() for p_ in parts]
+
+def is_common(r):
+    if r["kind"] == "macro": return True
+    return all(p_ in COMMON for p_ in params_of(r["signature"]) if p_)
 ORDER = ["works", "differs", "engine error", "refused", "lowerer error", "arg type unsupported", "not probed"]
 STATIC = ["same", "rewritten", "refused", "error", "not-probed"]
+
+core = {}
+for r in ovl:
+    if is_common(r):
+        core.setdefault(r["canonical"], []).append(r)
+for f in funcs:
+    for e, _ in ENG:
+        rs = core.get(f["function"], [])
+        outs = [r[e + "_outcome"] for r in rs]
+        f[e + "_core"] = next((o for o in SEVERITY if o in outs), "n/a")
 
 def esc(s):
     return s.replace("|", "\\|").replace("\n", " ")
@@ -42,6 +74,12 @@ w("|---|" + "---|" * len(ENG))
 for o in ORDER:
     w(f"| {o} | " + " | ".join(str(sum(1 for f in funcs if f[e + '_outcome'] == o)) for e, _ in ENG) + " |")
 w(f"| **total** | " + " | ".join(str(len(funcs)) for _ in ENG) + " |\n")
+w("The same, judged only on the overloads over common types (integers up to BIGINT, FLOAT, DOUBLE, DECIMAL, text, boolean, DATE, TIMESTAMP, generic values; macros always): an overload over INTERVAL, TIME, BLOB, UUID, HUGEINT or a list does not decide the function.\n")
+w("| Outcome (common types) | " + " | ".join(n for _, n in ENG) + " |")
+w("|---|" + "---|" * len(ENG))
+for o in ORDER + ["n/a"]:
+    w(f"| {o} | " + " | ".join(str(sum(1 for f in funcs if f[e + '_core'] == o)) for e, _ in ENG) + " |")
+w("")
 w("Overloads by outcome:\n")
 w("| Outcome | " + " | ".join(n for _, n in ENG) + " |")
 w("|---|" + "---|" * len(ENG))
@@ -73,7 +111,7 @@ def cell(f, e):
     o = f[e + "_outcome"]
     if o == "works":
         return "works"
-    s = f"**{o}** ({f[e + '_counts']})"
+    s = f"**{o}** ({f[e + '_counts']}; common types: {f[e + '_core']})"
     if f[e + "_detail"]:
         s += ": " + clip(f[e + "_detail"])
     return s
@@ -104,24 +142,54 @@ w(f"### D. Could not be probed ({len(unprobed)} functions)\n")
 w("\n".join(HEAD + [row(f) for f in unprobed]) + "\n")
 
 # ---- cross-check against the support matrix ----
+import yaml
 w("## Cross-check with `matrix/constructs.yml`\n")
-w("See the section written from the data below (functions that work but have no matrix row come from the lint code DDB-305 in the CSV; the matrix rows are read from `matrix/constructs.yml`).\n")
-import re
-rows = open(os.path.join(here, "..", "matrix", "constructs.yml"), encoding="utf-8").read()
-ids = re.findall(r"^- id: (\S+)", rows, re.M)
-detects = re.findall(r"detect: (\[[^\]]*\]|\S+)", rows)
-fn_rows = set()
-for dstr in detects:
-    for m in re.findall(r"fn:([A-Za-z_0-9]+)|node:([a-z_]+)", dstr):
-        fn_rows.add((m[0] or m[1]).lower())
-uncovered = []
+rows = yaml.safe_load(open(os.path.join(here, "..", "matrix", "constructs.yml"), encoding="utf-8"))
+by_name = {}
 for f in funcs:
-    if f["sqlserver_outcome"] == "works" and f["postgres_outcome"] == "works":
-        lint = (f["sqlserver_lint"] + " " + f["postgres_lint"])
-        if "DDB-305" in lint:
-            uncovered.append(f)
-w(f"Functions that work on both engines (against DuckDB's answer) but are reported DDB-305 (neither a matrix row nor `covered.yml`): **{len(uncovered)}**.\n")
+    by_name[f["function"].lower()] = f
+    for a in f["aliases"].split():
+        by_name[a.lower()] = f
+OK = {"native", "translated", "emulated", "approximated"}
+def matrix_status(r, e):
+    entry = r.get(e) or r.get("tsql") if e == "sqlserver" else r.get(e)
+    return (entry or {}).get("status", "-")
+w("A matrix row that names a function (`fn:` or `node:` detection) against what was measured here on the common-type overloads. **Disagrees** = the row says the construct works on that engine (native, translated, emulated or approximated) and the probe shows a function that does not run or gives other values, or the row says unsupported and the probe shows it works. The rows are decisions for the owner; the matrix was not edited.\n")
+w("| Row | Function | SQL Server: row says / measured | PostgreSQL: row says / measured | Verdict |")
+w("|---|---|---|---|---|")
+for r in rows:
+    det = r.get("detect")
+    det = [det] if isinstance(det, str) else (det or [])
+    names = []
+    for dd in det:
+        k, _, n = dd.partition(":")
+        if k in ("fn", "node"):
+            names.append(n.lower())
+    seen = set()
+    for n in names:
+        f = by_name.get(n)
+        if not f or f["function"] in seen:
+            continue
+        seen.add(f["function"])
+        verdicts = []
+        cells = []
+        for e, label in ENG:
+            ms = matrix_status(r, e)
+            o = f[e + "_core"] if f[e + "_core"] != "n/a" else f[e + "_outcome"]
+            cells.append(f"{ms} / {o}")
+            if ms in ("native", "translated") and o != "works":
+                verdicts.append(f"{label}: row says {ms}, measured {o}")
+            elif ms == "approximated" and o not in ("works", "differs"):
+                verdicts.append(f"{label}: row says approximated, measured {o}")
+            elif ms == "unsupported" and o == "works":
+                verdicts.append(f"{label}: row says unsupported, measured works")
+        w(f"| `{r['id']}` | `{esc(f['function'])}` | {cells[0]} | {cells[1]} | {'; '.join(verdicts) if verdicts else 'agrees'} |")
+w("")
+uncovered = [f for f in funcs if f["sqlserver_outcome"] == "works" and f["postgres_outcome"] == "works" and "DDB-305" in (f["sqlserver_lint"] + " " + f["postgres_lint"])]
+w(f"Functions that **work** on both engines against DuckDB's answer but have **no matrix row** and are not in `covered.yml` (the lint reports them as DDB-305): **{len(uncovered)}**.\n")
 w("<details><summary>list</summary>\n\n" + ", ".join(f"`{esc(f['function'])}`" for f in uncovered) + "\n\n</details>\n")
+partial = [f for f in funcs if (f["sqlserver_outcome"] == "works") != (f["postgres_outcome"] == "works") and "DDB-305" in (f["sqlserver_lint"] + " " + f["postgres_lint"])]
+w(f"Functions that work on exactly one of the two engines and carry no matrix row: **{len(partial)}** (in the matrix above).\n")
 
 w("## Table functions and pragmas (listed, not probed)\n")
 w("The tool lowers only integer `generate_series` and `range` (DESIGN 7.6) and refuses every other table function (DDB-324). Names: " + ", ".join(sorted(set(f"`{t['name']}`" for t in tables if t["kind"] == "table"))) + ".\n")

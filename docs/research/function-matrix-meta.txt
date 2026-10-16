@@ -1,0 +1,5 @@
+duckdb=v1.5.6
+fabric=not run
+postgres=PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+sqlserver=Microsoft SQL Server 2022 (RTM-CU26) (KB5093420) - 16.0.4265.3 (X64)
+sqlserver_tool_version_setting=16 (the T-SQL of SQL Server 2022)

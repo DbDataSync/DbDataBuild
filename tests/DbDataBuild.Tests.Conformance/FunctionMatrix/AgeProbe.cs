@@ -33,7 +33,7 @@ c AS (SELECT id, sgn, DATEDIFF(MONTH, e, l) - bw AS mo, DAY(l) - DAY(e) - tb + b
         new("extract(year FROM age(a, b))", "extract(year FROM age(a, b))", "extract(year FROM age(a, b))", "sgn * (mo / 12)"),
         new("extract(month FROM age(a, b))", "extract(month FROM age(a, b))", "extract(month FROM age(a, b))", "sgn * (mo % 12)"),
         new("extract(day FROM age(a, b))", "extract(day FROM age(a, b))", "extract(day FROM age(a, b))", "sgn * dd"),
-        new("extract(hour FROM age(a, b))", "extract(hour FROM age(a, b))", "extract(hour FROM age(a, b))", "sgn * (us / 3600000000)"),
+        new("extract(hour FROM age(a, b))", "extract(hour FROM age(a, b))", "extract(hour FROM age(a, b))", "sgn * (us / CAST(3600000000 AS bigint))"),
         new("extract(minute FROM age(a, b))", "extract(minute FROM age(a, b))", "extract(minute FROM age(a, b))", "sgn * ((us / 60000000) % 60)"),
         new("extract(second FROM age(a, b))", "extract(second FROM age(a, b))", "extract(second FROM age(a, b))", "sgn * ((us / 1000000) % 60)"),
         new("year(age(a, b))", "year(age(a, b))", "extract(year FROM age(a, b))", "sgn * (mo / 12)"),
@@ -83,6 +83,26 @@ c AS (SELECT id, sgn, DATEDIFF(MONTH, e, l) - bw AS mo, DAY(l) - DAY(e) - tb + b
         foreach (var s in Shapes)
             await Compare(sb, x, s.Name, $"SELECT id, {s.Duck} AS v FROM age_pairs", $"SELECT id, {s.Postgres} AS v FROM age_pairs", $"{SqlServerCte} SELECT id, {s.SqlServer} AS v FROM c", kind);
 
+        // what the tool does today with each shape, as written for DuckDB: lowered, rewritten, sent to the engine and compared with DuckDB's rows
+        sb.Append("# What the tool sends today (shape as a model writes it)\n");
+        var pipeline = new StaticPipeline(x.Duck);
+        foreach (var s in Shapes.Prepend(new Shape("age(a, b) as a value", "age(a, b)", "age(a, b)", "")))
+        {
+            var sql = $"SELECT id, {s.Duck} AS v FROM age_pairs";
+            var duck = x.OnDuck(sql);
+            var st = pipeline.Run(sql);
+            sb.Append($"## {s.Name}\n");
+            if (st.Refused != null || st.DuckRejected != null || st.Crash != null) { sb.Append($"  tool: {st.Refused ?? st.DuckRejected ?? st.Crash}\n"); continue; }
+            foreach (var target in new[] { "sqlserver", "postgres" })
+            {
+                var t = StaticPipeline.Classify(st.Targets[target], new FunctionOverload("main", "scalar", "age", null, [], [], "", null, "", "", false, null));
+                var a = t.Final == null ? new Answer(null, t.Detail) : await x.OnEngineAsync(target, t.Final);
+                var verdict = !a.Ok ? "engine/tool error: " + a.Error : !duck.Ok ? "DuckDB error" : Compare(duck.Rows!, a.Rows!);
+                sb.Append($"  {target}: static {t.Status}{(t.Rules.Count > 0 ? " [" + string.Join(",", t.Rules) + "]" : "")}; {verdict}\n    text: {t.Final}\n");
+            }
+        }
+        sb.Append('\n');
+
         // two ages compared with each other (and so ordered): 40 pairs against 40 pairs
         var ids = string.Join(", ", Enumerable.Range(0, 40).Select(i => 1 + i * 47 % 1936));
         var duckCmp = $"SELECT p.id * 10000 + q.id AS id, age(p.a, p.b) < age(q.a, q.b) AS v FROM age_pairs p, age_pairs q WHERE p.id IN ({ids}) AND q.id IN ({ids})";
@@ -114,6 +134,13 @@ c AS (SELECT id, sgn, DATEDIFF(MONTH, e, l) - bw AS mo, DAY(l) - DAY(e) - tb + b
             foreach (var kv in bad.Take(4)) sb.Append($"    id {kv.Key}: DuckDB {kv.Value}, {label} {(theirs.TryGetValue(kv.Key, out var v) ? v : "missing")}\n");
         }
         sb.Append('\n');
+    }
+
+    private static string Compare(ResultRows duck, ResultRows other)
+    {
+        var theirs = other.Rows.ToDictionary(r => r[0], r => Bool(r[^1]));
+        var bad = duck.Rows.Where(r => !theirs.TryGetValue(r[0], out var v) || !Execution.SameCell(Bool(r[^1]), v)).ToList();
+        return bad.Count == 0 ? $"all {duck.Rows.Count} rows equal DuckDB's" : $"{bad.Count} of {duck.Rows.Count} rows differ, e.g. id {bad[0][0]}: DuckDB {bad[0][^1]}, engine {(theirs.TryGetValue(bad[0][0], out var v2) ? v2 : "missing")}";
     }
 
     private static string Describe(Answer a) => a.Ok ? $"{a.Rows!.Rows.Count} rows, type {a.Rows.ValueType}" : "ERROR " + a.Error;

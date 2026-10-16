@@ -179,7 +179,8 @@ public static class ProbeBuilder
         {
             var json = JsonFunctions.Contains(name);
             if (json && pos == 0) return One(type == "JSON" ? $"CAST({JsonDocument} AS JSON)" : JsonDocument);
-            if (json && pos >= 1 && type == "VARCHAR") return One(name == "json_valid" ? JsonDocument : "'$.k'");
+            if (json && pos >= 1 && type == "JSON") return One("CAST('\"v\"' AS JSON)");
+            if (json && pos >= 1 && type == "VARCHAR") return One(name == "json_valid" ? JsonDocument : name is "from_json" or "from_json_strict" or "json_transform" or "json_transform_strict" ? "'{\"k\": \"VARCHAR\"}'" : name == "json_contains" ? "'\"v\"'" : "'$.k'");
             if (type == "VARCHAR")
             {
                 switch (name)
@@ -188,7 +189,7 @@ public static class ProbeBuilder
                     case "date_trunc" or "datetrunc" or "trunc" when pos == 0 && type == "VARCHAR" && pname == "part": return DateTruncSpecifiers.Select(p => Lit($"'{p}'", $"part '{p}'")).ToList();
                     case "date_diff" or "datediff" or "date_sub" or "datesub" when pos == 0: return DateDiffSpecifiers.Select(p => Lit($"'{p}'", $"part '{p}'")).ToList();
                     case "timezone" when pos == 0: return One("'Asia/Tokyo'");
-                    case "strftime" when pos == 1: return StrftimeFormats.Select(p => Lit($"'{p}'", $"format '{p}'")).ToList();
+                    case "strftime" when pos == (f.Types[0] == "VARCHAR" && f.Types[1] != "VARCHAR" ? 0 : 1): return StrftimeFormats.Select(p => Lit($"'{p}'", $"format '{p}'")).ToList();
                     case "strptime" or "try_strptime" when pos == 0: return One("'2024-02-29 10:30:45'");
                     case "strptime" or "try_strptime" when pos == 1: return One("'%Y-%m-%d %H:%M:%S'");
                     case "printf": return One("'%s|%s'");
@@ -234,7 +235,7 @@ public static class ProbeBuilder
         var integer = pos == 0 && first ? "{x}.i" : "{x}.j";
         switch (type)
         {
-            case "INTEGER": return ColOne(integer);
+            case "INTEGER": return name == "regexp_extract" && pos == 2 ? One("1") : ColOne(integer);
             case "BIGINT": return ColOne($"CAST({integer} AS BIGINT)");
             case "HUGEINT": return ColOne($"CAST({integer} AS HUGEINT)");
             case "SMALLINT": return ColOne("CAST({x}.j AS SMALLINT)");
@@ -253,9 +254,11 @@ public static class ProbeBuilder
             case "TIME": return ColOne("CAST({x}.ts AS TIME)");
             case "TIME_NS": return ColOne("CAST({x}.ts AS TIME_NS)");
             case "TIME WITH TIME ZONE": return One("CAST('10:30:45+02' AS TIME WITH TIME ZONE)");
-            case "INTERVAL": return One("INTERVAL '1 month 2 days 03:04:05'");
-            case "BLOB": return ColOne("CAST({x}.s AS BLOB)");
-            case "BIT": return One("CAST('1011' AS BIT)");
+            case "INTERVAL": return One(name == "time_bucket" ? "INTERVAL '1 month'" : "INTERVAL '1 month 2 days 03:04:05'");
+            case "BLOB": return ColOne("CAST(CAST({x}.id AS VARCHAR) AS BLOB)");       // ASCII digits: DuckDB refuses a non-ASCII string as a BLOB
+            case "BIT":
+                why = "not probed: BIT (bit string) argument; SQL Server's bit is a boolean and PostgreSQL's bit string is another type, so the tool has no mapping for it";
+                return null;
             case "UUID": return One("CAST('6bd6cc7d-2b35-4a3d-a5f1-5d0c5a2f2b11' AS UUID)");
             case "BIGNUM": return ColOne($"CAST({integer} AS BIGNUM)");
             case "NULL": return One("NULL");

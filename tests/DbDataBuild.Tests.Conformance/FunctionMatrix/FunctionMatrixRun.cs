@@ -39,7 +39,7 @@ public class FunctionMatrixRun
         "current_date", "current_time", "current_timestamp", "current_localtime", "current_localtimestamp", "get_current_time", "get_current_timestamp", "now", "today", "transaction_timestamp",
         "localtime", "localtimestamp", "current_connection_id", "current_database", "current_query", "current_query_id", "current_schema", "current_schemas", "current_setting",
         "current_transaction_id", "txid_current", "version", "random", "setseed", "uuid", "gen_random_uuid", "uuidv4", "uuidv7", "getenv", "error", "pg_backend_pid",
-        "first", "last", "any_value", "arbitrary", "list", "array_agg", "group_concat", "string_agg", "listagg", "histogram", "histogram_exact", "approx_count_distinct", "approx_quantile",
+        "pg_conf_load_time", "pg_postmaster_start_time", "first", "last", "any_value", "arbitrary", "list", "array_agg", "group_concat", "string_agg", "listagg", "histogram", "histogram_exact", "approx_count_distinct", "approx_quantile",
         "approx_top_k", "reservoir_quantile",
     };
 
@@ -69,7 +69,14 @@ public class FunctionMatrixRun
             results.Add(await ProbeOverload(f, x, pipeline, Accepts));
         }
 
-        FunctionMatrixCsv.Write(outDir!, version, results, tables);
+        var meta = new Dictionary<string, string>
+        {
+            ["sqlserver"] = ((string?)await x.SqlServer.ScalarAsync("SELECT @@VERSION"))?.Split('\n')[0].Trim() ?? "",
+            ["sqlserver_tool_version_setting"] = "16 (the T-SQL of SQL Server 2022)",
+            ["postgres"] = (string?)await x.Postgres.ScalarAsync("SELECT version()") ?? "",
+            ["fabric"] = "not run",
+        };
+        FunctionMatrixCsv.Write(outDir!, version, results, tables, meta);
     }
 
     private static IReadOnlyList<Variant> VariantsOf(FunctionOverload f, Func<string, bool> accepts) =>
@@ -251,7 +258,7 @@ public class FunctionMatrixRun
 
     /// <summary>An error that says the engine has no such type (HUGEINT, the unsigned integers, ...) is about an argument's type, not about the function: it is kept apart so that `+` is not called broken because it has an overload over UBIGINT.</summary>
     private static string EngineErrorStatus(string message) =>
-        System.Text.RegularExpressions.Regex.IsMatch(message, @"is not a defined system type|type ""[a-z_0-9]+"" does not exist") ? "arg type" : "engine error";
+        System.Text.RegularExpressions.Regex.IsMatch(message, @"is not a defined system type|type ""[a-z_0-9]+"" does not exist|overflow error for data type tinyint") ? "arg type" : "engine error";
 
     private static List<Dictionary<char, int>> SampleCombinations(IReadOnlyList<char> aliases)
     {

@@ -101,7 +101,11 @@ public sealed class Execution : IAsyncDisposable
     {
         if (r.IsDBNull(i)) return "∅";
         var typeName = r.GetDataTypeName(i);
-        try { return Cell(r.GetValue(i), typeName); }
+        try
+        {
+            if (r is Npgsql.NpgsqlDataReader pgInterval && typeName.Equals("interval", StringComparison.OrdinalIgnoreCase)) { var iv = pgInterval.GetFieldValue<NpgsqlTypes.NpgsqlInterval>(i); return $"{iv.Months}m {iv.Days}d {iv.Time}us"; }
+            return Cell(r.GetValue(i), typeName);
+        }
         catch (Exception)
         {
             try
@@ -137,7 +141,9 @@ public sealed class Execution : IAsyncDisposable
         DateTimeOffset dto => Timestamp(dto.UtcDateTime) + "+00",
         DateOnly d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         TimeOnly t => t.Ticks % TimeSpan.TicksPerSecond == 0 ? t.ToString("HH:mm:ss", CultureInfo.InvariantCulture) : t.ToString("HH:mm:ss.ffffff", CultureInfo.InvariantCulture).TrimEnd('0'),
+        TimeSpan t when t >= TimeSpan.Zero && t < TimeSpan.FromDays(1) && !typeName.Contains("interval", StringComparison.OrdinalIgnoreCase) => Cell(new TimeOnly(t.Ticks), typeName),
         TimeSpan t => t.ToString("c", CultureInfo.InvariantCulture),
+        Stream stream => "0x" + Convert.ToHexString(ReadAll(stream)).ToLowerInvariant(),
         byte[] bytes => "0x" + Convert.ToHexString(bytes).ToLowerInvariant(),
         Guid g => g.ToString(),
         string s => s,
@@ -180,6 +186,8 @@ public sealed class Execution : IAsyncDisposable
         return $"{months}m {days}d {micros}us";
     }
 
+    private static byte[] ReadAll(Stream s) { using var m = new MemoryStream(); s.CopyTo(m); return m.ToArray(); }
+
     private static string TrimZeros(string s) => s.Contains('.') ? s.TrimEnd('0').TrimEnd('.') : s;
 
     /// <summary>Two cells are the same answer when their text is, or when both are numbers within a relative 1e-9 (the engines' floating point differs in the last digits).</summary>
@@ -196,6 +204,8 @@ public sealed class Execution : IAsyncDisposable
     {
         var t = typeName.ToLowerInvariant();
         if (t.Contains("interval")) return "interval";
+        if (t.Contains('[') || t.Contains("list") || t.Contains("array") || t.StartsWith('_')) return "list";
+        if (t.Contains("struct") || t == "record" || t.Contains("row")) return "struct";
         if (t.Contains("timestamp") || t.Contains("datetime")) return "timestamp";
         if (t == "date") return "date";
         if (t.StartsWith("time", StringComparison.Ordinal)) return "time";
