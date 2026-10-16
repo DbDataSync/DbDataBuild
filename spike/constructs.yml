@@ -130,3 +130,4 @@
 - { id: sign_fn,             sql: "SELECT SIGN(a) AS x FROM t",                                       expect: translate }
 - { id: trunc_fn,            sql: "SELECT TRUNC(CAST(a AS DOUBLE) / 3) AS x FROM t",                   expect: translate }
 - { id: strpos_fn,           sql: "SELECT STRPOS(s, 'b') AS x FROM t",                                 expect: translate }
+- { id: log_fn,              sql: "SELECT LOG(a) AS x FROM t",                                         expect: differs }

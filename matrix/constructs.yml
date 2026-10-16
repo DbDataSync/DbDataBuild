@@ -342,3 +342,9 @@
   fabric:    { status: unverified, note: "Observed on SQL Server only; no Fabric engine was available to test." }
   postgres:  { status: native }
 
+- id: fn.log
+  detect: detector:log_single_argument
+  duckdb: native
+  sqlserver: { status: approximated, test: spike/log_fn, note: "log(x) is the base-10 logarithm in DuckDB and the natural logarithm in T-SQL (log(2.5): 0.398 and 0.916). A query is rewritten by the target rule log-base-ten (LOG10(x)) and no longer reports this. log(b, x) is written LOG(x, b) and agrees." }
+  fabric:    { status: unverified, note: "The target rule log-base-ten is applied; not run on Fabric." }
+  postgres: { status: native }

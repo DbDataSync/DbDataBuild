@@ -61,6 +61,8 @@ public static class RewriteCatalog
         new("date-diff-argument-order", RewriteLayer.Target, BigQuery, BigQuery, "date_diff('day' | 'month' | 'quarter' | 'year', a, b) is DATE_DIFF(b, a, PART)", "the transpile writes DuckDB's argument order with the part as a column name"),
         new("regexp-replace-first", RewriteLayer.Target, SqlServer17, None, "regexp_replace replaces the first match, or every match with the 'g' flag: the occurrence is written out (1, or 0)", "SQL Server's REGEXP_REPLACE replaces every match"),
         new("now-with-zone", RewriteLayer.Target, SqlServer, None, "now() and current_timestamp are SYSDATETIMEOFFSET(), a point in time", "GETDATE() is the server's local clock without a zone: stored in a column with a zone it is read as UTC, wrong by the server's offset"),
+        new("log-base-ten", RewriteLayer.Target, SqlServer, None, "log(x) with one argument is the base-10 logarithm: LOG10(x)", "T-SQL's LOG(x) is the natural logarithm (log(2.5) is 0.916 where DuckDB gives 0.398)"),
+        new("log-with-base", RewriteLayer.Target, Postgres, Postgres, "log(b, x) is ln(x) / ln(b) in double arithmetic, which is how DuckDB computes it", "PostgreSQL's log(b, x) takes numeric: with a double precision argument the call fails (function log(integer, double precision) does not exist)"),
         new("string-agg-array", RewriteLayer.Target, Postgres, Postgres, "string_agg is array_to_string(array_agg(... ORDER BY ...), sep)", "polyglot writes LISTAGG, which PostgreSQL does not have"),
     ];
 

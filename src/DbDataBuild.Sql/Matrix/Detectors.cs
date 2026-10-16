@@ -40,6 +40,8 @@ public static class Detectors
         // date_part('week' | 'epoch' | ...): the parts the engines do not agree on (dow and isodow are rewritten by a target rule)
         ["date_part_calendar"] = n => n.Type == "function" && string.Equals(n.GetString("name"), "DATE_PART", StringComparison.OrdinalIgnoreCase) &&
             n.TryGet("args", out var args) && args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 && LiteralValue(args[0]) is "week" or "weekofyear" or "epoch" or "yearweek",
+        // log(x): base 10 in DuckDB, the natural logarithm in T-SQL (a target rule writes LOG10; this reports it when the rule is turned off)
+        ["log_single_argument"] = n => n.Type == "log" && !NonNull(n, "base"),
         // substr(s, -2): DuckDB counts from the end
         ["substring_negative_start"] = n => n.Type == "substring" && n.TryGet("start", out var start) && (start.ToString().Contains("\"neg\"", StringComparison.Ordinal) || LiteralValue(start)?.StartsWith('-') == true),
     };

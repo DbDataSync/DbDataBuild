@@ -62,6 +62,7 @@ public class MatrixLinterTests
         ["fn.string_agg"] = "SELECT STRING_AGG(s, ',' ORDER BY a) AS x FROM t",
         ["fn.date_part_calendar"] = "SELECT DATE_PART('week', d) AS x FROM t",
         ["fn.substring_negative"] = "SELECT SUBSTR(s, -2) AS x FROM t",
+        ["fn.log"] = "SELECT LOG(a) AS x FROM t",
         ["syntax.lateral"] = "SELECT * FROM t, LATERAL (SELECT u.b FROM u WHERE u.a = t.a) AS l",
     };
 

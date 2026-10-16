@@ -88,6 +88,21 @@ public sealed class EngineProbe : IDisposable
         catch (Exception ex) { return (null, "CRASH " + ex.GetType().Name + ": " + FirstLine(ex.Message)); }   // a lowering that throws anything but a refusal is a tool bug
     }
 
+    public string Lowered(string sql)
+    {
+        try
+        {
+            string plan;
+            using (var cmd = duck.CreateCommand()) { cmd.CommandText = QueryDescriber.PlanStatement(sql); plan = (string)cmd.ExecuteScalar()!; }
+            var names = new List<string>();
+            using (var cmd = duck.CreateCommand()) { cmd.CommandText = "DESCRIBE " + sql; using var r = cmd.ExecuteReader(); while (r.Read()) names.Add(r.GetString(0)); }
+            return PlanLowerer.Lower(plan, names, null, null).Sql;
+        }
+        catch (Exception ex) { return "ERR " + ex.Message; }
+    }
+
+    public string LoweredAst(string sql) { var p = Polyglot.Parse(Lowered(sql), Dialects.Canonical); return p.Ok ? p.Data! : "PARSE " + p.Error; }
+
     public async Task<Outcome> OnEngineAsync(string rendered)
     {
         try

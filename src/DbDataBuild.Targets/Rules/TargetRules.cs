@@ -43,6 +43,8 @@ public static partial class TargetRules
     public const string LeftRightAsSubstr = "left-right-substr";
     public const string DateDiffArgumentOrder = "date-diff-argument-order";
     public const string NowKeepsTheZone = "now-with-zone";
+    public const string LogIsBaseTen = "log-base-ten";
+    public const string LogWithBase = "log-with-base";
 
     /// <summary>Applies the rules of <paramref name="target"/> to a DuckDB-dialect query. Returns the text unchanged, byte for byte, when no rule fires.</summary>
     /// <param name="version">The configured engine version (`targets.<target>.version`), when one is: a rule that needs a newer engine only fires from that version on.</param>
@@ -97,9 +99,9 @@ public static partial class TargetRules
 
     private static HashSet<string> RulesFor(string target, int? version = null) => target switch
     {
-        "sqlserver" => [NowKeepsTheZone, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
-        "postgres" => [RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
+        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [LogIsBaseTen, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "postgres" => [LogWithBase, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
         "spark" => [DivisionByZeroIsInfinity, ConcatSkipsNull, SplitPart, DateDiffBoundaries, DateDiffWeeks, WeekdayIndependentOfDateFirst, DoubleToInt, RegexpFullMatch, RegexpReplaceFlags, SubstringBounds, WeekOfYear],
@@ -136,6 +138,14 @@ public static partial class TargetRules
                 // server's offset on any server that is not at UTC. SYSDATETIMEOFFSET() carries the offset.
                 fired.Add(NowKeepsTheZone);
                 return Template("ddb_sysdatetimeoffset()");
+            case "log" when rules.Contains(LogIsBaseTen) && body["base"] is null && body["this"] is { } logOf:
+                // DuckDB's log(x) is the base-10 logarithm and the transpile writes LOG(x), which is the natural logarithm in T-SQL (log(2.5): 0.3979 and 0.9163). log(b, x) with a base is written LOG(x, b) and agrees.
+                fired.Add(LogIsBaseTen);
+                return Template("log10(__x)", ("__x", logOf));
+            case "log" when rules.Contains(LogWithBase) && body["base"] is { } logBase && body["this"] is { } logArgument:
+                // DuckDB computes log(b, x) in double arithmetic as ln(x) / ln(b). PostgreSQL's two-argument log takes numeric (log(integer, double precision) does not exist) and answers in numeric.
+                fired.Add(LogWithBase);
+                return Template("ln(CAST(__x AS DOUBLE)) / ln(CAST(__b AS DOUBLE))", ("__x", logArgument), ("__b", logBase));
             case "length" when rules.Contains(LengthKeepsTrailingSpaces) && body["this"] is { } x:
                 // LEN ignores trailing spaces; appending a character and taking one off counts them. NULL stays NULL.
                 fired.Add(LengthKeepsTrailingSpaces);
