@@ -86,7 +86,6 @@ public class EngineDifferenceProbes
     // or a note in docs/research/engine-differences/README.md. A case here must still differ: if it starts to agree, the test says so and the entry should go.
     private static readonly string DivisionByZero = "op.div: DuckDB 1.5 gives Infinity and NaN for a division by zero; the engines (rewritten to NULLIF) give NULL";
     private static readonly string Supplementary = "fn.length and docs: SQL Server counts and cuts UTF-16 code units, so a character outside the BMP (an emoji) is two";
-    private static readonly string Undefined = "not covered by the support matrix (DDB-305 at validate); the engine has no such function or a different one";
 
     public static readonly IReadOnlyDictionary<string, string> Known = new Dictionary<string, string>
     {
@@ -110,9 +109,9 @@ public class EngineDifferenceProbes
         ["sqlserver:substr_neg_len"] = "a negative length is an error on the engines; DuckDB returns an empty string",
         ["postgres:substr_neg_len"] = "a negative length is an error on the engines; DuckDB returns an empty string",
         ["sqlserver:left_neg"] = "a negative count is an error on SQL Server; DuckDB drops that many characters from the end",
-        ["sqlserver:dp_week"] = "fn.date_part_calendar: DATEPART(WEEK) is not the ISO week",
-        ["sqlserver:dp_epoch"] = "fn.date_part_calendar: no epoch part",
-        ["postgres:dp_epoch"] = "fn.date_part_calendar: not translated",
+       
+       
+       
                 ["sqlserver:lpad"] = Supplementary, ["sqlserver:rpad"] = Supplementary, ["sqlserver:lpad_short"] = Supplementary, ["sqlserver:lpad_multi"] = Supplementary, ["sqlserver:rpad_multi"] = Supplementary, ["sqlserver:lpad_exact"] = Supplementary, ["sqlserver:lpad_zero"] = Supplementary,
         ["sqlserver:strpos_concat"] = Supplementary, ["sqlserver:position_concat"] = Supplementary,
         ["sqlserver:dec_product_wide"] = "type.decimal_product_wide",
@@ -125,7 +124,7 @@ public class EngineDifferenceProbes
         ["sqlserver:w_nth_value"] = "fn.nth_value",
         ["sqlserver:contains"] = "fn.contains", ["postgres:contains"] = "fn.contains",
         ["sqlserver:corr"] = "fn.corr", ["sqlserver:approx_free_mode"] = "fn.mode", ["postgres:approx_free_mode"] = "fn.mode",
-        ["sqlserver:split_part"] = "fn.split_part", ["sqlserver:split_part_first"] = "fn.split_part", ["sqlserver:split_part_multichar"] = "fn.split_part", ["sqlserver:split_part_far"] = "fn.split_part", ["sqlserver:week"] = Undefined, ["postgres:week"] = Undefined, 
+        ["sqlserver:split_part"] = "fn.split_part", ["sqlserver:split_part_first"] = "fn.split_part", ["sqlserver:split_part_multichar"] = "fn.split_part", ["sqlserver:split_part_far"] = "fn.split_part", 
     };
 
     /// <summary>Documented differences of SQL Server 2022 that a 2025 run at compatibility level 170 does not have: the regular expression functions exist there, and the tool writes them (target rules from version 17).</summary>
