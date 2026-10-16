@@ -125,7 +125,7 @@ public class EngineDifferenceProbes
         ["sqlserver:w_nth_value"] = "fn.nth_value",
         ["sqlserver:contains"] = "fn.contains", ["postgres:contains"] = "fn.contains",
         ["sqlserver:corr"] = "fn.corr", ["sqlserver:approx_free_mode"] = "fn.mode", ["postgres:approx_free_mode"] = "fn.mode",
-        ["sqlserver:split_part"] = "fn.split_part", ["sqlserver:split_part_first"] = "fn.split_part", ["sqlserver:split_part_multichar"] = "fn.split_part", ["sqlserver:split_part_far"] = "fn.split_part", ["sqlserver:week"] = Undefined, ["postgres:week"] = Undefined, ["postgres:last_day"] = Undefined,
+        ["sqlserver:split_part"] = "fn.split_part", ["sqlserver:split_part_first"] = "fn.split_part", ["sqlserver:split_part_multichar"] = "fn.split_part", ["sqlserver:split_part_far"] = "fn.split_part", ["sqlserver:week"] = Undefined, ["postgres:week"] = Undefined, 
     };
 
     /// <summary>Documented differences of SQL Server 2022 that a 2025 run at compatibility level 170 does not have: the regular expression functions exist there, and the tool writes them (target rules from version 17).</summary>

@@ -82,7 +82,7 @@ public class ClockConformanceTests
         Assert.DoesNotMatch(DateLiteral, now.Sql);
         var instant = await probe.OnEngineAsync(now.Sql);
         Assert.Null(instant.Error);
-        var parsed = DateTime.ParseExact(instant.Rows, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        var parsed = DateTime.ParseExact(instant.Rows, ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.FFFFFF"], CultureInfo.InvariantCulture, DateTimeStyles.None);
         Assert.InRange(Math.Abs((parsed - DateTime.UtcNow).TotalMinutes), 0, 90);              // an engine's CAST of a time with a zone keeps its local or its UTC clock: within the offsets of any zone
     }
 }
