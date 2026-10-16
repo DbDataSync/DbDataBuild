@@ -535,11 +535,11 @@
   postgres:  { status: native }
 
 - id: fn.missing.datetime.postgres
-  detect: [fn:AGO, fn:DAYS_IN_MONTH]
+  detect: [fn:AGO]
   duckdb: native
   sqlserver: { status: native }
   fabric:    { status: native }
-  postgres:  { status: unsupported, test: spike/missing_datetime_postgres, note: "PostgreSQL 17 has no function named AGO, DAYS_IN_MONTH (not in pg_proc). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
+  postgres:  { status: unsupported, test: spike/missing_datetime_postgres, note: "PostgreSQL 17 has no function named AGO (not in pg_proc). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
 
 - id: fn.date_unit
   detect: detector:date_unit_unsupported

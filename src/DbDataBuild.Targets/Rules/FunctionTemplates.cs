@@ -132,6 +132,8 @@ public static class FunctionTemplates
         Trunc("hour", SqlServer, "date_trunc('hour', " + AsTimestamp + ")", Instants),
         Trunc("minute", SqlServer, "date_trunc('minute', " + AsTimestamp + ")", Instants),
         Trunc("second", SqlServer, "date_trunc('second', " + AsTimestamp + ")", Instants),
+        Trunc("millisecond", SqlServer, "date_trunc('millisecond', " + AsTimestamp + ")", Instants),
+        Trunc("microsecond", SqlServer, "date_trunc('microsecond', " + AsTimestamp + ")", Instants),
 
         // ---- date_diff (the boundaries crossed, as DuckDB counts them) ----
         Diff("decade", Both, "CAST(floor(date_part('year', __2) / 10.0) - floor(date_part('year', __1) / 10.0) AS BIGINT)", "DATE '2000-01-01', DATE '2024-06-01'", "dt, DATE '2031-03-17'", "DATE '2009-12-31', DATE '2010-01-01'", "DATE '2024-06-01', DATE '2000-01-01'", "ts, TIMESTAMP '2031-03-17 12:34:56.789'"),

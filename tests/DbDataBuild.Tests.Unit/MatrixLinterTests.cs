@@ -96,7 +96,7 @@ public class MatrixLinterTests
         ["fn.missing.internal"] = "SELECT ALIAS(a) AS x FROM t",
         ["fn.missing.datetime"] = "SELECT EPOCH_US(ts) AS x FROM t",
         ["fn.missing.datetime.sqlserver"] = "SELECT MAKE_TIMESTAMP(2024, 1, 2, 3, 4, 5.0) AS x FROM t",
-        ["fn.missing.datetime.postgres"] = "SELECT DAYS_IN_MONTH(d) AS x FROM t",
+        ["fn.missing.datetime.postgres"] = "SELECT AGO(INTERVAL 1 DAY) AS x FROM t",
         ["syntax.lateral"] = "SELECT * FROM t, LATERAL (SELECT u.b FROM u WHERE u.a = t.a) AS l",
     };
 

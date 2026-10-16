@@ -64,3 +64,39 @@ An overload is one signature of `duckdb_functions()`; most functions have many (
 4. **DDB-305 for a function that fails on every engine run** could become an error for the functions the matrix now knows to be missing (SQL Server: `acosh`, `asinh`, `atanh`, `cosh`, `cbrt`, `bin`, `dayname`, `epoch`...): add matrix rows (`unsupported`) from `function-matrix.csv`; there are 183 and 166 of them and each needs a fixture in `MatrixLinterTests` and a case in `spike/constructs.yml` (CLAUDE.md), so this is a batch job, not a quick edit.
 5. **FLOAT**: DuckDB's 32-bit FLOAT is written as 64-bit `FLOAT`/`DOUBLE PRECISION`. Either map to `REAL` (SQL Server) and `real` (PostgreSQL), or refuse FLOAT and tell the author to use DOUBLE. Recommended: map (both engines have a 32-bit type and the arithmetic then matches).
 6. **`strftime`/`date_part`/`date_trunc` parts** need a table of the parts and formats that translate, and DDB-324 for the rest: today they pass through and give other values. A rule table would be data (`matrix`-style).
+
+### 8. After the rewrites (entry 177)
+
+The matrix was rerun after the work of entry 177 (items 1 to 7 of the owner's list). Counts are those of the tables above, before and after; a function that is now refused with a message at compile (DDB-301 or DDB-324) counts as **refused**, which is the intended outcome for what has no exact translation.
+
+**Functions by worst outcome of any overload**
+
+| Outcome | SQL Server before | SQL Server after | PostgreSQL before | PostgreSQL after |
+|---|---|---|---|---|
+| works | 115 | 137 | 154 | 184 |
+| differs | 38 | 42 | 30 | 25 |
+| engine error | 191 | 28 | 168 | 38 |
+| refused | 138 | 282 | 130 | 242 |
+| lowerer error | 7 | 0 | 7 | 0 |
+
+**Functions judged on the overloads over common types**
+
+| Outcome | SQL Server before | SQL Server after | PostgreSQL before | PostgreSQL after |
+|---|---|---|---|---|
+| works | 120 | 159 | 153 | 196 |
+| differs | 31 | 31 | 25 | 19 |
+| engine error | 183 | 15 | 166 | 31 |
+| refused | 98 | 234 | 88 | 193 |
+| lowerer error | 7 | 0 | 7 | 0 |
+
+**Overloads**
+
+| Outcome | SQL Server before | SQL Server after | PostgreSQL before | PostgreSQL after |
+|---|---|---|---|---|
+| works | 299 | 424 | 404 | 545 |
+| differs | 89 | 93 | 67 | 63 |
+| engine error | 1458 | 94 | 1259 | 117 |
+| refused | 423 | 1668 | 346 | 1507 |
+| lowerer error | 43 | 0 | 43 | 0 |
+
+What changed: the silent wrong answers of section 1 for `log`, multi-unit intervals, `date_part` (week, isoyear, the time parts of a DATE, millisecond, microsecond, epoch, decade, century), `date_trunc('week')`, `date_diff` of the small units and of decade, century and millennium, `strftime` and `format`, FLOAT division and rounding, and the covariance are gone or refused with a name; the lowerer failures of section 2 are zero; the functions of section 3 that failed at the engine are rewritten (a table, `FunctionTemplates`) or refused at compile by the rows `fn.missing.*`. What is left in `engine error` is overloads over INTERVAL, TIME and BLOB arguments and a few functions whose arguments the probe builds in a way the engine rejects (`min(a, b)`, `left(text, bigint)` on PostgreSQL, `round(double, column)` on PostgreSQL); `differs` is mostly the documented domain differences (`power`, the hyperbolics, the string and UTF-16 findings) and the tolerance of the rewrites.

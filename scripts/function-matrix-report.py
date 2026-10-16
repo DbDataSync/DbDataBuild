@@ -186,6 +186,8 @@ for r in rows:
                 verdicts.append(f"{label}: row says {ms}, measured {o}")
             elif ms == "approximated" and o not in ("works", "differs"):
                 verdicts.append(f"{label}: row says approximated, measured {o}")
+            elif ms == "unsupported" and o == "works" and "rule" in str((r.get(e) or r.get("tsql") or {}).get("note", "")) + str((r.get(e) or {}).get("note", "")):
+                cells[-1] += " (the lowered text is rewritten by a target rule)"
             elif ms == "unsupported" and o == "works":
                 verdicts.append(f"{label}: row says unsupported, measured works")
         w(f"| `{r['id']}` | `{esc(f['function'])}` | {cells[0]} | {cells[1]} | {'; '.join(verdicts) if verdicts else 'agrees'} |")

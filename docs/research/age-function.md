@@ -1,6 +1,6 @@
 # Scoping `age()` for SQL Server and PostgreSQL
 
-Owner request 2026-10-15, part B (entry 176). The owner saw `age(...)` reach SQL Server as `AGE(...)`, a function that does not exist there. This note says what DuckDB's `age` is, whether PostgreSQL's matches, how SQL Server can express each shape a model uses, and what to build. **Nothing is built**; the translation is a decision (section 8).
+Owner request 2026-10-15, part B (entry 176). The owner saw `age(...)` reach SQL Server as `AGE(...)`, a function that does not exist there. This note says what DuckDB's `age` is, whether PostgreSQL's matches, how SQL Server can express each shape a model uses, and what to build. **Built in entry 177** (rule `age-parts` for SQL Server and Fabric, `normalized-interval` and `age-second` for PostgreSQL, matrix row `fn.age`, test `AgeRuleConformance` on 961 ordered pairs times 12 shapes on both engines); the section 8 recommendation was followed as written.
 
 Everything here is measured by `scripts/age-probe.sh` (test `AgeProbe`, `tests/DbDataBuild.Tests.Conformance/FunctionMatrix/AgeProbe.cs`; output `docs/research/age-function-results.txt`) on DuckDB 1.5.6 (the one the tool ships), **SQL Server 2022 (16.0.4265, version 16)** and **PostgreSQL 17.11**. Fabric was not run.
 
