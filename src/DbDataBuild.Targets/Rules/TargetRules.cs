@@ -79,6 +79,7 @@ public static partial class TargetRules
     public static string Finish(string transpiled, string target)
     {
         if (target == "sqlserver") transpiled = TsqlLiterals.Nationalize(transpiled);
+        if (target is "sqlserver" or "fabric") transpiled = ExpandOperatorMarkers(transpiled);
         foreach (var (marker, spelling, markerTarget) in Markers)
             if (markerTarget == target) transpiled = System.Text.RegularExpressions.Regex.Replace(transpiled, marker, spelling, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         return transpiled;
@@ -100,9 +101,9 @@ public static partial class TargetRules
 
     private static HashSet<string> RulesFor(string target, int? version = null) => target switch
     {
-        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [LogIsBaseTen, IntervalAsDateAdd, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
-        "postgres" => [LogWithBase, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
+        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "postgres" => [LogWithBase, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
         "spark" => [DivisionByZeroIsInfinity, ConcatSkipsNull, SplitPart, DateDiffBoundaries, DateDiffWeeks, WeekdayIndependentOfDateFirst, DoubleToInt, RegexpFullMatch, RegexpReplaceFlags, SubstringBounds, WeekOfYear],
@@ -133,6 +134,7 @@ public static partial class TargetRules
     {
         var (kind, body) = (o.First().Key, o.First().Value as JsonObject);
         if (body == null) return null;
+        if (FunctionRewrite(kind, body, target, rules, fired) is { } functionRule) return functionRule;
         switch (kind)
         {
             case "function" when rules.Contains(NowKeepsTheZone) && body["name"]?.GetValue<string>() is "now" && body["args"] is JsonArray { Count: 0 }:

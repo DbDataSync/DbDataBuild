@@ -85,3 +85,7 @@
 - { node: union, evidence: [union_dedupe, union_all] }
 - { node: upper, evidence: [lower_upper] }
 - { node: window_function, evidence: [row_number, window_sum, lag_lead] }
+- { node: bitwise_and, evidence: [bit_ops] }
+- { node: bitwise_or, evidence: [bit_ops] }
+- { node: bitwise_not, evidence: [bit_ops] }
+- { node: starts_with, evidence: [starts_with_op] }

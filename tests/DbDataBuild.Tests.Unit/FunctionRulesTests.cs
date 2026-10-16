@@ -1,4 +1,5 @@
 using System.Globalization;
+using DbDataBuild.Lowering;
 using DbDataBuild.Sql;
 using DbDataBuild.Targets.DuckDb;
 using DbDataBuild.Targets.Rules;
@@ -177,5 +178,197 @@ public class FunctionRulesTests
         var sql = TargetRules.Apply("SELECT dt + INTERVAL '1 month 2 days' AS v FROM d", "sqlserver").Sql;
         var diags = new DbDataBuild.Sql.Matrix.MatrixLinter(DbDataBuild.Sql.Matrix.MatrixLoader.LoadEmbedded([])).Lint(sql, "m.sql", ["sqlserver"]);
         Assert.DoesNotContain(diags, d => d.Code == "DDB-301");
+    }
+
+    // ---- bit operators, shifts, power and factorial ----
+
+    private static string Lowered(string sql)
+    {
+        using var c = PlanningConnection.Open(lockDown: false);
+        Run(c, "CREATE TABLE t (i INTEGER, j INTEGER, b BIGINT, sm SMALLINT, ti TINYINT, h HUGEINT, x DOUBLE, s VARCHAR)");
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = QueryDescriber.PlanStatement(sql);
+        return PlanLowerer.Lower((string)cmd.ExecuteScalar()!).Sql;
+    }
+
+    private static string Transpiled(string lowered, string target)
+    {
+        var r = TargetRules.Apply(lowered, target);
+        return TargetRules.Finish(Polyglot.TranspileOne(r.Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
+    }
+
+    [Theory]
+    [InlineData("SELECT i & j AS v FROM t", "(i & j)")]
+    [InlineData("SELECT i | j AS v FROM t", "(i | j)")]
+    [InlineData("SELECT i ^ j AS v FROM t", "(CAST(i AS DOUBLE) ** CAST(j AS DOUBLE))")]
+    [InlineData("SELECT x ** 2 AS v FROM t", "** CAST(2 AS DOUBLE)")]
+    [InlineData("SELECT 2 ^ -1 AS v FROM t", "(CAST(2 AS DOUBLE) ** CAST(-1 AS DOUBLE))")]
+    [InlineData("SELECT power(2, i) AS v FROM t", "power(CAST(2 AS DOUBLE),")]
+    [InlineData("SELECT i! AS v FROM t", "factorial(i)")]
+    [InlineData("SELECT s ^@ 'a' AS v FROM t", "starts_with(s, 'a')")]
+    [InlineData("SELECT i << 3 AS v FROM t", "(CAST(i AS INTEGER) << 3)")]
+    [InlineData("SELECT b >> j AS v FROM t", "(CAST(b AS BIGINT) >> CAST(j AS BIGINT))")]
+    [InlineData("SELECT sm << 2 AS v FROM t", "(CAST(sm AS SMALLINT) << 2)")]
+    public void The_lowerer_writes_the_operators_the_parser_reads(string sql, string expected)
+    {
+        var lowered = Lowered(sql);
+        Assert.Contains(expected, lowered);
+        Assert.True(Polyglot.Parse(lowered, Dialects.Canonical).Ok, lowered);
+    }
+
+    [Theory]
+    [InlineData("SELECT ti << 1 AS v FROM t", "TINYINT")]
+    [InlineData("SELECT h >> 1 AS v FROM t", "HUGEINT")]
+    public void A_shift_over_a_type_that_cannot_be_shifted_exactly_everywhere_is_refused_with_the_type_named(string sql, string type)
+    {
+        var ex = Assert.Throws<LoweringException>(() => Lowered(sql));
+        Assert.Contains(type, ex.Message);
+    }
+
+    [Fact]
+    public void Shifts_are_written_as_exact_arithmetic_on_each_engine()
+    {
+        const string left = "SELECT CAST(i AS INTEGER) << CAST(j AS INTEGER) AS v FROM t";
+        var tsql = Transpiled(left, "sqlserver");
+        Assert.Contains("CAST(CAST(i AS NUMERIC(38, 0)) * POWER(CAST(2 AS NUMERIC(38, 0)), CAST(j AS INTEGER)) AS INTEGER)", tsql);
+        Assert.Equal(TargetRules.Apply(left, "sqlserver").Rules, [TargetRules.ShiftLeft]);
+        Assert.Contains("* 8 AS INTEGER)", Transpiled("SELECT CAST(i AS INTEGER) << 3 AS v FROM t", "sqlserver"));
+        Assert.DoesNotContain("<<", tsql);
+        Assert.DoesNotContain("<<", Transpiled(left, "postgres"));                                           // PostgreSQL's << wraps silently
+        var right = Transpiled("SELECT CAST(i AS INTEGER) >> CAST(j AS INTEGER) AS v FROM t", "sqlserver");
+        Assert.DoesNotContain(">>", right);
+        Assert.DoesNotContain("DDB_IDIV", right, StringComparison.OrdinalIgnoreCase);                          // the marker is gone: a whole-number division
+        Assert.Contains("~((~CAST(i AS BIGINT)) / (", right.Replace("\n", "").Replace("  ", " "));
+        Assert.Contains("CAST(i AS INT) >> CAST(", Transpiled("SELECT CAST(i AS INTEGER) >> CAST(j AS INTEGER) AS v FROM t", "postgres"));
+        Assert.Contains("CASE WHEN b < 0 THEN -1 ELSE 0 END", Transpiled("SELECT CAST(b AS BIGINT) >> 63 AS v FROM t", "sqlserver"));      // 2^63 does not fit a BIGINT
+        Assert.DoesNotContain("POWER(CAST(2 AS BIGINT)", Transpiled("SELECT CAST(b AS BIGINT) >> 3 AS v FROM t", "sqlserver"));              // a literal count needs no POWER
+    }
+
+    [Fact]
+    public void The_exclusive_or_is_the_caret_on_SQL_Server_the_hash_on_PostgreSQL_and_a_big_literal_is_a_bigint()
+    {
+        Assert.Contains("((i) ^ (j))", Transpiled("SELECT xor(i, j) AS v FROM t", "sqlserver").Replace("\n", ""));
+        Assert.Contains("i # j", Transpiled("SELECT xor(i, j) AS v FROM t", "postgres"));
+        Assert.Contains("CAST(4294967295 AS BIGINT)", Transpiled("SELECT (b & 4294967295) AS v FROM t", "sqlserver"));
+        Assert.Contains("(b & 4294967295)", Transpiled("SELECT (b & 4294967295) AS v FROM t", "postgres"));
+        Assert.Empty(TargetRules.Apply("SELECT (i & 255) AS v FROM t", "sqlserver").Rules);                         // an INT-sized literal is fine
+    }
+
+    [Fact]
+    public void The_factorial_table_covers_0_to_33_and_overflows_beyond()
+    {
+        var sql = Transpiled("SELECT factorial(i) AS v FROM t", "sqlserver");
+        Assert.Contains("WHEN 33 THEN CAST('8683317618811886495518194401280000000' AS NUMERIC(38, 0))", sql);
+        Assert.DoesNotContain("WHEN 34", sql);
+        Assert.Contains("ELSE CAST(CAST(i AS FLOAT) * 1E38 AS NUMERIC(38, 0))", sql.Replace("1e38", "1E38"));
+        Assert.Equal([TargetRules.FactorialTable], TargetRules.Apply("SELECT factorial(i) AS v FROM t", "postgres").Rules);
+    }
+
+    private static DuckDBConnection Numbers()
+    {
+        var c = PlanningConnection.Open(lockDown: false);
+        // the rule writes ddb_idiv for the engine's whole-number division; DuckDB's // is that (truncating toward zero), and these values are far inside what a double holds exactly
+        Run(c, "CREATE MACRO ddb_idiv(a, b) AS CAST(trunc(CAST(a AS DOUBLE) / CAST(b AS DOUBLE)) AS BIGINT)");
+        Run(c, "CREATE TABLE n (i INTEGER, j INTEGER, b BIGINT)");
+        var rows = new List<string>();
+        foreach (var i in new[] { -2147483648L, -65536L, -8L, -7L, -1L, 0L, 1L, 7L, 8L, 1000L, 65535L, 2147483647L })
+            foreach (var j in new[] { -1, 0, 1, 2, 3, 15, 16, 30, 31, 32, 33, 62, 63, 64 })
+                rows.Add($"({i}, {j}, {(i * 1_000_003L) % 4_000_000_000_000L})");
+        Run(c, "INSERT INTO n VALUES " + string.Join(", ", rows));
+        return c;
+    }
+
+    [Theory]
+    [InlineData("SELECT i, j, CAST(i AS INTEGER) >> CAST(j AS INTEGER) AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(i AS INTEGER) >> 3 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(i AS INTEGER) >> 31 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(i AS INTEGER) >> 32 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(i AS INTEGER) >> -1 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(b AS BIGINT) >> CAST(j AS INTEGER) AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(b AS BIGINT) >> 17 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(b AS BIGINT) >> 63 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(i AS BIGINT) >> CAST(j AS INTEGER) AS v FROM n")]
+    public void A_right_shift_written_as_arithmetic_gives_DuckDBs_value_on_the_edges(string sql)
+    {
+        using var c = Numbers();
+        foreach (var target in new[] { "sqlserver", "postgres" })
+        {
+            var r = TargetRules.Apply(sql, target);
+            Assert.Equal([TargetRules.ShiftRight], r.Rules);
+            Assert.Equal(Rows(c, sql), Rows(c, r.Sql));
+        }
+    }
+
+    [Theory]
+    [InlineData("SELECT i, j, CAST(abs(i % 65536) AS INTEGER) << CAST(j AS INTEGER) AS v FROM n WHERE j BETWEEN 0 AND 14")]
+    [InlineData("SELECT i, j, CAST(abs(i % 65536) AS INTEGER) << 3 AS v FROM n")]
+    [InlineData("SELECT i, j, CAST(abs(i % 1000) AS BIGINT) << CAST(j AS INTEGER) AS v FROM n WHERE j BETWEEN 0 AND 40")]
+    [InlineData("SELECT i, j, CAST(abs(i % 100) AS SMALLINT) << 2 AS v FROM n")]
+    public void A_left_shift_written_as_a_product_gives_DuckDBs_value_where_DuckDB_has_one(string sql)
+    {
+        using var c = Numbers();
+        foreach (var target in new[] { "sqlserver", "postgres" })
+        {
+            var r = TargetRules.Apply(sql, target);
+            Assert.Equal([TargetRules.ShiftLeft], r.Rules);
+            Assert.Equal(Rows(c, sql), Rows(c, r.Sql));
+        }
+    }
+
+    [Theory]
+    [InlineData("SELECT i, CAST(factorial(abs(i % 1000) % 34) AS VARCHAR) AS v FROM n")]
+    [InlineData("SELECT i, CAST(CAST(abs(j) AS INTEGER)! AS VARCHAR) AS v FROM n WHERE j < 34")]
+    public void The_factorial_table_gives_DuckDBs_digits(string sql)
+    {
+        using var c = Numbers();
+        foreach (var target in new[] { "sqlserver", "postgres" })
+        {
+            var r = TargetRules.Apply(sql.Replace("CAST(abs(j) AS INTEGER)!", "factorial(CAST(abs(j) AS INTEGER))"), target);
+            Assert.Contains(TargetRules.FactorialTable, r.Rules);
+            Assert.Equal(Rows(c, sql.Replace("CAST(abs(j) AS INTEGER)!", "factorial(CAST(abs(j) AS INTEGER))")), Rows(c, r.Sql));
+        }
+    }
+
+    [Theory]
+    [InlineData("SELECT factorial(abs(i % 1000) + 34) AS v FROM n")]
+    [InlineData("SELECT factorial(-abs(i % 1000) - 1) AS v FROM n")]
+    public void Where_the_factorial_raises_in_DuckDB_the_rewritten_text_raises_too(string sql)
+    {
+        using var c = Numbers();
+        Assert.ThrowsAny<DuckDBException>(() => Rows(c, sql));
+        Assert.ThrowsAny<DuckDBException>(() => Rows(c, TargetRules.Apply(sql, "sqlserver").Sql));
+    }
+
+    [Fact]
+    public void Where_DuckDB_raises_for_a_shift_the_rewritten_text_is_not_asked_to_match()
+    {
+        // documented in the rule: a negative value, a negative count and a count beyond the width raise in DuckDB; the engine returns the product (or raises on overflow, which is DuckDB's other case)
+        using var c = Numbers();
+        Assert.ThrowsAny<DuckDBException>(() => Rows(c, "SELECT CAST(-1 AS INTEGER) << CAST(j AS INTEGER) FROM n"));
+        Assert.ThrowsAny<DuckDBException>(() => Rows(c, "SELECT CAST(1 AS INTEGER) << CAST(j AS INTEGER) FROM n"));
+    }
+
+    [Theory]
+    [InlineData("SELECT i & j AS v FROM t")]
+    [InlineData("SELECT i | j AS v FROM t")]
+    [InlineData("SELECT ~i AS v FROM t")]
+    [InlineData("SELECT xor(i, j) AS v FROM t")]
+    [InlineData("SELECT i ^ j AS v FROM t")]
+    [InlineData("SELECT x ** 2 AS v FROM t")]
+    [InlineData("SELECT power(x, 2) AS v FROM t")]
+    [InlineData("SELECT i << 3 AS v FROM t")]
+    [InlineData("SELECT i >> j AS v FROM t")]
+    [InlineData("SELECT b << j AS v FROM t")]
+    [InlineData("SELECT i! AS v FROM t")]
+    [InlineData("SELECT s ^@ 'a' AS v FROM t")]
+    public void The_operators_are_covered_by_the_matrix_after_their_rules_have_run(string sql)
+    {
+        var lowered = Lowered(sql);
+        var linter = new DbDataBuild.Sql.Matrix.MatrixLinter(DbDataBuild.Sql.Matrix.MatrixLoader.LoadEmbedded([]));
+        foreach (var target in new[] { "sqlserver", "fabric", "postgres" })
+        {
+            var diags = linter.Lint(TargetRules.Apply(lowered, target).Sql, "m.sql", [target]).Where(d => d.Severity != DbDataBuild.Core.Severity.Note && d.Code != "DDB-304").ToList();
+            Assert.True(diags.Count == 0, $"{sql} on {target}: {string.Join(" | ", diags.Select(d => d.Code + " " + d.Found))}");
+        }
     }
 }

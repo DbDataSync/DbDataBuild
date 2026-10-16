@@ -41,6 +41,26 @@ public class FunctionRuleProbes
         S("iv_jan31_plus", "TIMESTAMP '2023-01-31 00:00:00' + INTERVAL '1 month 1 day'"), S("iv_mar31_minus", "TIMESTAMP '2024-03-31 00:00:00' - INTERVAL '1 month 1 day'"),
         S("iv_micro_edge", "TIMESTAMP '2024-01-31 23:59:59.999999' + INTERVAL '1 month 0.000001 seconds'"), S("iv_micro_edge_sub", "TIMESTAMP '2024-03-01 00:00:00' - INTERVAL '1 day 0.000001 seconds'"),
         S("iv_century_boundary", "TIMESTAMP '1999-12-31 23:59:59' + INTERVAL '1 month 1 second'"), S("iv_many_hours", "TIMESTAMP '2024-01-01 00:00:00' + INTERVAL '1 month 100000 hours'"),
+        // bit operators, shifts, power and factorial (the plan names them by their symbols; polyglot did not read them back)
+        V("band", "i & j"), V("bor", "i | j"), V("bnot", "~i"), V("xor_fn", "xor(i, j)"), V("band_big", "CAST(i AS BIGINT) & 4294967295"), V("bor_big", "CAST(i AS BIGINT) | 4294967296"), V("xor_big", "xor(CAST(i AS BIGINT), 1099511627776)"),
+        V("band_neg_lit", "i & -2"), V("bnot_big", "~CAST(i AS BIGINT)"), V("bit_precedence", "i & j | 8"), V("xor_nested", "xor(i & 3, j | 4)"),
+        V("shl_col", "(abs(i) % 1000) << (abs(j) % 8)"), V("shl_lit", "(abs(i) % 1000) << 3"), V("shl_zero", "(abs(i) % 1000) << 0"), V("shl_big", "(CAST(abs(i) AS BIGINT) % 1000) << (abs(j) % 40)"), V("shl_big_lit", "CAST(abs(i) % 1000 AS BIGINT) << 50"),
+        V("shl_small", "CAST(abs(i) % 100 AS SMALLINT) << 2"), V("shl_30", "CAST(abs(i) % 2 AS INTEGER) << 30"), V("shl_nullable_count", "(abs(i) % 1000) << (abs(j) + id - id)"),
+        S("shl_one_30", "CAST(1 AS INTEGER) << 30"), S("shl_big_62", "CAST(1 AS BIGINT) << 62"), V("shl_overflow_errors", "CAST(abs(i) % 2 + 1 AS INTEGER) << 31"), V("shl_big_overflow_errors", "CAST(abs(i) % 2 + 1 AS BIGINT) << 63"),
+        V("shl_width_errors", "CAST(abs(i) % 2 + 1 AS INTEGER) << 32"), V("shl_max_errors", "CAST(2147483647 + (i - i) AS INTEGER) << 1"), V("shl_small_overflow_errors", "CAST(abs(i) % 2 + 20000 AS SMALLINT) << 1"),
+        V("shl_just_fits", "CAST(abs(i) % 2 + 1 AS INTEGER) << 30 >> 29"), V("shl_big_just_fits", "CAST(abs(i) % 2 AS BIGINT) << 62"),
+        V("shr_col", "i >> j"), V("shr_abs", "i >> abs(j)"), V("shr_lit", "i >> 2"), V("shr_lit_one", "i >> 1"), V("shr_lit_31", "i >> 31"), V("shr_lit_32", "i >> 32"), V("shr_negative_lit", "i >> -1"), V("shr_zero", "i >> 0"),
+        V("shr_big", "CAST(i AS BIGINT) * 1000000000 >> abs(j)"), V("shr_big_neg", "CAST(i AS BIGINT) * -1000000000 >> abs(j)"), V("shr_big_lit62", "CAST(i AS BIGINT) * 1000000000 * 1000000000 >> 62"),
+        V("shr_big_lit63", "CAST(i AS BIGINT) * 1000000000 * -1000000000 >> 63"), V("shr_big_lit64", "CAST(i AS BIGINT) * 1000000000 >> 64"), V("shr_big_col_wide", "CAST(i AS BIGINT) * 1000000000 * 1000000000 >> (abs(j) * 31)"),
+        V("shr_small", "CAST(i % 1000 AS SMALLINT) >> abs(j)"), V("shr_small_16", "CAST(i % 1000 AS SMALLINT) >> 16"), V("shr_expr_count", "i >> (j + 1)"),
+        S("shr_int_min", "CAST(-2147483647 - 1 AS INTEGER) >> 1"), S("shr_int_min_31", "CAST(-2147483647 - 1 AS INTEGER) >> 31"), S("shr_int_minus_one", "CAST(-1 AS INTEGER) >> 5"), S("shr_big_min", "CAST(-9223372036854775807 - 1 AS BIGINT) >> 1"),
+        S("shr_big_min_62", "CAST(-9223372036854775807 - 1 AS BIGINT) >> 62"), S("shr_big_min_63", "CAST(-9223372036854775807 - 1 AS BIGINT) >> 63"), S("shr_big_max_63", "CAST(9223372036854775807 AS BIGINT) >> 63"), S("shr_big_max_62", "CAST(9223372036854775807 AS BIGINT) >> 62"),
+        S("shr_odd_negative", "CAST(-7 AS INTEGER) >> 1"), S("shr_minus_eight", "CAST(-8 AS INTEGER) >> 1"),
+        V("pow_op", "abs(i) ^ 2"), V("pow_dstar", "d ** 2"), V("pow_frac", "abs(d) ^ 0.5"), V("pow_neg", "2 ^ -1"), V("pow_int_int", "i ^ j"), V("pow_decimal", "n ^ 2"), S("pow_big", "2 ^ 62"), S("pow_zero_zero", "0 ^ 0"), V("pow_fn", "power(abs(i), 3)"),
+        V("pow_assoc", "2 ^ 3 ^ 2"), V("pow_neg_base", "(-2) ^ 3"), V("pow_sci", "d ^ 1"),
+        V("fact_postfix", "CAST((abs(i) % 34)! AS VARCHAR)"), V("fact_fn", "CAST(factorial(abs(i) % 34) AS VARCHAR)"), V("fact_33", "CAST(factorial(33 + (i - i)) AS VARCHAR)"), V("fact_zero_one", "CAST(factorial(abs(j) % 2) AS VARCHAR)"),
+        V("fact_34_errors", "CAST(factorial(abs(i) + 34) AS VARCHAR)", engines: null), V("fact_negative_errors", "CAST(factorial(-abs(i) - 1) AS VARCHAR)"), V("fact_arith", "factorial(5 + (i - i)) / 120"),
+        V("starts_op", "s ^@ 'a'"), V("starts_op_col", "s ^@ s"), V("starts_op_empty", "s ^@ ''"),
     ];
 
     [SkippableTheory]
@@ -59,7 +79,12 @@ public class FunctionRuleProbes
         {
             var expected = probe.OnDuckDb(c.Sql);
             var (rendered, refused) = probe.Render(c.Sql);
-            if (rendered == null) { problems.Add($"{c.Id}: refused ({refused})"); continue; }
+            if (rendered == null)
+            {
+                if (expected.Error != null && refused != null && refused.StartsWith("duckdb:", StringComparison.Ordinal)) continue;       // DuckDB itself rejects the query before there is a plan
+                problems.Add($"{c.Id}: refused ({refused})");
+                continue;
+            }
             var actual = await probe.OnEngineAsync(rendered);
             if (expected.Error != null)
             {

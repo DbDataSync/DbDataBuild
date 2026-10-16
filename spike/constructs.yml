@@ -132,3 +132,10 @@
 - { id: strpos_fn,           sql: "SELECT STRPOS(s, 'b') AS x FROM t",                                 expect: translate }
 - { id: log_fn,              sql: "SELECT LOG(a) AS x FROM t",                                         expect: differs }
 - { id: interval_text,       sql: "SELECT d + CAST('1 d' AS INTERVAL) AS x FROM t",                   expect: unsupported }
+- { id: bit_ops,             sql: "SELECT a & b AS x, a | b AS y, ~a AS z FROM t",                       expect: translate }
+- { id: starts_with_op,      sql: "SELECT s ^@ 'a' AS x FROM t",                                        expect: translate }
+- { id: power_ops,           sql: "SELECT POWER(CAST(a AS DOUBLE), 2) AS x, CAST(a AS DOUBLE) ** 2 AS y FROM t", expect: translate }
+- { id: shift_ops,           sql: "SELECT a << 2 AS x, a >> 1 AS y FROM t",                             expect: unsupported }
+- { id: factorial_fn,        sql: "SELECT FACTORIAL(a) AS x FROM t",                                    expect: unsupported }
+- { id: xor_fn,              sql: "SELECT XOR(a, b) AS x FROM t",                                       expect: unsupported }
+

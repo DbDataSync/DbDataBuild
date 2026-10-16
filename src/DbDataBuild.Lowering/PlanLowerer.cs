@@ -540,6 +540,26 @@ public sealed class PlanLowerer
         }
         // round(x) is round(x, 0); SQL Server has no one-argument form
         if (name == "round" && a.Count == 1 && TypeId(children[0]) != "DOUBLE") a.Add("0");
+        // power takes doubles in DuckDB; a whole-number constant the binder widened is written as a plain literal, which T-SQL types as an int (POWER(2, -1) is 0 there, POWER(2, 62) an overflow): spelled as a double
+        if (name is "power" or "pow" or "^" or "**" && a.Count == 2)
+            for (var i = 0; i < 2; i++)
+                if (Regex.IsMatch(a[i], @"^\(?-?\d+\)?$")) a[i] = $"CAST({a[i]} AS DOUBLE)";
+        // the operators that have no function-call spelling the parser reads: the plan names them by their symbols (`&`, `|`, `<<`, `>>`, `^`, `^@`, and `!__postfix` for the postfix factorial)
+        if (name == "^@" && a.Count == 2) return $"starts_with({a[0]}, {a[1]})";
+        if (name == "!__postfix" && a.Count == 1) return $"factorial({a[0]})";
+        if (name == "^" && a.Count == 2) return $"({a[0]} ** {a[1]})";                            // `^` is the power operator in DuckDB (the exclusive or is xor())
+        if (name is "&" or "|" && a.Count == 2) return $"({a[0]} {name} {a[1]})";
+        if (name is "<<" or ">>" && a.Count == 2)
+        {
+            // The target step writes a shift as arithmetic, for which it needs the width of the value: the explicit cast says it (and changes nothing in DuckDB, where the value has that type already).
+            // A TINYINT is signed here and unsigned on SQL Server, and the unsigned and 128-bit types have no counterpart: refused.
+            var shifted = argTypes.Count > 0 ? argTypes[0] : TypeId(children[0]);
+            if (shifted is not ("SMALLINT" or "INTEGER" or "BIGINT")) throw new LoweringException($"the shift operator {name} over {shifted ?? "an unknown type"} (only SMALLINT, INTEGER and BIGINT can be shifted exactly on every engine)");
+            var shiftRule = name == "<<" ? "shift-left" : "shift-right";
+            if (!On(shiftRule)) return $"({a[0]} {name} {a[1]})";                                  // the engine's own shift, as the project asked
+            rules.Add(shiftRule);
+            return $"(CAST({a[0]} AS {shifted}) {name} {a[1]})";
+        }
         var anyDate = children.Any(c => TypeId(c) == "DATE");
         string text;
         if (LikeFunctions.TryGetValue(name, out var like) && a.Count == 2) return $"({a[0]} {like} {a[1]})";

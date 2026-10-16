@@ -356,3 +356,31 @@
   fabric:    { status: unverified, note: "The target rule interval-dateadd is applied; not run on Fabric." }
   postgres: { status: native }
 
+- id: op.shift
+  detect: [node:bitwise_left_shift, node:bitwise_right_shift]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/shift_ops, note: "T-SQL has no << or >> (SQL Server 2022 has LEFT_SHIFT and RIGHT_SHIFT, which wrap silently and fill with zeros). A lowered query is rewritten by the target rules shift-left and shift-right (exact arithmetic: a product in DECIMAL(38, 0) cast back to the type, and a floor division by a power of two) and no longer reports this; a model that is not lowered still does. Only SMALLINT, INTEGER and BIGINT are shifted." }
+  fabric:    { status: unverified, note: "The same target rules are applied; not run on Fabric." }
+  postgres:  { status: translated, test: spike/shift_ops, note: "PostgreSQL's << wraps silently on overflow (DuckDB raises) and its >> takes the count modulo the width. A lowered query is rewritten by shift-left (a product, cast back, which raises on overflow) and shift-right (>> for the counts inside the width, 0 outside, as in DuckDB). With the rewrites turned off the engine's own operators apply." }
+
+- id: fn.factorial
+  detect: [fn:FACTORIAL, fn:DDB_FACTORIAL]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/factorial_fn, note: "SQL Server has no factorial. A lowered query is rewritten by the target rule factorial-table (the 34 exact values, DECIMAL(38, 0); an overflow error for any other number, as in DuckDB) and no longer reports this." }
+  fabric:    { status: unverified, note: "The same target rule is applied; not run on Fabric." }
+  postgres:  { status: approximated, test: spike/factorial_fn, note: "PostgreSQL's factorial gives a numeric for 34 and beyond where DuckDB raises. A lowered query is rewritten by factorial-table and no longer reports this." }
+
+- id: fn.xor
+  detect: [fn:XOR]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/xor_fn, note: "T-SQL's exclusive or is the operator ^. A lowered query is rewritten by the target rule bit-operators (a ^ b) and no longer reports this." }
+  fabric:    { status: unverified, note: "The same target rule is applied; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.power
+  detect: [fn:POWER, fn:POW, node:power]
+  duckdb: native
+  sqlserver: { status: translated, test: spike/power_ops, note: "power(x, y), pow and the operators ^ and ** are POWER on doubles (a whole-number constant is written as a double: T-SQL's POWER(2, -1) is 0). Where DuckDB gives Infinity or NaN (an overflow, 0 to a negative power, a negative base to a fraction) SQL Server raises an error." }
+  fabric:    { status: unverified, note: "Observed on SQL Server only; no Fabric engine was available to test." }
+  postgres:  { status: translated, test: spike/power_ops, note: "As on SQL Server: where DuckDB gives Infinity or NaN PostgreSQL raises an error." }
+

@@ -123,6 +123,7 @@ public sealed class MatrixLinter(SupportMatrix matrix)
         if (node.Type == "function")
         {
             var name = node.GetString("name") ?? "<unnamed>";
+            if (name.StartsWith("ddb_", StringComparison.OrdinalIgnoreCase)) return;           // a marker a target rule wrote (ddb_idiv, ddb_xor): the tool's own, turned into an operator after the transpile
             if (!matrix.IsCoveredFunction(name) && seen.Add($"fn:{name}:{loc.Line}:{loc.Column}"))
                 diags.Add(NotCovered(config, loc, $"function `{name.ToUpperInvariant()}`"));
             return;

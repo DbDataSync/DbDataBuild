@@ -59,7 +59,8 @@ public static class Detectors
     private static bool WideDecimalCast(AstNode n, string side) =>
         n.TryGet(side, out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty("cast", out var c) && c.ValueKind == JsonValueKind.Object &&
         c.TryGetProperty("to", out var to) && to.ValueKind == JsonValueKind.Object && to.TryGetProperty("data_type", out var dt) && dt.GetString() == "decimal" &&
-        to.TryGetProperty("precision", out var precision) && precision.ValueKind == JsonValueKind.Number && precision.GetInt32() >= 37;
+        to.TryGetProperty("precision", out var precision) && precision.ValueKind == JsonValueKind.Number && precision.GetInt32() >= 37 &&
+        to.TryGetProperty("scale", out var scale) && scale.ValueKind == JsonValueKind.Number && scale.GetInt32() > 0;      // (DECIMAL(38, 0) times DECIMAL(38, 0) is exact: the shift rules use it)
 
     private static string? LiteralValue(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty("literal", out var l) && l.ValueKind == JsonValueKind.Object && l.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()?.ToLowerInvariant() : null;
