@@ -47,6 +47,10 @@ public static partial class TargetRules
     public const string LogWithBase = "log-with-base";
     public const string HyperbolicFunctionsRule = FunctionTemplates.HyperbolicFunctions;
     public const string IntervalAsDateAdd = "interval-dateadd";
+    public const string ValuesInChunks = "values-chunks";
+
+    /// <summary>SQL Server (and Fabric, which follows it) takes at most 1000 row value expressions in one VALUES constructor (error 10738).</summary>
+    public const int ValuesRowLimit = 1000;
 
     /// <summary>Applies the rules of <paramref name="target"/> to a DuckDB-dialect query. Returns the text unchanged, byte for byte, when no rule fires.</summary>
     /// <param name="version">The configured engine version (`targets.<target>.version`), when one is: a rule that needs a newer engine only fires from that version on.</param>
@@ -114,8 +118,8 @@ public static partial class TargetRules
 
     private static HashSet<string> BaseRules(string target, int? version) => target switch
     {
-        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "sqlserver" => [ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
         "postgres" => [CovarianceExact, NormalizedIntervalStrip, AgeSecond, LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
@@ -304,6 +308,9 @@ public static partial class TargetRules
                     },
                 };
             }
+            case "subquery" when rules.Contains(ValuesInChunks) && ValuesInChunksOf(body):
+                fired.Add(ValuesInChunks);
+                return o;
             case "add" or "sub" when rules.Contains(IntervalAsDateAdd) && IntervalArithmetic(kind, body, fired) is { } dateAdded:
                 return dateAdded;
             case "neg" when rules.Contains(IntervalAsDateAdd) && body["this"] is { } negated && IntervalOf(negated) is { } negatedParts:
@@ -681,6 +688,42 @@ public static partial class TargetRules
             return Template($"CASE WHEN regexp_matches(__x, '{NumberPattern}') THEN CASE WHEN abs(CAST(__x AS DECIMAL(38, {s}))) < {bound} THEN __cast END END", ("__x", x), ("__cast", cast));
         }
         return Template($"CASE WHEN regexp_matches(__x, '{NumberPattern}') THEN __cast END", ("__x", x), ("__cast", cast));
+    }
+
+    // ---- VALUES lists on SQL Server -------------------------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// `(VALUES ...) AS t(a, b)` of more than <see cref="ValuesRowLimit"/> rows becomes `(SELECT a, b FROM (VALUES first 1000) AS g(a, b) UNION ALL SELECT a, b FROM (VALUES next 1000) AS g(a, b) ...) AS t(a, b)`.
+    /// The lowerer names the columns and casts every cell to the column's type, so the branches agree on their types. A list without column names (nothing the lowerer writes) is left for the engine to refuse.
+    /// </summary>
+    private static bool ValuesInChunksOf(JsonObject subquery)
+    {
+        if (subquery["this"] is not JsonObject { Count: 1 } inner || inner["values"] is not JsonObject values || values["expressions"] is not JsonArray rows || rows.Count <= ValuesRowLimit) return false;
+        if (subquery["column_aliases"] is not JsonArray { Count: > 0 } aliases) return false;
+        var names = aliases.Select(a => a?["name"]?.GetValue<string>()).ToList();
+        if (names.Any(n => n is null)) return false;
+        var list = string.Join(", ", names.Select(n => System.Text.RegularExpressions.Regex.IsMatch(n!, "^[a-z_][a-z0-9_]*$") ? n! : "\"" + n!.Replace("\"", "\"\"") + "\""));
+        var parsed = Polyglot.Parse($"SELECT {list} FROM (VALUES (1)) AS ddb_chunk({list})", Dialects.Canonical);
+        if (!parsed.Ok) throw new InvalidOperationException($"The VALUES chunk template does not parse: {parsed.Error}. This is a tool bug.");
+        var template = JsonNode.Parse(parsed.Data!)![0]!["select"]!;
+        JsonNode? chain = null;
+        foreach (var chunk in rows.Chunk(ValuesRowLimit))
+        {
+            var select = template.DeepClone();
+            var chunkValues = select["from"]!["expressions"]![0]!["subquery"]!["this"]!["values"]!;
+            chunkValues["expressions"] = new JsonArray(chunk.Select(r => r!.DeepClone()).ToArray());
+            var branch = new JsonObject { ["select"] = select };
+            chain = chain is null ? branch : new JsonObject
+            {
+                ["union"] = new JsonObject
+                {
+                    ["left"] = chain, ["right"] = branch, ["all"] = true, ["distinct"] = false, ["with"] = null, ["order_by"] = null, ["limit"] = null, ["offset"] = null,
+                    ["by_name"] = false, ["corresponding"] = false, ["strict"] = false,
+                },
+            };
+        }
+        subquery["this"] = chain;
+        return true;
     }
 
     // ---- templates -------------------------------------------------------------------------------------------------------------------------------------------

@@ -209,6 +209,13 @@
   fabric:    { status: unverified, note: "Same text as SQL Server; Fabric support for APPLY not checked." }
   postgres:  { status: native }
 
+- id: syntax.values_list
+  detect: node:values
+  duckdb: native
+  sqlserver: { status: translated, test: spike/values_list, note: "A VALUES list (inline or as `(VALUES ...) AS t(a, b)`) is the table value constructor on both engines. Lowering gives every cell DuckDB's column type (a cast of the cell), names the columns col0, col1, ... as DuckDB does, and refuses a column type the engines cannot hold exactly (TINYINT, unsigned and 128-bit integers, TIME, intervals, lists, structs) and a list that reads another table's columns. SQL Server takes 1000 rows in one constructor: the target rule values-chunks writes a longer list as UNION ALL of lists of 1000. Verified on SQL Server 2022 by the conformance tests in ValuesListConformance." }
+  fabric:    { status: unverified, note: "Fabric is expected to follow SQL Server (1000 rows per constructor, the same rule); nothing was run there." }
+  postgres:  { status: native }
+
 - id: str.case_mapping
   detect: [node:upper, node:lower]
   duckdb: native
