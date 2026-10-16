@@ -49,7 +49,7 @@ public class ValuesListTests
     }
 
     private static string Render(string lowered, string target) =>
-        TargetRules.Finish(Polyglot.TranspileOne(TargetRules.Apply(lowered, target).Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
+        TargetRules.Finish(TargetRules.Transpile(TargetRules.Apply(lowered, target).Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
 
     /// <summary>A list of <paramref name="count"/> rows of an integer, a text and a decimal that is NULL on every seventh row.</summary>
     private static string ManyRows(int count) =>
@@ -234,7 +234,7 @@ public class ValuesListTests
         using var c = Open();
         var lowered = Lower(c, "SELECT * FROM (VALUES (1 = 1), (NULL)) AS v(a)");
         Assert.Contains("CAST(CASE WHEN (1 = 1) THEN TRUE WHEN NOT (1 = 1) THEN FALSE END AS BOOLEAN)", lowered);
-        Assert.Contains("CAST(CASE WHEN (1 = 1) THEN 1 WHEN NOT (1 = 1) THEN 0 END AS BIT)", Render(lowered, "sqlserver"));
+        Assert.Contains("CAST(CASE WHEN (1 = 1) THEN CAST(1 AS BIT) WHEN NOT (1 = 1) THEN CAST(0 AS BIT) END AS BIT)", Render(lowered, "sqlserver"));
     }
 
     [Fact]
@@ -247,24 +247,98 @@ public class ValuesListTests
         Assert.DoesNotContain("FLOAT", Render(lowered, "sqlserver"));
     }
 
-    [Fact]
-    public void A_cell_with_an_interval_makes_SQL_Server_a_SELECT_per_row_because_the_DATEADD_is_written_only_in_a_select_list()
+    public static TheoryData<string> IntervalCellQueries => new()
+    {
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' + INTERVAL 1 MONTH, 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + 3, 1), (DATE '2024-03-31' - 4, 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (3 + DATE '2024-01-31')) AS v(d)",
+        "SELECT * FROM (VALUES (TIMESTAMP '2024-01-31 10:00:00' + INTERVAL '1 day 2 hours', 1), (TIMESTAMP '2024-03-31 00:00:00' + INTERVAL '3 hours', 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' - INTERVAL 1 MONTH, 1), (DATE '2024-03-31' - INTERVAL '2 days', 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL '1 month 2 days 03:04:05', 1)) AS v(d, n)",
+        "SELECT * FROM (VALUES (INTERVAL 1 DAY + DATE '2024-01-31', 1), (INTERVAL '1 month' + DATE '2024-01-31', 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES ((DATE '2024-01-31' + INTERVAL 1 MONTH) + INTERVAL 2 DAY, 1)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 DAY * 3, 1), (DATE '2024-01-31' + 2 * INTERVAL 1 WEEK, 2)) AS v(d, n)",
+        "SELECT * FROM (VALUES (CAST(NULL AS DATE) + INTERVAL 1 MONTH, 1), (DATE '2024-01-31' + INTERVAL 1 YEAR, 2), (DATE '2024-01-31' + INTERVAL 1 QUARTER, 3)) AS v(d, n)",
+        "SELECT * FROM (VALUES (DATE '2024-02-29' + INTERVAL 12 MONTH, 'x'), (DATE '2024-01-31' + to_days(10), 'y')) AS v(d, s)",
+        "SELECT * FROM (VALUES (1, DATE '2024-01-31' + (1 + 2)), (2, TIMESTAMP '2024-01-31 23:59:59.5' + INTERVAL 1 SECOND)) AS v(n, d)",
+    };
+
+    [Theory]
+    [MemberData(nameof(IntervalCellQueries))]
+    public void An_interval_cell_is_one_ordinary_constructor_with_DATEADD_in_the_cells_on_SQL_Server_and_Fabric(string source)
     {
         using var c = Open();
-        var lowered = Lower(c, "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' + INTERVAL 1 MONTH, 2)) AS v(d, n)");
+        var lowered = Lower(c, source);
         foreach (var target in new[] { "sqlserver", "fabric" })
         {
-            Assert.Contains(TargetRules.ValuesAsSelects, TargetRules.Apply(lowered, target).Rules);
             var text = Render(lowered, target);
-            Assert.Contains("DATEADD(MONTH, 1,", text);
+            Assert.Contains("(VALUES", text);
+            Assert.Contains("DATEADD(", text);
             Assert.DoesNotContain("INTERVAL", text);
-            Assert.Contains("UNION ALL", text);
-            Assert.DoesNotContain("VALUES", text);
+            Assert.DoesNotContain("UNION ALL", text);
+            Assert.DoesNotContain("ddb_", text);
         }
-        Assert.Empty(TargetRules.Apply(lowered, "postgres").Rules);
         Assert.Contains("(VALUES", Render(lowered, "postgres"));
-        // the select-per-row form is the same rows on DuckDB
-        var rewritten = TargetRules.Apply(lowered, "sqlserver").Sql;
-        Assert.Equal(Run(c, lowered).Rows, Run(c, rewritten).Rows);
+        // the lowered query is DuckDB's rows (the differential; the engines' rows are in ValuesListConformance)
+        Assert.Equal(Run(c, source).Rows, Run(c, lowered).Rows);
+    }
+
+    [Theory]
+    [InlineData("ceil(1.2)", "sqlserver", "CEILING(")]
+    [InlineData("'a' || 'b'", "sqlserver", "'a' + 'b'")]
+    [InlineData("ln(2.0)", "sqlserver", "LOG(")]
+    [InlineData("current_date", "sqlserver", "CAST(GETDATE() AS DATE)")]
+    [InlineData("last_day(DATE '2024-01-15')", "sqlserver", "EOMONTH(")]
+    [InlineData("CAST(1.5 AS VARCHAR)", "sqlserver", "VARCHAR(MAX)")]
+    [InlineData("regexp_matches('abc', 'b')", "postgres", "'abc' ~ 'b'")]
+    [InlineData("DATE '2024-01-01' - DATE '2023-01-01'", "postgres", "EXTRACT(epoch FROM")]
+    [InlineData("length('a ')", "sqlserver", "LEN('a ' + 'x') - 1")]
+    public void A_cell_that_is_an_expression_is_translated_as_it_is_in_a_select_list(string cell, string target, string expected)
+    {
+        using var c = Open();
+        var text = Render(Lower(c, $"SELECT * FROM (VALUES ({cell}), ({cell})) AS v(a)"), target);
+        Assert.Contains("(VALUES", text);
+        Assert.Contains(expected, text);
+        Assert.DoesNotContain("ddb_cell", text);
+    }
+
+    [Fact]
+    public void A_list_of_constants_is_transpiled_as_before_and_equal_cells_are_transpiled_once()
+    {
+        using var c = Open();
+        Assert.Equal("SELECT col0 AS a, col1 AS b FROM (VALUES (1, 'x'), (2, CAST(NULL AS VARCHAR))) AS vals(col0, col1)", Render(Lower(c, "SELECT * FROM (VALUES (1, 'x'), (2, NULL)) AS v(a, b)"), "postgres"));
+        var many = Lower(c, "SELECT * FROM (VALUES " + string.Join(", ", Enumerable.Range(1, 50).Select(i => $"({i}, upper('a') || 'b')")) + ") AS v(a, b)");
+        var text = Render(many, "sqlserver");
+        Assert.Equal(50, Regex.Count(text, Regex.Escape("UPPER('a') + 'b'")));
+    }
+
+    [Fact]
+    public void The_text_of_an_interval_cell_on_SQL_Server_is_DATEADD_with_a_whole_number_in_the_cell()
+    {
+        using var c = Open();
+        var text = Render(Lower(c, "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' - 4, 2)) AS v(d, n)"), "sqlserver");
+        Assert.Contains("DATEADD(MONTH, 1, CAST('2024-01-31' AS DATE))", text);
+        Assert.Contains("DATEADD(DAY, -(4), CAST('2024-03-31' AS DATE))", text);
+    }
+
+    [Theory]
+    [InlineData(1001)]
+    [InlineData(5000)]
+    public void A_long_list_with_interval_cells_is_chunked_as_any_list_is_with_the_DATEADD_in_each_chunk(int count)
+    {
+        using var c = Open();
+        var source = "SELECT * FROM (VALUES " + string.Join(", ", Enumerable.Range(1, count).Select(i => $"(DATE '2024-01-31' + INTERVAL {i % 5 + 1} MONTH, {i}, DATE '2024-03-01' + {i % 9})")) + ") AS v(d, n, e)";
+        var lowered = Lower(c, source);
+        var chunks = (count + TargetRules.ValuesRowLimit - 1) / TargetRules.ValuesRowLimit;
+        foreach (var target in new[] { "sqlserver", "fabric" })
+        {
+            Assert.Contains(TargetRules.ValuesInChunks, TargetRules.Apply(lowered, target).Rules);
+            var text = Render(lowered, target);
+            Assert.Equal(chunks - 1, Regex.Count(text, "UNION ALL"));
+            Assert.Equal(chunks, Regex.Count(text, @"\(VALUES"));
+            Assert.Equal(count * 2, Regex.Count(text, "DATEADD"));
+            Assert.DoesNotContain("INTERVAL", text);
+        }
+        Assert.Equal(Run(c, source).Rows, Run(c, TargetRules.Apply(lowered, "sqlserver").Sql).Rows);
     }
 }

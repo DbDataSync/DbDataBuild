@@ -226,7 +226,7 @@ public static class Planner
         try { native = c.Ddl.MapAll(def); }
         catch (DdlUnsupportedException ex) { blocks.Add(ex.Diagnostic); return false; }
 
-        var (outcome, body) = Polyglot.TranspileOne(DbDataBuild.Targets.Rules.TargetRules.Apply(c.Model.BodySql, c.Input.Engine, RewriteCatalog.For(c.Input.Config, c.Def), c.Input.Config.TargetVersions.TryGetValue(c.Input.Target, out var tv) ? tv : null).Sql, Dialects.Canonical, TargetRegistry.Get(c.Input.Engine).Dialect);
+        var (outcome, body) = DbDataBuild.Targets.Rules.TargetRules.Transpile(DbDataBuild.Targets.Rules.TargetRules.Apply(c.Model.BodySql, c.Input.Engine, RewriteCatalog.For(c.Input.Config, c.Def), c.Input.Config.TargetVersions.TryGetValue(c.Input.Target, out var tv) ? tv : null).Sql, Dialects.Canonical, TargetRegistry.Get(c.Input.Engine).Dialect);
         if (body != null) body = DbDataBuild.Targets.Rules.TargetRules.Finish(body, c.Input.Engine);
         if (body != null && c.Model.Natives is { Count: > 0 } natives)
         {

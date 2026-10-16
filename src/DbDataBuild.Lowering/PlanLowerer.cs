@@ -1051,7 +1051,9 @@ public sealed class PlanLowerer
     {
         var text = Expr(cell, []);
         if (IsConstant(cell)) return Str(cell, "type") == "VALUE_CONSTANT" && (IsNullConstant(cell) || type is not ("VARCHAR" or "INTEGER" or "DECIMAL" or "DATE" or "TIMESTAMP")) ? $"CAST({text} AS {(type == "FLOAT" ? "REAL" : type)})" : text;
-        return type == "BOOLEAN" ? $"CAST(CASE WHEN {text} THEN TRUE WHEN NOT {text} THEN FALSE END AS BOOLEAN)" : text;
+        if (type == "BOOLEAN") return $"CAST(CASE WHEN {text} THEN TRUE WHEN NOT {text} THEN FALSE END AS BOOLEAN)";
+        // a BIGINT cell that is a calculation (length, year, a number of days, a count) is an INT on SQL Server and a NUMERIC on PostgreSQL for several of these functions; the column is BIGINT in DuckDB
+        return type == "BIGINT" && Str(cell, "type") != "OPERATOR_CAST" ? $"CAST({text} AS BIGINT)" : text;
     }
 
     private static bool IsNullConstant(JsonElement e) => e.GetProperty("value").TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True;

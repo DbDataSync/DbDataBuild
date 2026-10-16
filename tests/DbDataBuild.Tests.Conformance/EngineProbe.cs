@@ -91,7 +91,7 @@ public sealed class EngineProbe : IDisposable
             using (var cmd = duck.CreateCommand()) { cmd.CommandText = "DESCRIBE " + sql; using var r = cmd.ExecuteReader(); while (r.Read()) names.Add(r.GetString(0)); }
             var lowered = PlanLowerer.Lower(plan, names, null, rewrites).Sql;
             var ruled = TargetRules.Apply(lowered, engine.Name, rewrites, engine.Version).Sql;
-            var (outcome, text) = Polyglot.TranspileOne(ruled, Dialects.Canonical, Dialects.ForTarget(engine.Name));
+            var (outcome, text) = TargetRules.Transpile(ruled, Dialects.Canonical, Dialects.ForTarget(engine.Name));
             return outcome.Ok && text != null ? (TargetRules.Finish(text, engine.Name), null) : (null, "transpile: " + (outcome.Error ?? "failed"));
         }
         catch (LoweringException ex) { return (null, ex.Message); }

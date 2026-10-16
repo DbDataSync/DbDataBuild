@@ -139,7 +139,7 @@ public sealed class LoadRenderer(SupportMatrix matrix, MatrixLinter linter, Proj
             diags.Add(new Diagnostic(DiagnosticCatalog.InputResolverInvalid, new(file, 0, 0), $"{who} cannot be rendered: {string.Join("; ", blockers)}.", Fix: "Rewrite the construct, or compute the value with an `expression` resolver."));
             return (null, diags);
         }
-        var (outcome, transpiled) = Polyglot.TranspileOne(ruled.Sql.Trim().TrimEnd(';'), Dialects.Canonical, target.Dialect);
+        var (outcome, transpiled) = Rules.TargetRules.Transpile(ruled.Sql.Trim().TrimEnd(';'), Dialects.Canonical, target.Dialect);
         if (transpiled == null)
         {
             diags.Add(new Diagnostic(DiagnosticCatalog.InputResolverInvalid, new(file, 0, 0), $"{who} cannot be rendered: the transpiler reported: {outcome.Error}."));
@@ -162,7 +162,7 @@ public sealed class LoadRenderer(SupportMatrix matrix, MatrixLinter linter, Proj
         var ruled = Rules.TargetRules.Apply(bodySql, target.Name, RewriteCatalog.For(config, def), config.TargetVersions.TryGetValue(connection, out var targetVersion) ? targetVersion : null);
         bodySql = ruled.Sql;
         var wrapped = $"WITH {LoadersBodyName} AS ({bodySql.Trim().TrimEnd(';').TrimEnd()})\nSELECT * FROM {LoadersBodyName}";
-        var (outcome, transpiled) = Polyglot.TranspileOne(wrapped, Dialects.Canonical, target.Dialect);
+        var (outcome, transpiled) = Rules.TargetRules.Transpile(wrapped, Dialects.Canonical, target.Dialect);
         if (transpiled == null)
         {
             diags.Add(new Diagnostic(DiagnosticCatalog.PairUnsupported, new(queryFile, 0, 0), $"{pair} cannot be rendered: the transpiler reported: {outcome.Error}.",

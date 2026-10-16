@@ -13,6 +13,10 @@ public class ValuesListConformance
     private static string Rows(int count) =>
         string.Join(", ", Enumerable.Range(1, count).Select(i => $"({i}, 's{i}', {(i % 7 == 0 ? "NULL" : $"{i}.25")}, {(i % 3 == 0 ? "NULL" : $"DATE '2024-01-{1 + i % 28:00}'")})"));
 
+    /// <summary>Rows with a date plus an interval of months, a date plus a number of days, and a timestamp plus an interval of hours (OPEN-ITEMS W-10(b), entry 180).</summary>
+    internal static string IntervalRows(int count) =>
+        string.Join(", ", Enumerable.Range(1, count).Select(i => $"(DATE '2024-01-31' + INTERVAL {i % 5 + 1} MONTH, {i}, DATE '2024-03-01' + {i % 9}, TIMESTAMP '2024-01-31 10:00:00' + INTERVAL '{i % 3} hours')"));
+
     private static readonly (string Id, string Sql)[] Cases =
     [
         ("nulls", "SELECT * FROM (VALUES (1, 'a'), (2, NULL), (NULL, 'c')) AS v(id, s)"),
@@ -35,6 +39,16 @@ public class ValuesListConformance
         ("float_cells", "SELECT * FROM (VALUES (CAST(1.1 AS FLOAT)), (CAST(2 AS FLOAT)), (NULL)) AS v(a)"),
         ("date_plus_interval", "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 MONTH, 1), (DATE '2024-03-31' + INTERVAL 1 MONTH, 2)) AS v(d, n)"),
         ("date_plus_days", "SELECT * FROM (VALUES (DATE '2024-01-31' + 3), (DATE '2024-02-28' + 2)) AS v(d)"),
+        ("interval_unit_cells", "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 YEAR, 1), (DATE '2024-01-31' + INTERVAL 1 QUARTER, 2), (DATE '2024-01-31' + INTERVAL 1 WEEK, 3), (DATE '2024-02-29' + INTERVAL 12 MONTH, 4), (CAST(NULL AS DATE) + INTERVAL 1 MONTH, 5)) AS v(d, n)"),
+        ("interval_subtract_cells", "SELECT * FROM (VALUES (DATE '2024-01-31' - INTERVAL 1 MONTH, 1), (DATE '2024-03-31' - INTERVAL '2 days', 2), (DATE '2024-03-31' - 4, 3)) AS v(d, n)"),
+        ("interval_text_cells", "SELECT * FROM (VALUES (TIMESTAMP '2024-01-31 10:00:00' + INTERVAL '1 day 2 hours', 1), (TIMESTAMP '2024-03-31 00:00:00' + INTERVAL '3 hours', 2), (DATE '2024-01-31' + INTERVAL '1 month 2 days 03:04:05', 3)) AS v(d, n)"),
+        ("interval_leading_and_nested_cells", "SELECT * FROM (VALUES (INTERVAL 1 DAY + DATE '2024-01-31', 1), ((DATE '2024-01-31' + INTERVAL 1 MONTH) + INTERVAL 2 DAY, 2), (3 + DATE '2024-01-31', 3)) AS v(d, n)"),
+        ("interval_times_number_cells", "SELECT * FROM (VALUES (DATE '2024-01-31' + INTERVAL 1 DAY * 3, 1), (DATE '2024-01-31' + 2 * INTERVAL 1 WEEK, 2), (TIMESTAMP '2024-01-31 00:00:00' + INTERVAL 90 MINUTE * 2, 3)) AS v(d, n)"),
+        ("interval_cells_in_join", "SELECT p.id, v.d FROM probe p JOIN (VALUES (1, DATE '2024-01-31' + INTERVAL 1 MONTH), (2, DATE '2024-03-31' + 3)) AS v(k, d) ON p.id = v.k"),
+        ("function_cells", "SELECT * FROM (VALUES (ceil(1.2), 'a' || 'b', CAST(length('a ') AS BIGINT), 7 // 2, 1 / 2.0, round(CAST(2.675 AS DOUBLE), 2), last_day(DATE '2024-01-15'), date_diff('week', DATE '2024-01-01', DATE '2024-02-01'), CAST(DATE '2024-03-01' - DATE '2024-01-01' AS BIGINT), CAST(year(DATE '2024-05-05') AS BIGINT))) AS v(a, b, c, d, e, f, g, h, i, j)"),
+        ("function_cells_many_rows", $"SELECT * FROM (VALUES {string.Join(", ", Enumerable.Range(1, 1200).Select(i => $"({i}, upper('a') || 'b{i}', CAST(length('x{i} ') AS BIGINT), ceil({i}.2), CAST(DATE '2024-03-01' - DATE '2024-01-{1 + i % 28:00}' AS BIGINT))"))}) AS v(a, b, c, d, e)"),
+        ("interval_cells_1001", $"SELECT * FROM (VALUES {IntervalRows(1001)}) AS v(d, n, e, t)"),
+        ("interval_cells_5000", $"SELECT * FROM (VALUES {IntervalRows(5000)}) AS v(d, n, e, t)"),
         ("join_side", "SELECT p.id, v.label FROM probe p JOIN (VALUES (1, 'one'), (2, 'two'), (7, 'seven'), (99, 'none')) AS v(k, label) ON p.id = v.k"),
         ("left_join_side", "SELECT p.id, v.label FROM probe p LEFT JOIN (VALUES (1, 'one'), (2, 'two')) AS v(k, label) ON p.id = v.k"),
         ("two_lists_joined", "SELECT v.id, w.n FROM (VALUES (1, 'x'), (2, 'y')) AS v(id, s) JOIN (VALUES (1, 10), (2, 20)) AS w(k, n) ON v.id = w.k"),

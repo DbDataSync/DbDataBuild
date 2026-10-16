@@ -15,7 +15,7 @@ namespace DbDataBuild.Tests.Unit;
 public class FloatWidthTests
 {
     private static string Render(string sql, string target) =>
-        TargetRules.Finish(Polyglot.TranspileOne(TargetRules.Apply(sql, target).Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
+        TargetRules.Finish(TargetRules.Transpile(TargetRules.Apply(sql, target).Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
 
     [Theory]
     [InlineData("SELECT CAST(x AS FLOAT) AS v FROM t")]

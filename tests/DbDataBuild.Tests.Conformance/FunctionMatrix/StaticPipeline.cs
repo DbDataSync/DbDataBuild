@@ -75,7 +75,7 @@ public sealed class StaticPipeline(DuckDBConnection duck)
         var lintErrors = lint.Where(d => d.Severity == Severity.Error).ToList();
 
         var tgt = TargetRegistry.Get(target);
-        var (outcome, text) = Polyglot.TranspileOne(ruled.Sql.Trim().TrimEnd(';'), Dialects.Canonical, tgt.Dialect);
+        var (outcome, text) = TargetRules.Transpile(ruled.Sql.Trim().TrimEnd(';'), Dialects.Canonical, tgt.Dialect);
         if (!outcome.Ok || text == null) return new("error", "transpile: " + FirstLine(outcome.Error ?? "failed"), null, lintCodes, "", ruled.Rules);
         var final = TargetRules.Finish(text, tgt.Name).Trim().TrimEnd(';');
         if (tgt.Dialect is "tsql" or "fabric") final = Regex.Replace(final, @"(GENERATE_SERIES\([^()]*\)) AS (\w+)\(value\)", "$1 AS $2", RegexOptions.IgnoreCase);

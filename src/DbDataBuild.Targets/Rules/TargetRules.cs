@@ -49,7 +49,6 @@ public static partial class TargetRules
     public const string HyperbolicFunctionsRule = FunctionTemplates.HyperbolicFunctions;
     public const string IntervalAsDateAdd = "interval-dateadd";
     public const string ValuesInChunks = "values-chunks";
-    public const string ValuesAsSelects = "values-selects";
 
     /// <summary>SQL Server (and Fabric, which follows it) takes at most 1000 row value expressions in one VALUES constructor (error 10738).</summary>
     public const int ValuesRowLimit = 1000;
@@ -64,7 +63,7 @@ public static partial class TargetRules
         var parsed = Polyglot.Parse(sql, Dialects.Canonical);
         if (!parsed.Ok) return new(sql, []);
         var fired = new SortedSet<string>(StringComparer.Ordinal);
-        var tree = Rewrite(JsonNode.Parse(parsed.Data!)!, target, rules, fired);
+        var tree = Rewrite(ParseTree(parsed.Data!), target, rules, fired);
         if (fired.Count == 0) return new(sql, []);
         var text = Polyglot.Generate(tree.ToJsonString(), Dialects.Canonical);
         if (!text.Ok) throw new InvalidOperationException($"Target rules ({string.Join(", ", fired)}) produced an AST polyglot cannot print: {text.Error}. This is a tool bug.");
@@ -97,6 +96,9 @@ public static partial class TargetRules
         return transpiled;
     }
 
+    /// <summary>The AST of a statement. A query of a few dozen joins and expressions nests deeper than the 64 levels `JsonNode.Parse` allows by default.</summary>
+    private static JsonNode ParseTree(string astJson) => JsonNode.Parse(astJson, documentOptions: new System.Text.Json.JsonDocumentOptions { MaxDepth = 4096 })!;
+
     private static string Unwrap(string data)
     {
         // Generate and Format return a JSON array of statements
@@ -120,8 +122,8 @@ public static partial class TargetRules
 
     private static HashSet<string> BaseRules(string target, int? version) => target switch
     {
-        "sqlserver" => [FloatWidth,ValuesAsSelects, ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [FloatWidth,ValuesAsSelects, ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "sqlserver" => [FloatWidth, ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [FloatWidth, ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
         "postgres" => [FloatWidth,CovarianceExact, NormalizedIntervalStrip, AgeSecond, LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
@@ -311,9 +313,6 @@ public static partial class TargetRules
                     },
                 };
             }
-            case "subquery" when rules.Contains(ValuesAsSelects) && ValuesAsSelectsOf(body):
-                fired.Add(ValuesAsSelects);
-                return o;
             case "subquery" when rules.Contains(ValuesInChunks) && ValuesInChunksOf(body):
                 fired.Add(ValuesInChunks);
                 return o;
@@ -372,10 +371,29 @@ public static partial class TargetRules
                 return IntervalParts.TryParse(written["value"]?.GetValue<string>() ?? "");
             case "interval" when body["unit"] is JsonObject { } unit && unit["type"]?.GetValue<string>() == "simple" && unit["unit"]?.GetValue<string>() is { } unitName && IntervalCount(body["this"]) is { } count:
                 return IntervalParts.OfUnit(count, unitName);
+            case "mul": return ScaledInterval(body);
             case "add" or "sub" when IntervalOf(body["left"]) is { } l && IntervalOf(body["right"]) is { } r:
                 try { return kind == "add" ? checked(l + r) : checked(l + r.Negated); } catch (OverflowException) { return null; }
             default: return null;
         }
+    }
+
+    /// <summary>An interval times a whole-number constant, either way round: each of its three parts times that number, which is what DuckDB does. Null for anything else (a column, a fraction, an overflow).</summary>
+    private static IntervalParts? ScaledInterval(JsonObject body)
+    {
+        var (interval, factor) = (IntervalOf(body["left"]), WholeConstant(body["right"]));
+        if (interval is null || factor is null) (interval, factor) = (IntervalOf(body["right"]), WholeConstant(body["left"]));
+        if (interval is not { } i || factor is not { } k) return null;
+        try { return checked(new IntervalParts(i.Months * k, i.Days * k, i.Microseconds * k)); } catch (OverflowException) { return null; }
+    }
+
+    /// <summary>A whole number written as a literal, in parentheses, negated, or under a cast to an integer type (the lowerer casts the constants of a VALUES row).</summary>
+    private static long? WholeConstant(JsonNode? n)
+    {
+        while (n?["paren"]?["this"] is { } inner) n = inner;
+        if (n?["neg"]?["this"] is { } negated) return WholeConstant(negated) is { } v ? -v : null;
+        if (n?["cast"] is JsonObject cast && cast["to"]?["data_type"]?.GetValue<string>() is "tiny_int" or "small_int" or "int" or "big_int") return WholeConstant(cast["this"]);
+        return n?["literal"] is JsonObject lit && lit["literal_type"]?.GetValue<string>() == "number" && long.TryParse(lit["value"]?.GetValue<string>(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole) ? whole : null;
     }
 
     /// <summary>The number of an `INTERVAL n UNIT`: a literal (the transpile reads `INTERVAL '3' DAY` and `INTERVAL 3 DAY` alike) or its negative.</summary>
@@ -766,43 +784,94 @@ public static partial class TargetRules
         return names.Any(n => n is null) ? null : string.Join(", ", names.Select(n => System.Text.RegularExpressions.Regex.IsMatch(n!, "^[a-z_][a-z0-9_]*$") ? n! : "\"" + n!.Replace("\"", "\"\"") + "\""));
     }
 
-    private static bool Contains(JsonNode? node, string key) => node switch
-    {
-        JsonObject o => o.Any(p => p.Key == key || Contains(p.Value, key)),
-        JsonArray a => a.Any(i => Contains(i, key)),
-        _ => false,
-    };
+    // ---- the transpile, with the cells of a VALUES list ------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// A VALUES row whose cell still holds an interval after the other rules (a date plus an interval, a date plus a number of days) is written as a SELECT per row joined by UNION ALL. The transpile turns
-    /// `date + INTERVAL n UNIT` into DATEADD only in a select list, never inside a VALUES row, so the cell would reach SQL Server as text it does not parse.
+    /// The transpile of the rules' output. polyglot rewrites a function, an operator or an interval for the engine wherever an expression stands except in the cells of a VALUES list that is a table in FROM,
+    /// where it only changes the types (measured on the pinned polyglot, entry 180: `d + INTERVAL 1 MONTH` stays an interval, `ceil`, `ln`, `starts_with`, `||`, `date_diff('day', ...)`, `current_date`
+    /// and `regexp_matches` reach SQL Server or PostgreSQL as DuckDB wrote them). A cell that is more than a constant is therefore replaced by a placeholder, the cells are transpiled together as the select
+    /// list of one query (which is where polyglot does its work), and their text goes back where the placeholders are. Everything else is the transpile as it was: a query with no such cell is passed through unchanged.
     /// </summary>
-    private static bool ValuesAsSelectsOf(JsonObject subquery)
+    public static (PolyglotOutcome Outcome, string? Sql) Transpile(string ruledSql, string from, string to)
     {
-        if (subquery["this"] is not JsonObject { Count: 1 } inner || inner["values"] is not JsonObject values || values["expressions"] is not JsonArray rows || !Contains(rows, "interval")) return false;
-        if (ColumnList(subquery) is not { } list) return false;
-        var count = list.Split(", ").Length;
-        var parsed = Polyglot.Parse("SELECT " + string.Join(", ", Enumerable.Range(0, count).Select(i => $"1 AS ddb_c{i}")), Dialects.Canonical);
-        if (!parsed.Ok) throw new InvalidOperationException($"The VALUES row template does not parse: {parsed.Error}. This is a tool bug.");
-        var template = JsonNode.Parse(parsed.Data!)![0]!["select"]!;
-        JsonNode? chain = null;
-        foreach (var row in rows)
+        // (a statement with no VALUES list has nothing to do here, and the parse is the costly part of it)
+        if (!ruledSql.Contains("VALUES", StringComparison.OrdinalIgnoreCase)) return Polyglot.TranspileOne(ruledSql, from, to);
+        var parsed = Polyglot.Parse(ruledSql, from);
+        if (!parsed.Ok || parsed.Data is null) return Polyglot.TranspileOne(ruledSql, from, to);
+        var tree = ParseTree(parsed.Data);
+        var cells = new List<JsonNode>();
+        var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!CellsToPlaceholders(tree, cells, seen)) return Polyglot.TranspileOne(ruledSql, from, to);
+        var main = Polyglot.Generate(tree.ToJsonString(), from);
+        if (!main.Ok) throw new InvalidOperationException($"The VALUES placeholders produced an AST polyglot cannot print: {main.Error}. This is a tool bug.");
+        // one query whose select list is the cells, each under an alias that marks where it ends
+        var batch = Polyglot.Parse("SELECT " + string.Join(", ", cells.Select((_, i) => $"1 AS ddb_c{i}")), from);
+        if (!batch.Ok) throw new InvalidOperationException($"The VALUES cell template does not parse: {batch.Error}. This is a tool bug.");
+        var batchTree = ParseTree(batch.Data!);
+        var items = batchTree[0]!["select"]!["expressions"]!.AsArray();
+        for (var i = 0; i < cells.Count; i++) items[i]!["alias"]!["this"] = cells[i];
+        var batchText = Polyglot.Generate(batchTree.ToJsonString(), from);
+        if (!batchText.Ok) throw new InvalidOperationException($"The VALUES cells produced an AST polyglot cannot print: {batchText.Error}. This is a tool bug.");
+        var (mainOutcome, mainSql) = Polyglot.TranspileOne(Unwrap(main.Data!), from, to);
+        if (mainSql is null) return (mainOutcome, null);
+        var (cellOutcome, cellSql) = Polyglot.TranspileOne(Unwrap(batchText.Data!), from, to);
+        if (cellSql is null) return (cellOutcome, null);
+        // the select list: `SELECT e0 AS ddb_c0, e1 AS ddb_c1, ...`; an expression ends where its alias begins
+        var pieces = new List<string>();
+        var start = "SELECT ".Length;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(cellSql, @"\s+AS\s+ddb_c(\d+)\s*(?:,\s*|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
         {
-            if (row?["expressions"] is not JsonArray { } cells || cells.Count != count) return false;
-            var select = template.DeepClone();
-            for (var j = 0; j < count; j++) select["expressions"]![j]!["alias"]!["this"] = cells[j]!.DeepClone();
-            var branch = new JsonObject { ["select"] = select };
-            chain = chain is null ? branch : new JsonObject
-            {
-                ["union"] = new JsonObject
-                {
-                    ["left"] = chain, ["right"] = branch, ["all"] = true, ["distinct"] = false, ["with"] = null, ["order_by"] = null, ["limit"] = null, ["offset"] = null,
-                    ["by_name"] = false, ["corresponding"] = false, ["strict"] = false,
-                },
-            };
+            if (int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) != pieces.Count) throw new InvalidOperationException($"The transpiled VALUES cells are out of order: {cellSql}. This is a tool bug.");
+            pieces.Add(cellSql[start..m.Index]);
+            start = m.Index + m.Length;
         }
-        subquery["this"] = chain;
-        return true;
+        if (pieces.Count != cells.Count || !cellSql.StartsWith("SELECT ", StringComparison.Ordinal)) throw new InvalidOperationException($"The transpiled VALUES cells could not be split ({pieces.Count} of {cells.Count}): {cellSql}. This is a tool bug.");
+        var text = System.Text.RegularExpressions.Regex.Replace(mainSql, @"\bddb_cell_(\d+)\b", m => pieces[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)], System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return (mainOutcome, text);
+    }
+
+    /// <summary>Replaces each cell of each VALUES list that is more than a constant by the column `ddb_cell_N`, N being the position of its text in <paramref name="cells"/> (equal cells share one). True when any cell was replaced.</summary>
+    private static bool CellsToPlaceholders(JsonNode node, List<JsonNode> cells, Dictionary<string, int> seen)
+    {
+        var replaced = false;
+        switch (node)
+        {
+            case JsonArray a:
+                foreach (var item in a) if (item is not null) replaced |= CellsToPlaceholders(item, cells, seen);
+                break;
+            case JsonObject o:
+                if (o["values"] is JsonObject { } values && values["expressions"] is JsonArray rows)
+                    foreach (var row in rows)
+                        if (row?["expressions"] is JsonArray rowCells)
+                            for (var i = 0; i < rowCells.Count; i++)
+                            {
+                                if (rowCells[i] is not { } cell || IsConstantCell(cell)) continue;
+                                var key = cell.ToJsonString();
+                                if (!seen.TryGetValue(key, out var n)) { n = cells.Count; seen[key] = n; cells.Add(cell.DeepClone()); }
+                                rowCells[i] = Template($"ddb_cell_{n}");
+                                replaced = true;
+                            }
+                foreach (var (key, child) in o.ToList())
+                    if (key != "values" && child is not null) replaced |= CellsToPlaceholders(child, cells, seen);
+                break;
+        }
+        return replaced;
+    }
+
+    /// <summary>A literal, NULL, a negated literal, or a cast of one of those: nothing for polyglot to rewrite but the type, which it does in a cell.</summary>
+    private static bool IsConstantCell(JsonNode n)
+    {
+        if (n is not JsonObject { Count: 1 } o) return false;
+        var (kind, body) = (o.First().Key, o.First().Value);
+        return kind switch
+        {
+            "literal" or "null" or "boolean" => true,
+            "neg" or "paren" => body?["this"] is { } inner && IsConstantCell(inner),
+            // (a cast to text is left to the select list unless it is of text or NULL: T-SQL's CAST(x AS VARCHAR) is 30 characters, the select list's translation is VARCHAR(MAX))
+            "cast" => body?["this"] is { } castOf && IsConstantCell(castOf) &&
+                (body["to"]?["data_type"]?.GetValue<string>() is not ("var_char" or "char" or "text" or "string") || castOf is JsonObject { } nullLiteral && nullLiteral.ContainsKey("null") || castOf["literal"]?["literal_type"]?.GetValue<string>() == "string"),
+            _ => false,
+        };
     }
 
     // ---- templates -------------------------------------------------------------------------------------------------------------------------------------------
