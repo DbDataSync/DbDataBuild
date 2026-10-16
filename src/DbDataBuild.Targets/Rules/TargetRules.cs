@@ -18,6 +18,7 @@ public static partial class TargetRules
 
     public const string LengthKeepsTrailingSpaces = "length-trailing-spaces";
     public const string RoundDouble = "round-double";
+    public const string FloatWidth = "float-width";
     public const string TryCastParse = "try-cast-parse";
     public const string DoubleToInt = "double-to-int";
     public const string WeekdayIndependentOfDateFirst = "weekday-datefirst";
@@ -119,9 +120,9 @@ public static partial class TargetRules
 
     private static HashSet<string> BaseRules(string target, int? version) => target switch
     {
-        "sqlserver" => [ValuesAsSelects, ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [ValuesAsSelects, ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
-        "postgres" => [CovarianceExact, NormalizedIntervalStrip, AgeSecond, LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
+        "sqlserver" => [FloatWidth,ValuesAsSelects, ValuesInChunks, NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [FloatWidth,ValuesAsSelects, ValuesInChunks, LogIsBaseTen, IntervalAsDateAdd, AgeParts, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "postgres" => [FloatWidth,CovarianceExact, NormalizedIntervalStrip, AgeSecond, LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
         "spark" => [DivisionByZeroIsInfinity, ConcatSkipsNull, SplitPart, DateDiffBoundaries, DateDiffWeeks, WeekdayIndependentOfDateFirst, DoubleToInt, RegexpFullMatch, RegexpReplaceFlags, SubstringBounds, WeekOfYear],
@@ -139,6 +140,7 @@ public static partial class TargetRules
                 return a;
             case JsonObject o:
                 if (rules.Contains(IntervalAsDateAdd)) MarkDateArithmetic(o);
+                if (rules.Contains(FloatWidth) && FloatType(o)) fired.Add(FloatWidth);
                 foreach (var key in o.Select(p => p.Key).ToList())
                     if (o[key] is { } item && Rewrite(item, target, rules, fired) is var r && !ReferenceEquals(r, item)) o[key] = r;
                 if (o.Count == 1) return Single(o, target, rules, fired) ?? o;
@@ -616,6 +618,35 @@ public static partial class TargetRules
         if (cast["this"] is not JsonObject { Count: 1 } mark || mark["cast"] is not JsonObject inner || inner["to"]?["data_type"]?.GetValue<string>() != "double" || inner["this"] is not { } value) return false;
         x = value;
         return true;
+    }
+
+    // ---- FLOAT -----------------------------------------------------------------------------------------------------------------------------------------------
+    // DuckDB's FLOAT (FLOAT4, REAL) is 32 bits, its DOUBLE (FLOAT8, DOUBLE PRECISION) 64, and FLOAT(n) is the first for n up to 24 and the second for 25 to 53 (n outside 1 to 53 is a DuckDB parse error,
+    // so such text never gets here). polyglot's reader takes a FLOAT for the engines' own FLOAT, which is 8 bytes on SQL Server (a column definition or a VALUES cell came out as FLOAT), and keeps
+    // FLOAT(n), FLOAT4 and FLOAT8 as written (`REAL(24)` and `FLOAT8` are not types of SQL Server). The spelling REAL is written as REAL by both engines and DOUBLE as FLOAT and DOUBLE PRECISION,
+    // so every type node of the 32-bit kind is rewritten to the REAL spelling and of the 64-bit kind to DOUBLE, whatever the position (cast, column definition, cell).
+
+    /// <summary>Rewrites a FLOAT, FLOAT(n), FLOAT4 or FLOAT8 type node in place to REAL or DOUBLE. Returns whether it changed.</summary>
+    private static bool FloatType(JsonObject type)
+    {
+        switch (type["data_type"] is JsonValue kind && kind.TryGetValue<string>(out var kindName) ? kindName : null)
+        {
+            case "float":
+                var precision = type["precision"] is JsonValue p && p.TryGetValue<int>(out var bits) ? bits : (int?)null;
+                if (precision is < 1 or > 53) return false;
+                if (precision > 24) { type.Clear(); type["data_type"] = "double"; type["precision"] = null; type["scale"] = null; return true; }
+                if (precision == null && type["real_spelling"] is JsonValue spelled && spelled.TryGetValue<bool>(out var isReal) && isReal) return false;
+                type["precision"] = null; type["scale"] = null; type["real_spelling"] = true;
+                return true;
+            case "custom" when type["name"] is JsonValue nameValue && nameValue.TryGetValue<string>(out var name) && (string.Equals(name, "float4", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "float8", StringComparison.OrdinalIgnoreCase)):
+                var wide = name.EndsWith('8');
+                type.Clear();
+                type["data_type"] = wide ? "double" : "float"; type["precision"] = null; type["scale"] = null;
+                if (!wide) type["real_spelling"] = true;
+                return true;
+            default:
+                return false;
+        }
     }
 
     // ---- round(double, n) -----------------------------------------------------------------------------------------------------------------------------------

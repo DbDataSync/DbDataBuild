@@ -108,7 +108,7 @@ public class ValuesListConformance
     private static string Short(string rows) => rows.Length > 120 ? $"{rows.Length} chars" : rows;
 
     /// <summary>The engine's type of each column against DuckDB's, or null when they agree (the width of a text column is not compared: DuckDB's is unbounded).</summary>
-    private static async Task<string?> TypesDifferAsync(IProbeEngine engine, EngineProbe probe, string source, string rendered)
+    internal static async Task<string?> TypesDifferAsync(IProbeEngine engine, EngineProbe probe, string source, string rendered)
     {
         var columns = probe.DuckColumns(source);
         var problems = new StringBuilder();

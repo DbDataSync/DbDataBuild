@@ -30,6 +30,7 @@ public static class RewriteCatalog
 
     public static readonly IReadOnlyList<RewriteRule> All =
     [
+        new("float-width", RewriteLayer.Target, Both, Both, "FLOAT, FLOAT4, REAL and FLOAT(n) up to 24 are written REAL (32 bits), FLOAT8 and FLOAT(n) from 25 are DOUBLE (64 bits), in a cast, a column definition and a VALUES cell, as in DuckDB", "the transpile writes FLOAT as T-SQL's FLOAT, which is 8 bytes, and FLOAT(n), FLOAT4 and FLOAT8 as written (REAL(24) and FLOAT8 are not SQL Server types)"),
         new("length-trailing-spaces", RewriteLayer.Target, SqlServer, None, "length() counts trailing spaces: LEN(s + 'x') - 1", "LEN() ignores trailing spaces"),
         new("round-double", RewriteLayer.Both, Both, Postgres, "round(double, n) scales, rounds half away from zero and unscales", "SQL Server rounds the decimal text of the double (2.675 is 2.67); PostgreSQL has no round(double precision, integer) and the query is refused there"),
         new("try-cast-parse", RewriteLayer.Both, Both, None, "TRY_CAST of text to a number or date gives NULL for blank text and for text that is not a number", "SQL Server gives 0 or 1900-01-01 for blank text; PostgreSQL has no TRY_CAST and raises on bad data"),

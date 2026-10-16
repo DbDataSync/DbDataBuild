@@ -481,9 +481,7 @@ public sealed class PlanLowerer
             inner = $"round(CAST({inner} AS DOUBLE), {decimalScale.GetInt32()})";
             rules.Add("double-to-decimal");
         }
-        // (a FLOAT cell is written REAL in a VALUES list: the polyglot reader takes FLOAT for the 8-byte type, which SQL Server then makes of it, where DuckDB's is the 4-byte one)
-        var toType = TypeName(e.GetProperty("return_type"));
-        return $"{fn}({inner} AS {(exactCasts && toType == "FLOAT" ? "REAL" : toType)})";
+        return $"{fn}({inner} AS {TypeName(e.GetProperty("return_type"))})";
     }
 
     private string Function(JsonElement e, IReadOnlyList<string> outs)

@@ -238,11 +238,11 @@ public class ValuesListTests
     }
 
     [Fact]
-    public void A_float_cell_is_REAL_so_SQL_Server_keeps_four_bytes_as_DuckDB_does()
+    public void A_float_cell_is_lowered_as_FLOAT_and_written_REAL_by_the_float_width_rule()
     {
         using var c = Open();
         var lowered = Lower(c, "SELECT * FROM (VALUES (CAST(1.1 AS FLOAT)), (CAST(2 AS FLOAT))) AS v(a)");
-        Assert.Contains("CAST(1.1 AS REAL)", lowered);
+        Assert.Contains("CAST(1.1 AS FLOAT)", lowered);
         Assert.Contains("REAL", Render(lowered, "sqlserver"));
         Assert.DoesNotContain("FLOAT", Render(lowered, "sqlserver"));
     }
