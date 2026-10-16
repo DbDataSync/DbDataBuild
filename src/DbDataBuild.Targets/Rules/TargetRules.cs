@@ -45,6 +45,7 @@ public static partial class TargetRules
     public const string NowKeepsTheZone = "now-with-zone";
     public const string LogIsBaseTen = "log-base-ten";
     public const string LogWithBase = "log-with-base";
+    public const string IntervalAsDateAdd = "interval-dateadd";
 
     /// <summary>Applies the rules of <paramref name="target"/> to a DuckDB-dialect query. Returns the text unchanged, byte for byte, when no rule fires.</summary>
     /// <param name="version">The configured engine version (`targets.<target>.version`), when one is: a rule that needs a newer engine only fires from that version on.</param>
@@ -99,8 +100,8 @@ public static partial class TargetRules
 
     private static HashSet<string> RulesFor(string target, int? version = null) => target switch
     {
-        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
-        "fabric" => [LogIsBaseTen, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
+        "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
+        "fabric" => [LogIsBaseTen, IntervalAsDateAdd, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
         "postgres" => [LogWithBase, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
@@ -118,6 +119,7 @@ public static partial class TargetRules
                 for (var i = 0; i < a.Count; i++) if (a[i] is { } item && Rewrite(item, target, rules, fired) is var r && !ReferenceEquals(r, item)) a[i] = r;
                 return a;
             case JsonObject o:
+                if (rules.Contains(IntervalAsDateAdd)) MarkDateArithmetic(o);
                 foreach (var key in o.Select(p => p.Key).ToList())
                     if (o[key] is { } item && Rewrite(item, target, rules, fired) is var r && !ReferenceEquals(r, item)) o[key] = r;
                 if (o.Count == 1) return Single(o, target, rules, fired) ?? o;
@@ -287,6 +289,11 @@ public static partial class TargetRules
                     },
                 };
             }
+            case "add" or "sub" when rules.Contains(IntervalAsDateAdd) && IntervalArithmetic(kind, body, fired) is { } dateAdded:
+                return dateAdded;
+            case "neg" when rules.Contains(IntervalAsDateAdd) && body["this"] is { } negated && IntervalOf(negated) is { } negatedParts:
+                fired.Add(IntervalAsDateAdd);
+                return IntervalConstant(negatedParts.Negated);
             case "add" or "sub" when rules.Contains(DatePlusDays) && IsDatePlusDays(kind, body, out var dateSide, out var daysSide, out var subtract):
                 // SQL Server refuses `date + int` (error 206). An interval of that many days is what DATEADD says.
                 fired.Add(DatePlusDays);
@@ -296,6 +303,104 @@ public static partial class TargetRules
                 return replaced;
         }
         return null;
+    }
+
+    // ---- intervals on SQL Server ----------------------------------------------------------------------------------------------------------------------------
+    // An interval is months, days and microseconds in DuckDB, and adding one to a date moves the months first (cutting the day back to the end of a shorter month), then the days, then the time. SQL Server has no
+    // interval: the transpile reads the text `1 month 2 days 03:04:05` as one unit (the first) and drops the rest, and an interval that is not on the right of the date is not translated at all. Each part becomes
+    // one DATEADD, in that order, which is what DuckDB does; nothing that is not exact is rewritten (an interval text this does not read is left for the matrix to refuse: row op.interval_text).
+
+    private const string DateOperandMark = "ddb_date_operand";
+
+    /// <summary>
+    /// The lowerer writes `CAST(date + interval AS TIMESTAMP)` when a DATE is one of the operands (DuckDB's answer is a timestamp). That cast is the mark the target step reads: the date side of the sum is
+    /// then made a timestamp before any hour, minute or second is added (DATEADD refuses those on a DATE), while a timestamp with a zone, which also has no cast around it, is left as it is.
+    /// </summary>
+    private static void MarkDateArithmetic(JsonObject o)
+    {
+        if (o.Count != 1 || o["cast"] is not JsonObject cast || cast["to"]?["data_type"]?.GetValue<string>() != "timestamp") return;
+        var inner = cast["this"];
+        while (inner?["paren"]?["this"] is { } deeper) inner = deeper;
+        if (inner is JsonObject { Count: 1 } sum && sum.First().Key is "add" or "sub" && sum.First().Value is JsonObject sumBody) sumBody[DateOperandMark] = true;
+    }
+
+    private static readonly HashSet<string> DateAddUnits = ["Year", "Quarter", "Month", "Week", "Day"];
+
+    /// <summary>The parts of a constant interval expression: INTERVAL n UNIT, CAST('text' AS INTERVAL), and parentheses, negation and sums and differences of those. Null for anything else.</summary>
+    private static IntervalParts? IntervalOf(JsonNode? n)
+    {
+        if (n is not JsonObject { Count: 1 } o) return null;
+        var (kind, body) = (o.First().Key, o.First().Value as JsonObject);
+        if (body == null) return null;
+        switch (kind)
+        {
+            case "paren": return IntervalOf(body["this"]);
+            case "neg": return IntervalOf(body["this"])?.Negated;
+            case "cast":
+                if (body["to"]?["data_type"]?.GetValue<string>() != "interval" || body["this"]?["literal"] is not JsonObject text || text["literal_type"]?.GetValue<string>() != "string") return null;
+                return IntervalParts.TryParse(text["value"]?.GetValue<string>() ?? "");
+            case "interval" when body["unit"] is null && (body["this"]?["literal"]) is JsonObject { } written && (written["literal_type"]?.GetValue<string>()) is "string":
+                // INTERVAL '1 month 2 days' written out in a model that is not lowered: the same text as the cast
+                return IntervalParts.TryParse(written["value"]?.GetValue<string>() ?? "");
+            case "interval" when body["unit"] is JsonObject { } unit && unit["type"]?.GetValue<string>() == "simple" && unit["unit"]?.GetValue<string>() is { } unitName && IntervalCount(body["this"]) is { } count:
+                return IntervalParts.OfUnit(count, unitName);
+            case "add" or "sub" when IntervalOf(body["left"]) is { } l && IntervalOf(body["right"]) is { } r:
+                try { return kind == "add" ? checked(l + r) : checked(l + r.Negated); } catch (OverflowException) { return null; }
+            default: return null;
+        }
+    }
+
+    /// <summary>The number of an `INTERVAL n UNIT`: a literal (the transpile reads `INTERVAL '3' DAY` and `INTERVAL 3 DAY` alike) or its negative.</summary>
+    private static decimal? IntervalCount(JsonNode? n)
+    {
+        var negative = n?["neg"]?["this"] is { };
+        var literal = negative ? n!["neg"]!["this"] : n;
+        if (literal?["literal"] is not JsonObject lit || lit["literal_type"]?.GetValue<string>() is not ("number" or "string") || lit["value"]?.GetValue<string>() is not { } text) return null;
+        if (!decimal.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var v)) return null;
+        return negative ? -v : v;
+    }
+
+    private static JsonNode IntervalConstant(IntervalParts p) => Template($"CAST('{p.ToText()}' AS INTERVAL)");
+
+    /// <summary>`date + interval`, `interval + date`, `date - interval` and the sum or difference of two constant intervals; null when the expression is none of those or the interval is not one this reads.</summary>
+    private static JsonNode? IntervalArithmetic(string kind, JsonObject body, SortedSet<string> fired)
+    {
+        var dateOperand = body.Remove(DateOperandMark);
+        if (body["left"] is not { } left || body["right"] is not { } right) return null;
+        var (l, r) = (IntervalOf(left), IntervalOf(right));
+        if (l is { } lp && r is { } rp)
+        {
+            fired.Add(IntervalAsDateAdd);                       // two constants: one constant, which the date above it (if any) reads
+            try { return IntervalConstant(kind == "add" ? checked(lp + rp) : checked(lp + rp.Negated)); } catch (OverflowException) { return null; }
+        }
+        JsonNode date; IntervalParts parts;
+        if (r is { } rightParts && l is null) { date = left; parts = kind == "sub" ? rightParts.Negated : rightParts; }
+        else if (l is { } leftParts && kind == "add") { date = right; parts = leftParts; }
+        else return null;
+        // a single unit on the right, as the transpile already writes it (DATEADD(MONTH, n, d); the time units too unless the date side is a DATE), stays as it is
+        if (IsPlainDateAddUnit(right, dateOperand) && l is null) return null;
+        var steps = new List<string>();
+        if (parts.Months != 0) steps.Add($"INTERVAL {parts.Months} MONTH");
+        if (parts.Days != 0) steps.Add($"INTERVAL {parts.Days} DAY");
+        var micros = parts.Microseconds;
+        foreach (var (size, unit) in new[] { (3_600_000_000L, "HOUR"), (60_000_000L, "MINUTE"), (1_000_000L, "SECOND"), (1L, "MICROSECOND") })
+        {
+            var count = micros / size;
+            micros -= count * size;
+            if (count != 0) steps.Add($"INTERVAL {count} {unit}");
+        }
+        fired.Add(IntervalAsDateAdd);
+        // a DATE takes no hour, minute or second in DATEADD: the date side is a timestamp from the first time unit on
+        var alreadyTimestamp = date["cast"]?["to"]?["data_type"]?.GetValue<string>() == "timestamp";
+        var expression = parts.Microseconds != 0 && dateOperand && !alreadyTimestamp ? "CAST(__d AS TIMESTAMP)" : "__d";
+        foreach (var step in steps) expression = $"({expression} + {step})";
+        return Template(expression, ("__d", date));
+    }
+
+    private static bool IsPlainDateAddUnit(JsonNode? n, bool dateOperand)
+    {
+        while (n?["paren"]?["this"] is { } inner) n = inner;
+        return n?["interval"] is JsonObject { } i && i["unit"]?["type"]?.GetValue<string>() == "simple" && i["unit"]?["unit"]?.GetValue<string>() is { } u && (DateAddUnits.Contains(u) || !dateOperand && u is "Hour" or "Minute" or "Second") && IntervalCount(i["this"]) is { } c && c == decimal.Truncate(c);
     }
 
     /// <summary>lpad(s, n, p) or rpad(s, n, p) with a whole-number literal n (up to 4000, what REPLICATE keeps of a non-MAX string) and a non-empty literal pad. Anything else is left for the matrix to refuse.</summary>

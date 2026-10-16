@@ -244,7 +244,9 @@ public sealed class PlanLowerer
                     if (mi % 60_000_000 == 0) return $"INTERVAL {mi / 60_000_000} MINUTE";
                     if (mi % 1_000_000 == 0) return $"INTERVAL {mi / 1_000_000} SECOND";
                 }
-                throw new LoweringException("a literal of type INTERVAL");
+                // several units at once, or a fraction of a second: the text form, which an engine without an interval type reads part by part (target rule interval-dateadd) and PostgreSQL reads as it is
+                var parts = new IntervalParts(mo, da, mi);
+                return $"CAST('{parts.ToText()}' AS INTERVAL)";
             }
             case "VARCHAR": return "'" + x.GetString()!.Replace("'", "''") + "'";
             case "BOOLEAN": return x.ValueKind == JsonValueKind.True || (x.ValueKind == JsonValueKind.String && x.GetString() is "t" or "true") ? "TRUE" : "FALSE";
@@ -474,13 +476,21 @@ public sealed class PlanLowerer
     {
         var name = Str(e, "name")!;
         var children = Arr(e, "children").ToList();
-        if (name is "to_days" or "to_hours" or "to_minutes" or "to_seconds" or "to_months" or "to_years" && children.Count == 1)
+        if (name is "to_days" or "to_hours" or "to_minutes" or "to_seconds" or "to_months" or "to_years" or "to_weeks" or "to_quarters" or "to_decades" or "to_centuries" or "to_millennia" or "to_milliseconds" or "to_microseconds" && children.Count == 1)
         {
             // the binder turns INTERVAL 3 DAY into to_days(CAST(trunc(CAST(3 AS DOUBLE)) AS INTEGER)); fold the constant back
             var c = children[0];
             while (c.GetProperty("type").GetString() == "OPERATOR_CAST" || (c.GetProperty("type").GetString() == "BOUND_FUNCTION" && Str(c, "name") == "trunc"))
                 c = c.GetProperty("type").GetString() == "OPERATOR_CAST" ? c.GetProperty("child") : Arr(c, "children").First();
-            if (c.GetProperty("type").GetString() == "VALUE_CONSTANT") return $"INTERVAL {Literal(c.GetProperty("value"))} {name[3..^1].ToUpperInvariant()}";
+            if (c.GetProperty("type").GetString() == "VALUE_CONSTANT")
+            {
+                // a decade, century or millennium is a count of years and a quarter three months (no engine has those units); the other units are written by name
+                var count = Literal(c.GetProperty("value"));
+                if (name is "to_decades" or "to_centuries" or "to_millennia" && long.TryParse(count, out var n))
+                    return $"INTERVAL {checked(n * (name == "to_decades" ? 10 : name == "to_centuries" ? 100 : 1000))} YEAR";
+                if (name == "to_quarters" && long.TryParse(count, out var quarters)) return $"INTERVAL {checked(quarters * 3)} MONTH";
+                return $"INTERVAL {count} {name[3..^1].ToUpperInvariant()}";
+            }
             throw new LoweringException("an interval built from an expression");
         }
         // the JSON arrows are the functions json_extract_string and json_extract written as operators, which the transpile does not read

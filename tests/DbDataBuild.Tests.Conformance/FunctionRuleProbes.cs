@@ -27,6 +27,20 @@ public class FunctionRuleProbes
         V("log_x", "log(abs(d) + 1)"), V("log_two_args", "log(2, abs(d) + 1)"), V("log_ten_args", "log(10, abs(d) + 1)"), V("log_int_col", "log(abs(i) + 1)"), V("log_decimal", "log(abs(n) + 1)"),
         S("log_one", "log(1.0)"), S("log_hundred", "log(CAST(100 AS DOUBLE))"), S("log_small", "log(CAST(0.001 AS DOUBLE))"), S("log_null", "log(CAST(NULL AS DOUBLE))"),
         S("log_zero_errors", "log(CAST(0 AS DOUBLE))"), S("log_negative_errors", "log(CAST(-1 AS DOUBLE))"),
+        // an interval of several units added to or taken from a date or timestamp: months first (cut back to the end of a shorter month), then days, then the time
+        V("iv_multi_ts", "ts + INTERVAL '1 month 2 days 03:04:05'"), V("iv_multi_ts_sub", "ts - INTERVAL '1 month 2 days 03:04:05'"), V("iv_multi_dt", "dt + INTERVAL '1 month 2 days 03:04:05'"),
+        V("iv_multi_dt_sub", "dt - INTERVAL '1 month 2 days 03:04:05'"), V("iv_year_months", "dt + INTERVAL '1 year 2 months'"), V("iv_negative", "ts + INTERVAL '-1 month -2 days'"), V("iv_mixed_signs", "ts + INTERVAL '1 month -2 days'"),
+        V("iv_negative_time", "ts + INTERVAL '1 month -03:04:05'"), V("iv_minutes", "ts + INTERVAL '90 minutes'"), V("iv_date_hours", "dt + INTERVAL 3 HOUR"), V("iv_date_minutes", "dt - INTERVAL 90 MINUTE"),
+        V("iv_fraction", "ts + INTERVAL '1.5 seconds'"), V("iv_micro", "ts + INTERVAL '0.000001 seconds'"), V("iv_micros_multi", "ts + INTERVAL '1 day 0.000123 seconds'"), V("iv_week", "dt + INTERVAL 1 WEEK"), V("iv_week_sub", "ts - INTERVAL 2 WEEK"),
+        V("iv_quarter", "dt + INTERVAL 1 QUARTER"), V("iv_decade", "dt + INTERVAL 1 DECADE"), V("iv_century", "dt + INTERVAL 1 CENTURY"), V("iv_millisecond", "ts + INTERVAL 500 MILLISECOND"), V("iv_microsecond", "ts + INTERVAL 7 MICROSECOND"),
+        V("iv_years_text", "ts + INTERVAL '2 years 1 day'"), V("iv_interval_first", "INTERVAL 1 DAY + dt"), V("iv_interval_first_multi", "INTERVAL '1 month 2 days' + ts"), V("iv_sum", "ts + (INTERVAL 1 MONTH + INTERVAL 2 DAY)"),
+        V("iv_difference", "ts + (INTERVAL '1 month 2 days' - INTERVAL 1 DAY)"), V("iv_chain", "ts + INTERVAL 1 MONTH + INTERVAL 1 DAY"), V("iv_neg_interval", "ts + (-INTERVAL '1 month 2 days')"), V("iv_zero", "ts + INTERVAL '0 days'"),
+        V("iv_month_end_add", "ts + INTERVAL '1 month 1 day'"), V("iv_month_end_sub", "ts - INTERVAL '1 month 1 day'"), V("iv_in_where", "id", from: "probe WHERE ts + INTERVAL '1 month 2 days' > TIMESTAMP '2024-03-01 00:00:00'"),
+        V("iv_grouped", "date_trunc('day', ts + INTERVAL '1 day 12:00:00')"),
+        S("iv_leap_day_year", "TIMESTAMP '2024-02-29 12:00:00' + INTERVAL '1 year'"), S("iv_leap_day_months", "TIMESTAMP '2024-02-29 12:00:00' + INTERVAL '12 months 1 day'"),
+        S("iv_jan31_plus", "TIMESTAMP '2023-01-31 00:00:00' + INTERVAL '1 month 1 day'"), S("iv_mar31_minus", "TIMESTAMP '2024-03-31 00:00:00' - INTERVAL '1 month 1 day'"),
+        S("iv_micro_edge", "TIMESTAMP '2024-01-31 23:59:59.999999' + INTERVAL '1 month 0.000001 seconds'"), S("iv_micro_edge_sub", "TIMESTAMP '2024-03-01 00:00:00' - INTERVAL '1 day 0.000001 seconds'"),
+        S("iv_century_boundary", "TIMESTAMP '1999-12-31 23:59:59' + INTERVAL '1 month 1 second'"), S("iv_many_hours", "TIMESTAMP '2024-01-01 00:00:00' + INTERVAL '1 month 100000 hours'"),
     ];
 
     [SkippableTheory]

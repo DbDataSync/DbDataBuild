@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DbDataBuild.Core;
 using DbDataBuild.Sql.Ast;
 
 namespace DbDataBuild.Sql.Matrix;
@@ -42,9 +43,18 @@ public static class Detectors
             n.TryGet("args", out var args) && args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 && LiteralValue(args[0]) is "week" or "weekofyear" or "epoch" or "yearweek",
         // log(x): base 10 in DuckDB, the natural logarithm in T-SQL (a target rule writes LOG10; this reports it when the rule is turned off)
         ["log_single_argument"] = n => n.Type == "log" && !NonNull(n, "base"),
+        // an interval that cannot become DATEADD calls on SQL Server: text the interval reader does not know exactly (a unit written short, a fraction of a day), a cast of anything but a text literal, or a product or quotient
+        // of an interval (the target rule interval-dateadd takes what it can read before the matrix is asked)
+        ["interval_unreadable"] = n => (n.Type == "cast" && n.TryGet("to", out var to) && to.ValueKind == JsonValueKind.Object && to.TryGetProperty("data_type", out var dt) && dt.GetString() == "interval" &&
+            !(n.TryGet("this", out var text) && LiteralType(text) == "string" && LiteralValue(text) is { } s && IntervalParts.TryParse(s) != null)) ||
+            (n.Type is "mul" or "div" && (IsInterval(n, "left") || IsInterval(n, "right"))),
         // substr(s, -2): DuckDB counts from the end
         ["substring_negative_start"] = n => n.Type == "substring" && n.TryGet("start", out var start) && (start.ToString().Contains("\"neg\"", StringComparison.Ordinal) || LiteralValue(start)?.StartsWith('-') == true),
     };
+
+    private static bool IsInterval(AstNode n, string side) =>
+        n.TryGet(side, out var s) && s.ValueKind == JsonValueKind.Object && (s.TryGetProperty("interval", out _) ||
+        s.TryGetProperty("cast", out var c) && c.ValueKind == JsonValueKind.Object && c.TryGetProperty("to", out var to) && to.ValueKind == JsonValueKind.Object && to.TryGetProperty("data_type", out var dt) && dt.GetString() == "interval");
 
     private static bool WideDecimalCast(AstNode n, string side) =>
         n.TryGet(side, out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty("cast", out var c) && c.ValueKind == JsonValueKind.Object &&

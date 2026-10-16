@@ -348,3 +348,11 @@
   sqlserver: { status: approximated, test: spike/log_fn, note: "log(x) is the base-10 logarithm in DuckDB and the natural logarithm in T-SQL (log(2.5): 0.398 and 0.916). A query is rewritten by the target rule log-base-ten (LOG10(x)) and no longer reports this. log(b, x) is written LOG(x, b) and agrees." }
   fabric:    { status: unverified, note: "The target rule log-base-ten is applied; not run on Fabric." }
   postgres: { status: native }
+
+- id: op.interval_text
+  detect: detector:interval_unreadable
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/interval_text, note: "SQL Server has no interval type. The target rule interval-dateadd writes `date + INTERVAL '1 month 2 days 03:04:05'` (and `-`, an interval on the left, and sums of constant intervals) as nested DATEADD calls in DuckDB's order: months, then days, then the time. What reaches this row is an interval the rule cannot read exactly: text with a unit written short (`1 d`), a fraction of a day, month or year, a count that is not a literal, or an interval multiplied or divided. Write the parts as separate intervals (INTERVAL 1 MONTH + INTERVAL 2 DAY), or compute the date by hand." }
+  fabric:    { status: unverified, note: "The target rule interval-dateadd is applied; not run on Fabric." }
+  postgres: { status: native }
+

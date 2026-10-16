@@ -131,7 +131,7 @@ public sealed class EngineProbe : IDisposable
         decimal m => Number(Math.Round(m, 9)),
         DateTime dt when typeName.Equals("date", StringComparison.OrdinalIgnoreCase) => dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         sbyte or byte or short or ushort or int or uint or long or ulong => Convert.ToString(v, CultureInfo.InvariantCulture)!,
-        DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+        DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss.FFFFFF", CultureInfo.InvariantCulture).TrimEnd('.'),      // microseconds, as DuckDB keeps them (the engines' seventh digit is always 0 here)
         DateOnly d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         System.Collections.IEnumerable and not string => "[list]",
         _ => Convert.ToString(v, CultureInfo.InvariantCulture) ?? "",
