@@ -457,4 +457,50 @@ public class FunctionRulesTests
 
     private static DbDataBuild.Core.RewritePolicy RewriteCatalog_Native(string target) =>
         DbDataBuild.Models.RewriteCatalog.Resolve(new DbDataBuild.Models.RewriteSettings("native", [], [], 1), null, [target], "m", null);
+
+    // ---- FLOAT (32 bits) ----
+
+    private static string LoweredFloat(string sql)
+    {
+        using var c = PlanningConnection.Open(lockDown: false);
+        Run(c, "CREATE TABLE f (id INTEGER, x FLOAT, y FLOAT, d DOUBLE)");
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = QueryDescriber.PlanStatement(sql);
+        return PlanLowerer.Lower((string)cmd.ExecuteScalar()!).Sql;
+    }
+
+    [Theory]
+    [InlineData("SELECT x / y AS v FROM f", "CAST((CAST(x AS DOUBLE) / CAST(y AS DOUBLE)) AS FLOAT)")]
+    [InlineData("SELECT round(x, 2) AS v FROM f", "CAST(round(CAST(CAST(x AS FLOAT) AS DOUBLE), 2) AS FLOAT)")]
+    [InlineData("SELECT round(x) AS v FROM f", "CAST(round(CAST(CAST(x AS FLOAT) AS DOUBLE)) AS FLOAT)")]
+    [InlineData("SELECT trunc(x, 1) AS v FROM f", "CAST(trunc(CAST(CAST(x AS FLOAT) AS DOUBLE), 1) AS FLOAT)")]
+    [InlineData("SELECT trunc(d, 1) AS v FROM f", "trunc(CAST(d AS DOUBLE), 1)")]
+    public void A_FLOAT_is_computed_in_double_and_cut_back_to_32_bits_as_the_lowered_text_says(string sql, string expected)
+    {
+        Assert.Contains(expected, LoweredFloat(sql));
+    }
+
+    [Fact]
+    public void A_FLOAT_cast_is_REAL_on_both_engines_and_a_rounded_FLOAT_is_widened_first()
+    {
+        var round = LoweredFloat("SELECT round(x, 2) AS v FROM f");
+        Assert.Contains("CAST(x AS REAL)", Transpiled("SELECT CAST(x AS FLOAT) AS v FROM f", "sqlserver"));
+        Assert.Contains("CAST(x AS REAL)", Transpiled("SELECT CAST(x AS FLOAT) AS v FROM f", "postgres"));
+        Assert.Contains("CAST(CAST(x AS REAL) AS FLOAT) * 100.0", Transpiled(round, "sqlserver").Replace("  ", " "));         // not REAL * 100.0, which is 100.5 for 1.005 and rounds to 1.01
+    }
+
+    [Theory]
+    [InlineData("SELECT id, trunc(CAST(d AS DOUBLE), 1) AS v FROM t2")]
+    [InlineData("SELECT id, trunc(CAST(d AS DOUBLE), 0) AS v FROM t2")]
+    [InlineData("SELECT id, trunc(CAST(d AS DOUBLE), 3) AS v FROM t2")]
+    public void Trunc_with_digits_is_the_scaled_cut_on_PostgreSQL_and_gives_DuckDBs_value(string sql)
+    {
+        using var c = PlanningConnection.Open(lockDown: false);
+        Run(c, "CREATE TABLE t2 (id INTEGER, d DOUBLE)");
+        Run(c, "INSERT INTO t2 VALUES (1, 2.5), (2, -2.5), (3, 2.9999999999999996), (4, 1.15), (5, 0.285), (6, NULL), (7, 123456.789), (8, -0.0001), (9, 1e15)");
+        var r = TargetRules.Apply(sql, "postgres");
+        Assert.Equal([TargetRules.TruncDigits], r.Rules);
+        Assert.Equal(Rows(c, sql), Rows(c, r.Sql));
+        Assert.Empty(TargetRules.Apply(sql, "sqlserver").Rules);                                  // ROUND(x, n, 1) is the engine's own
+    }
 }

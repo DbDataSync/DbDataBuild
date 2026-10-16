@@ -112,7 +112,7 @@ public static partial class TargetRules
     {
         "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
         "fabric" => [LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],
-        "postgres" => [LogWithBase, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
+        "postgres" => [LogWithBase, TruncDigits, ShiftLeft, ShiftRight, FactorialTable, RoundDouble, TryCastParse, SplitPart, StringAggAsArrayToString, DateDiffBoundaries, DateDiffWeeks, JsonExtractString, JsonArrayLength, RegexpFullMatch, RegexpExtract],
         "oracle" => [ModAsFunction, VarcharLength, LeftRightAsSubstr],
         "bigquery" => [ModAsFunction, DateDiffArgumentOrder, DateDiffWeeks],
         "spark" => [DivisionByZeroIsInfinity, ConcatSkipsNull, SplitPart, DateDiffBoundaries, DateDiffWeeks, WeekdayIndependentOfDateFirst, DoubleToInt, RegexpFullMatch, RegexpReplaceFlags, SubstringBounds, WeekOfYear],
@@ -620,7 +620,7 @@ public static partial class TargetRules
             if (negative) digits = -digits;
             if (Math.Abs(digits) > 15) return false;
         }
-        arg = inner;
+        arg = inner["cast"]?["to"]?["data_type"]?.GetValue<string>() == "float" ? args[0]! : inner;      // the lowerer writes a 32-bit operand as CAST(CAST(x AS FLOAT) AS DOUBLE): the widening stays, because REAL * 100.0 is a REAL in T-SQL and 1.005 (as a REAL) times 100 is 100.5 there, 100.4999995 in a double
         return true;
     }
 

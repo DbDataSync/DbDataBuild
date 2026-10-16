@@ -78,6 +78,7 @@ public static class RewriteCatalog
         new("float-classification", RewriteLayer.Target, Postgres, Postgres, "isnan(x) and isinf(x) compare with NaN and the infinities", "PostgreSQL has no isnan or isinf"),
         new("last-day", RewriteLayer.Target, Postgres, Postgres, "last_day(d) is the month's first day plus one month minus one day, as a DATE", "PostgreSQL has no last_day (SQL Server's EOMONTH is written by the transpile)"),
         new("gcd-lcm-names", RewriteLayer.Target, Postgres, Postgres, "greatest_common_divisor and least_common_multiple are PostgreSQL's gcd and lcm", "PostgreSQL knows them only by the short names"),
+        new("trunc-digits", RewriteLayer.Both, Postgres, Postgres, "trunc(double, n) is trunc(x * 10^n) / 10^n in double arithmetic, as DuckDB does it (a FLOAT is cut as its exact value and is a FLOAT again)", "PostgreSQL has trunc(numeric, integer) only: trunc(double precision, integer) does not exist"),
         new("string-agg-array", RewriteLayer.Target, Postgres, Postgres, "string_agg is array_to_string(array_agg(... ORDER BY ...), sep)", "polyglot writes LISTAGG, which PostgreSQL does not have"),
     ];
 

@@ -69,6 +69,12 @@ public class FunctionRuleProbes
         V("pow_assoc", "2 ^ 3 ^ 2"), V("pow_neg_base", "(-2) ^ 3"), V("pow_sci", "d ^ 1"),
         V("fact_postfix", "CAST((abs(i) % 34)! AS VARCHAR)"), V("fact_fn", "CAST(factorial(abs(i) % 34) AS VARCHAR)"), V("fact_33", "CAST(factorial(33 + (i - i)) AS VARCHAR)"), V("fact_zero_one", "CAST(factorial(abs(j) % 2) AS VARCHAR)"),
         V("fact_34_errors", "CAST(factorial(abs(i) + 34) AS VARCHAR)", engines: null), V("fact_negative_errors", "CAST(factorial(-abs(i) - 1) AS VARCHAR)"), V("fact_arith", "factorial(5 + (i - i)) / 120"),
+        // FLOAT is 32 bits: the cast is REAL on both engines; division and rounding are done in double arithmetic and cut back to 32 bits as DuckDB does
+        V("float_cast", "CAST(d AS FLOAT)"), V("float_div", "CAST(d AS FLOAT) / CAST(j + 1 AS FLOAT)"), V("float_div_const", "CAST(d AS FLOAT) / 3"), V("float_div_chain", "CAST(d AS FLOAT) * CAST(i % 1000 AS FLOAT) / CAST(7 AS FLOAT)"),
+        V("float_round1", "round(CAST(d AS FLOAT), 1)"), V("float_round2", "round(CAST(d AS FLOAT), 2)"), V("float_round0", "round(CAST(d AS FLOAT))"), V("float_round_005", "round(CAST(1.005 AS FLOAT) + d * 0, 2)"),
+        V("float_round_neg", "round(CAST(d AS FLOAT), -1)"), V("float_trunc1", "trunc(CAST(d AS FLOAT), 1)"), V("float_trunc0", "trunc(CAST(d AS FLOAT))"), V("float_widened", "CAST(CAST(d AS FLOAT) / CAST(3 AS FLOAT) AS DOUBLE)"),
+        V("float_sum", "sum(CAST(d AS FLOAT)) OVER ()"), V("float_avg", "avg(CAST(d AS FLOAT)) OVER ()"), V("float_literal_widened", "CAST(CAST(1.4 AS FLOAT) AS DOUBLE) + d * 0"),
+        V("trunc_double1", "trunc(d, 1)"), V("trunc_double2", "trunc(d, 2)"), V("trunc_double0", "trunc(d, 0)"), V("trunc_edge", "trunc(CAST(2.9999999999999996 AS DOUBLE) + d * 0, 1)"), V("trunc_neg", "trunc(-d, 1)"), V("trunc_decimal", "trunc(n, 1)"),
         V("starts_op", "s ^@ 'a'"), V("starts_op_col", "s ^@ s"), V("starts_op_empty", "s ^@ ''"),
     ];
 

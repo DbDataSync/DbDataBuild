@@ -535,13 +535,24 @@ public sealed class PlanLowerer
         // DuckDB gives NULL for x % 0 where both engines raise an error
         if (name == "%" && a.Count == 2 && !(children[1].GetProperty("type").GetString() == "VALUE_CONSTANT" && !IsZeroConstant(children[1].GetProperty("value")))) a[1] = $"NULLIF({a[1]}, 0)";
         // RULE round-double: DuckDB rounds the scaled double half away from zero; the engines do something else. The explicit DOUBLE cast marks it for the target step.
-        if (On("round-double") && name == "round" && a.Count is 1 or 2 && TypeId(children[0]) == "DOUBLE" && (a.Count == 1 || children[1].GetProperty("type").GetString() == "VALUE_CONSTANT"))
+        // A FLOAT (32 bits) is rounded as its exact value in double arithmetic (DuckDB: round(CAST(1.005 AS FLOAT), 2) is 1, not 1.01) and the result is a FLOAT again: written with the casts, in a form the rule handles.
+        var roundsFloat = false;
+        if (On("round-double") && name == "round" && a.Count is 1 or 2 && TypeId(children[0]) is "DOUBLE" or "FLOAT" && (a.Count == 1 || children[1].GetProperty("type").GetString() == "VALUE_CONSTANT"))
         {
-            a[0] = $"CAST({a[0]} AS DOUBLE)";
+            roundsFloat = TypeId(children[0]) == "FLOAT";
+            a[0] = roundsFloat ? $"CAST(CAST({a[0]} AS FLOAT) AS DOUBLE)" : $"CAST({a[0]} AS DOUBLE)";      // (the FLOAT cast is what tells the target step the operand is 32 bits wide)
             rules.Add("round-double");
         }
+        // trunc(double, n) cuts toward zero at n digits; PostgreSQL has trunc(numeric, integer) only. The DOUBLE cast marks it for the target step (a FLOAT is cut as its exact value and is a FLOAT again).
+        if (On("trunc-digits") && name == "trunc" && a.Count == 2 && TypeId(children[0]) is "DOUBLE" or "FLOAT" && children[1].GetProperty("type").GetString() == "VALUE_CONSTANT")
+        {
+            var floatResult = TypeId(children[0]) == "FLOAT";
+            a[0] = floatResult ? $"CAST(CAST({a[0]} AS FLOAT) AS DOUBLE)" : $"CAST({a[0]} AS DOUBLE)";
+            rules.Add("trunc-digits");
+            if (floatResult) return $"CAST(trunc({a[0]}, {a[1]}) AS FLOAT)";
+        }
         // round(x) is round(x, 0); SQL Server has no one-argument form
-        if (name == "round" && a.Count == 1 && TypeId(children[0]) != "DOUBLE") a.Add("0");
+        if (name == "round" && a.Count == 1 && !roundsFloat && TypeId(children[0]) != "DOUBLE") a.Add("0");
         // power takes doubles in DuckDB; a whole-number constant the binder widened is written as a plain literal, which T-SQL types as an int (POWER(2, -1) is 0 there, POWER(2, 62) an overflow): spelled as a double
         if (name is "power" or "pow" or "^" or "**" && a.Count == 2)
             for (var i = 0; i < 2; i++)
@@ -565,6 +576,9 @@ public sealed class PlanLowerer
         var anyDate = children.Any(c => TypeId(c) == "DATE");
         string text;
         if (LikeFunctions.TryGetValue(name, out var like) && a.Count == 2) return $"({a[0]} {like} {a[1]})";
+        // FLOAT / FLOAT is a FLOAT in DuckDB, the correctly rounded 32-bit quotient, which the quotient of the two exact values in double arithmetic rounded to a FLOAT is (the engines would otherwise keep 64 bits)
+        if (name == "/" && a.Count == 2 && returns == "FLOAT") return $"CAST((CAST({a[0]} AS DOUBLE) / CAST({a[1]} AS DOUBLE)) AS FLOAT)";
+        if (roundsFloat) return $"CAST(round({string.Join(", ", a)}) AS FLOAT)";
         if (Infix.Contains(name) && a.Count == 2) text = $"({a[0]} {name} {a[1]})";
         else if (name == "-" && a.Count == 1) return $"(-{a[0]})";
         else text = $"{name}({string.Join(", ", a)})";

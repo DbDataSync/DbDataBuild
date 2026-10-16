@@ -15,6 +15,7 @@ public static partial class TargetRules
     public const string ShiftLeft = "shift-left";
     public const string ShiftRight = "shift-right";
     public const string FactorialTable = "factorial-table";
+    public const string TruncDigits = "trunc-digits";
 
     /// <summary>Marker for an integer division: polyglot reads `/` in DuckDB's dialect as division of doubles and writes casts around it, so a rule that needs the engine's own whole-number division writes this call, and <see cref="Finish"/> turns it into `((a) / (b))`.</summary>
     private const string IntegerDivisionMarker = "ddb_idiv";
@@ -28,6 +29,8 @@ public static partial class TargetRules
     // the table of functions written out from others (FunctionTemplates), by the name the call has: a function's name, or the node polyglot reads it as
     private static readonly Dictionary<string, List<FunctionTemplate>> TemplatesByName = FunctionTemplates.All
         .GroupBy(t => (t.Node ?? t.Function).ToLowerInvariant()).ToDictionary(g => g.Key, g => g.ToList());
+
+    private static bool IsDoubleCast(JsonNode? n) => (n?["cast"]?["to"]?["data_type"]?.GetValue<string>()) is "double";
 
     private static JsonNode AsDouble(JsonNode n) => n["cast"]?["to"]?["data_type"]?.GetValue<string>() == "double" ? n : Template("CAST(__v AS DOUBLE)", ("__v", n));
 
@@ -69,6 +72,12 @@ public static partial class TargetRules
             case "bitwise_right_shift" when rules.Contains(ShiftRight) && IsMarkedShift(body, out var rightValue, out var rightType, out var rightCount):
                 fired.Add(ShiftRight);
                 return RightShift(rightValue, rightType, rightCount, target);
+            case "function" when rules.Contains(TruncDigits) && string.Equals(body["name"]?.GetValue<string>(), "trunc", StringComparison.OrdinalIgnoreCase) && body["args"] is JsonArray { Count: 2 } truncArgs
+                && IsDoubleCast(truncArgs[0]) && WholeLiteral(truncArgs[1]) is { } truncDigits && truncDigits is >= 0 and <= 15:
+                // trunc(double, n) is the double cut toward zero at n digits: trunc(x * 10^n) / 10^n. PostgreSQL has trunc(numeric, integer) only.
+                fired.Add(TruncDigits);
+                var scale = BigInteger.Pow(10, (int)truncDigits).ToString(CultureInfo.InvariantCulture) + ".0";
+                return Template($"trunc(__x * {scale}) / {scale}", ("__x", truncArgs[0]!));
             case "function" when rules.Contains(FactorialTable) && string.Equals(body["name"]?.GetValue<string>(), "factorial", StringComparison.OrdinalIgnoreCase) && body["args"] is JsonArray { Count: 1 } factorialArgs:
                 fired.Add(FactorialTable);
                 return Factorial(factorialArgs[0]!);
