@@ -65,6 +65,7 @@ public class FunctionMatrixRun
         foreach (var f in functions)
         {
             if (++done % 200 == 0) Console.Error.WriteLine($"function-matrix: {done}/{functions.Count} overloads, {(DateTime.UtcNow - started).TotalSeconds:0}s");
+            if (Environment.GetEnvironmentVariable("DDB_FUNCTION_MATRIX_TRACE") is { Length: > 0 } trace) File.WriteAllText(trace, f.Signature);
             results.Add(await ProbeOverload(f, x, pipeline, Accepts));
         }
 
@@ -162,15 +163,16 @@ public class FunctionMatrixRun
         o.Static == "error" ? "lowerer error"
         : o.Static == "refused" ? "refused"
         : o.Static == "not-probed" || o.Dynamic == "n/a" ? "not probed"
+        : o.Dynamic == "arg type" ? "arg type unsupported"
         : o.Dynamic;
 
-    private static readonly string[] Severity = ["lowerer error", "differs", "engine error", "refused", "not probed", "works"];
+    private static readonly string[] Severity = ["lowerer error", "differs", "engine error", "refused", "works", "arg type unsupported", "not probed"];
 
     private static TargetOutcome Merge(List<(string Label, TargetOutcome O)> all)
     {
         var worst = all.OrderBy(a => Array.IndexOf(Severity, Combine(a.O))).First();
         var staticWorst = all.OrderBy(a => Array.IndexOf(new[] { "error", "refused", "not-probed", "rewritten", "same" }, a.O.Static)).First().O;
-        var dynamicWorst = all.Select(a => a.O).OrderBy(o => Array.IndexOf(new[] { "differs", "engine error", "works", "n/a" }, o.Dynamic)).First();
+        var dynamicWorst = all.Select(a => a.O).OrderBy(o => Array.IndexOf(new[] { "differs", "engine error", "works", "arg type", "n/a" }, o.Dynamic)).First();
         var detail = worst.O.Dynamic is "differs" or "engine error" ? worst.O.DynamicDetail : "";
         var staticDetail = staticWorst.StaticDetail;
         var failing = all.Where(a => Combine(a.O) != "works" && a.Label.Length > 0).Select(a => a.Label).Distinct().ToList();
@@ -208,7 +210,7 @@ public class FunctionMatrixRun
         if (!v.CanIsolate)
         {
             if (!duck.Ok) return ("n/a", "DuckDB raises on the sample rows: " + duck.Error);
-            return ("engine error", engine.Error!);
+            return (EngineErrorStatus(engine.Error!), engine.Error!);
         }
 
         // the whole set failed on one side: run the sample rows one at a time to see which rows, and what each side says
@@ -241,11 +243,15 @@ public class FunctionMatrixRun
             if (diff != null) mismatch ??= $"{key}: {diff}";
         }
         if (duckOk == 0) return ("n/a", $"DuckDB raises on every sampled row ({duck.Error})");
-        if (engineErrors.Count == duckOk) return ("engine error", engineErrors[0]);
+        if (engineErrors.Count == duckOk) return (EngineErrorStatus(engineErrors[0]), engineErrors[0]);
         if (engineErrors.Count > 0) return ("differs", $"the engine raises where DuckDB returns a value ({engineErrors.Count} of {duckOk} rows): {engineErrors[0]}");
         if (mismatch != null) return ("differs", mismatch);
         return ("works", lenient > 0 ? $"engine returns a value on {lenient} rows where DuckDB raises" : "");
     }
+
+    /// <summary>An error that says the engine has no such type (HUGEINT, the unsigned integers, ...) is about an argument's type, not about the function: it is kept apart so that `+` is not called broken because it has an overload over UBIGINT.</summary>
+    private static string EngineErrorStatus(string message) =>
+        System.Text.RegularExpressions.Regex.IsMatch(message, @"is not a defined system type|type ""[a-z_0-9]+"" does not exist") ? "arg type" : "engine error";
 
     private static List<Dictionary<char, int>> SampleCombinations(IReadOnlyList<char> aliases)
     {

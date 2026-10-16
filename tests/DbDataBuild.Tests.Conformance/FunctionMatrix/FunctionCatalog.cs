@@ -72,9 +72,10 @@ public static class FunctionCatalog
         if (n.StartsWith("__internal_", StringComparison.Ordinal)) return "internal: a compression helper DuckDB's optimizer inserts; not callable by name";
         return n switch
         {
-            "sleep_ms" => "not probed: blocks the connection for the given time (a side effect)",
+            "sleep_ms" or "pg_sleep" or "pg_sleep_for" or "pg_sleep_until" => "not probed: blocks the connection for the given time (a side effect)",
             "write_log" => "not probed: writes to DuckDB's log (a side effect)",
             "nextval" or "currval" => "not probed: needs a sequence (the tool has no sequences)",
+            "generate_series" or "range" when f.Kind == "scalar" => "not probed: the scalar form returns a LIST (the tool refuses list values, DDB-324), and the probe values (up to 2147483647) would build lists of billions of elements",
             "getvariable" => "not probed: needs a SET VARIABLE in the session",
             "st_asbinary" or "st_astext" or "st_aswkb" or "st_aswkt" or "st_crs" or "st_geomfromwkb" or "st_intersects_extent" or "st_setcrs" => "not probed: GEOMETRY argument; there is no geometry value to build without a spatial table",
             _ when n.StartsWith("variant_", StringComparison.Ordinal) => "not probed: VARIANT argument; no way to build a VARIANT value in a probe",

@@ -6,7 +6,7 @@ namespace DbDataBuild.Tests.Conformance.FunctionMatrix;
 public static class FunctionMatrixCsv
 {
     private static readonly string[] Engines = ["sqlserver", "postgres"];
-    private static readonly string[] Severity = ["lowerer error", "differs", "engine error", "refused", "not probed", "works"];
+    private static readonly string[] Severity = ["lowerer error", "differs", "engine error", "refused", "works", "arg type unsupported", "not probed"];
 
     public static string Quote(string? s)
     {
