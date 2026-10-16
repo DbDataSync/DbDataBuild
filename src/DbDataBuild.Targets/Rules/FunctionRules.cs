@@ -25,8 +25,31 @@ public static partial class TargetRules
 
     private static JsonNode BigLiteralAsBigint(JsonNode n) => IsBigLiteral(n) ? Template("CAST(__v AS BIGINT)", ("__v", n)) : n.DeepClone();
 
+    // the table of functions written out from others (FunctionTemplates), by the name the call has: a function's name, or the node polyglot reads it as
+    private static readonly Dictionary<string, List<FunctionTemplate>> TemplatesByName = FunctionTemplates.All
+        .GroupBy(t => (t.Node ?? t.Function).ToLowerInvariant()).ToDictionary(g => g.Key, g => g.ToList());
+
+    private static JsonNode AsDouble(JsonNode n) => n["cast"]?["to"]?["data_type"]?.GetValue<string>() == "double" ? n : Template("CAST(__v AS DOUBLE)", ("__v", n));
+
+    private static JsonNode? FromTemplate(string kind, JsonObject body, string target, HashSet<string> rules, SortedSet<string> fired)
+    {
+        string name; List<JsonNode?> args;
+        if (kind == "function" && body["name"]?.GetValue<string>() is { } called && body["args"] is JsonArray callArgs) { name = called.ToLowerInvariant(); args = callArgs.ToList(); }
+        else if (TemplatesByName.TryGetValue(kind, out var nodeTemplates) && nodeTemplates[0].Fields is { } fields) { name = kind; args = fields.Select(f => body[f]).ToList(); }
+        else return null;
+        if (!TemplatesByName.TryGetValue(name, out var candidates) || args.Any(a => a is null)) return null;
+        foreach (var t in candidates)
+        {
+            if (!t.Targets.Contains(target) || !rules.Contains(t.Rule) || t.Arity != args.Count) continue;
+            fired.Add(t.Rule);
+            return Template(t.Template, args.Select((a, i) => ($"__{i}", t.DoubleArguments ? AsDouble(a!) : a!)).ToArray());
+        }
+        return null;
+    }
+
     private static JsonNode? FunctionRewrite(string kind, JsonObject body, string target, HashSet<string> rules, SortedSet<string> fired)
     {
+        if (FromTemplate(kind, body, target, rules, fired) is { } templated) return templated;
         switch (kind)
         {
             case "function" when rules.Contains(BitOperators) && string.Equals(body["name"]?.GetValue<string>(), "xor", StringComparison.OrdinalIgnoreCase) && body["args"] is JsonArray { Count: 2 } xorArgs:

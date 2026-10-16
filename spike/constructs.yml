@@ -138,4 +138,27 @@
 - { id: shift_ops,           sql: "SELECT a << 2 AS x, a >> 1 AS y FROM t",                             expect: unsupported }
 - { id: factorial_fn,        sql: "SELECT FACTORIAL(a) AS x FROM t",                                    expect: unsupported }
 - { id: xor_fn,              sql: "SELECT XOR(a, b) AS x FROM t",                                       expect: unsupported }
+- { id: missing_statistics, sql: "SELECT ENTROPY(a) AS x FROM t", expect: unsupported }
+- { id: missing_statistics_sqlserver, sql: "SELECT COVAR_POP(a, b) AS x FROM t", expect: unsupported }
+- { id: missing_statistics_postgres, sql: "SELECT APPROX_COUNT_DISTINCT(a) AS x FROM t", expect: unsupported }
+- { id: missing_picks, sql: "SELECT ARG_MAX(a, b) AS x FROM t", expect: unsupported }
+- { id: missing_lists, sql: "SELECT LIST_SLICE(s, 1, 2) AS x FROM t", expect: unsupported }
+- { id: missing_lists_sqlserver, sql: "SELECT STR_SPLIT(s, 'b') AS x FROM t", expect: unsupported }
+- { id: missing_encoding, sql: "SELECT HASH(s) AS x FROM t", expect: unsupported }
+- { id: missing_encoding_sqlserver, sql: "SELECT HEX(a) AS x FROM t", expect: unsupported }
+- { id: missing_similarity, sql: "SELECT LEVENSHTEIN(s, 'abc') AS x FROM t", expect: unsupported }
+- { id: missing_text, sql: "SELECT STRIP_ACCENTS(s) AS x FROM t", expect: unsupported }
+- { id: missing_text_sqlserver, sql: "SELECT LIKE_ESCAPE(s, 'a%', '\\') AS x FROM t", expect: unsupported }
+- { id: missing_json, sql: "SELECT JSON_CONTAINS('{\"a\": 1}', '{\"a\": 1}') AS x FROM t", expect: unsupported }
+- { id: missing_json_sqlserver, sql: "SELECT JSON_EXISTS('{\"a\": 1}', '$.a') AS x FROM t", expect: unsupported }
+- { id: missing_math, sql: "SELECT EVEN(CAST(a AS DOUBLE)) AS x FROM t", expect: unsupported }
+- { id: missing_math_sqlserver, sql: "SELECT GCD(a, b) AS x FROM t", expect: unsupported }
+- { id: missing_math_postgres, sql: "SELECT ROUND_EVEN(CAST(a AS DOUBLE), 1) AS x FROM t", expect: unsupported }
+- { id: missing_random, sql: "SELECT UUID_EXTRACT_VERSION(UUIDV7()) AS x FROM t", expect: unsupported }
+- { id: missing_random_sqlserver, sql: "SELECT UUID_EXTRACT_VERSION(UUIDV4()) AS x FROM t", expect: unsupported }
+- { id: missing_datetime, sql: "SELECT CENTURY(d) AS x FROM t", expect: unsupported }
+- { id: missing_datetime_sqlserver, sql: "SELECT MAKE_TIMESTAMP(2024, 1, 2, 3, 4, 5.0) AS x FROM t", expect: unsupported }
+- { id: missing_datetime_postgres, sql: "SELECT DAYS_IN_MONTH(d) AS x FROM t", expect: unsupported }
+- { id: missing_internal, sql: "SELECT ALIAS(a) AS x FROM t", expect: unsupported }
+- { id: normalized_interval_fn, sql: "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",                    expect: unsupported }
 

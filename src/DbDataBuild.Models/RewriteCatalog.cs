@@ -68,6 +68,16 @@ public static class RewriteCatalog
         new("shift-left", RewriteLayer.Both, Both, SqlServer, "a << n is a times 2^n in exact arithmetic, cast back to the type: a result that does not fit raises, as in DuckDB", "T-SQL has no << (SQL Server 2022's LEFT_SHIFT wraps silently: 1 << 31 is -2147483648); PostgreSQL's << wraps silently too"),
         new("shift-right", RewriteLayer.Both, Both, SqlServer, "a >> n keeps the sign (the floor of a / 2^n), and is 0 for a count of 0 below or the width and above, as in DuckDB", "T-SQL has no >> (RIGHT_SHIFT fills with zeros: RIGHT_SHIFT(-8, 1) is 2147483644); PostgreSQL's >> agrees for counts inside the width and takes the count modulo it outside"),
         new("factorial-table", RewriteLayer.Target, Both, Both, "factorial(n) and n! are the exact value for 0 to 33 and an overflow error otherwise, as in DuckDB (a HUGEINT, written as DECIMAL(38, 0))", "SQL Server has no factorial; PostgreSQL's factorial gives a numeric for 34 and beyond where DuckDB raises"),
+        new("hyperbolic-functions", RewriteLayer.Target, SqlServer, SqlServer, "cosh, sinh, tanh, acosh, asinh and atanh are written with EXP, LN and SQRT (a series near 0 and a limit for large arguments keep the digits); they agree with DuckDB to about 12 significant digits", "SQL Server has none of them ('COSH' is not a recognized built-in function name); PostgreSQL has them all"),
+        new("cube-root", RewriteLayer.Target, SqlServer, SqlServer, "cbrt(x) is the signed cube root: POWER(|x|, 1/3) with one Newton step, so a perfect cube comes out whole", "SQL Server has no CBRT; PostgreSQL has it"),
+        new("atan2-atn2", RewriteLayer.Target, SqlServer, SqlServer, "atan2(y, x) is ATN2(y, x)", "SQL Server calls it ATN2 (ATAN2 is not a recognized built-in function name)"),
+        new("log2-ratio", RewriteLayer.Target, Both, Both, "log2(x) is ln(x) / ln(2)", "neither engine has log2"),
+        new("day-month-names", RewriteLayer.Target, Both, Both, "dayname(d) and monthname(d) are the English names from the weekday and month numbers (the weekday counted from a fixed Sunday, as in weekday-datefirst)", "SQL Server has DATENAME and PostgreSQL to_char, which follow the session's language"),
+        new("ends-with", RewriteLayer.Target, Both, Both, "ends_with(s, p) and suffix(s, p) are right(s, length(p)) = p", "neither engine has ends_with"),
+        new("prefix-alias", RewriteLayer.Target, Both, Both, "prefix(s, p) is starts_with(s, p)", "neither engine has prefix"),
+        new("float-classification", RewriteLayer.Target, Postgres, Postgres, "isnan(x) and isinf(x) compare with NaN and the infinities", "PostgreSQL has no isnan or isinf"),
+        new("last-day", RewriteLayer.Target, Postgres, Postgres, "last_day(d) is the month's first day plus one month minus one day, as a DATE", "PostgreSQL has no last_day (SQL Server's EOMONTH is written by the transpile)"),
+        new("gcd-lcm-names", RewriteLayer.Target, Postgres, Postgres, "greatest_common_divisor and least_common_multiple are PostgreSQL's gcd and lcm", "PostgreSQL knows them only by the short names"),
         new("string-agg-array", RewriteLayer.Target, Postgres, Postgres, "string_agg is array_to_string(array_agg(... ORDER BY ...), sep)", "polyglot writes LISTAGG, which PostgreSQL does not have"),
     ];
 

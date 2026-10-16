@@ -1,5 +1,6 @@
 using System.Globalization;
 using DbDataBuild.Lowering;
+using DbDataBuild.Models;
 using DbDataBuild.Sql;
 using DbDataBuild.Targets.DuckDb;
 using DbDataBuild.Targets.Rules;
@@ -371,4 +372,89 @@ public class FunctionRulesTests
             Assert.True(diags.Count == 0, $"{sql} on {target}: {string.Join(" | ", diags.Select(d => d.Code + " " + d.Found))}");
         }
     }
+
+    // ---- functions written out from others (FunctionTemplates): one theory over the table ----
+
+    private static DuckDBConnection ProbeTable()
+    {
+        var c = PlanningConnection.Open(lockDown: false);
+        Run(c, "CREATE TABLE probe (id INTEGER NOT NULL, i INTEGER, j INTEGER, d DOUBLE, n DECIMAL(10, 2), s VARCHAR, dt DATE, ts TIMESTAMP)");
+        Run(c, @"INSERT INTO probe VALUES (1, 7, 2, 2.5, 2.50, 'abc', '2024-01-15', '2024-01-15 10:30:45'), (2, -7, 2, -2.5, -2.50, 'ABC', '2024-02-29', '2024-02-29 23:59:59'), (3, 7, -2, 3.5, 3.50, ' abc ', '2024-03-31', '2024-03-31 00:00:00'),
+            (4, 0, 0, 0.5, 0.00, '', '2023-12-31', '2023-12-31 12:00:00'), (5, NULL, 3, NULL, NULL, NULL, NULL, NULL), (6, 5, 0, 1.005, 1.25, 'xa', '2024-06-30', '2024-06-30 08:15:30'),
+            (7, 2147483647, 1, -0.5, -0.50, 'héllo', '2024-01-31', '2024-01-31 18:45:00'), (8, 10, 3, 10000000000, 12345.67, 'a,b,c', '2024-02-01', '2024-02-01 00:00:01')");
+        Run(c, "CREATE MACRO ddb_atn2(y, x) AS atan2(y, x)");                     // the marker the rule writes for ATN2
+        return c;
+    }
+
+    public static IEnumerable<object[]> Templates() => Enumerable.Range(0, FunctionTemplates.All.Count).Select(i => new object[] { i });
+
+    private static bool SameWithin(string expected, string actual)
+    {
+        if (expected == actual) return true;
+        var (a, b) = (expected.Split("; "), actual.Split("; "));
+        if (a.Length != b.Length) return false;
+        for (var r = 0; r < a.Length; r++)
+        {
+            var (x, y) = (a[r].Split('|'), b[r].Split('|'));
+            if (x.Length != y.Length) return false;
+            for (var k = 0; k < x.Length; k++)
+                if (x[k] != y[k] && !(double.TryParse(x[k], NumberStyles.Float, CultureInfo.InvariantCulture, out var p) && double.TryParse(y[k], NumberStyles.Float, CultureInfo.InvariantCulture, out var q) && Math.Abs(p - q) <= 1e-11 * Math.Max(Math.Abs(p), Math.Abs(q)) + 1e-12)) return false;
+        }
+        return true;
+    }
+
+    [Theory]
+    [MemberData(nameof(Templates))]
+    public void A_function_written_out_from_others_fires_on_its_targets_only_and_gives_DuckDBs_value(int index)
+    {
+        var t = FunctionTemplates.All[index];
+        using var c = ProbeTable();
+        foreach (var probe in t.Probes)
+        {
+            var sql = $"SELECT id, {probe} AS v FROM probe";
+            var expected = Rows(c, sql);
+            foreach (var target in new[] { "sqlserver", "fabric", "postgres" })
+            {
+                var r = TargetRules.Apply(sql, target);
+                if (!t.Targets.Contains(target)) { Assert.DoesNotContain(t.Rule, r.Rules); continue; }
+                Assert.Contains(t.Rule, r.Rules);
+                Assert.DoesNotMatch($@"\b{t.Function}\s*\(", r.Sql.ToLowerInvariant().Replace("starts_with", "").Replace("ends_with(", "(").Replace("ddb_atn2", ""));       // the call is gone (the name is not written again)
+                Assert.True(SameWithin(expected, Rows(c, r.Sql)), $"{probe} on {target}: DuckDB [{expected}], rewritten [{Rows(c, r.Sql)}]");
+                var text = TargetRules.Finish(Polyglot.TranspileOne(r.Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
+                Assert.DoesNotContain("DDB_", text, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    [Fact]
+    public void Every_function_the_table_writes_out_has_a_catalog_entry_that_says_where_it_is_needed()
+    {
+        foreach (var rule in FunctionTemplates.RuleNames)
+        {
+            var entry = DbDataBuild.Models.RewriteCatalog.Find(rule);
+            Assert.NotNull(entry);
+            var targets = FunctionTemplates.All.Where(t => t.Rule == rule).SelectMany(t => t.Targets).Distinct().Order().ToList();
+            Assert.Equal(targets, entry!.RequiredOn.Order());                     // the engine lacks the function: without the rule the call fails
+        }
+    }
+
+    [Fact]
+    public void The_atan2_marker_becomes_ATN2_and_the_hyperbolics_leave_PostgreSQL_alone()
+    {
+        Assert.Contains("ATN2(", TargetRules.Finish(Polyglot.TranspileOne(TargetRules.Apply("SELECT atan2(d, 1.0) AS v FROM probe", "sqlserver").Sql, Dialects.Canonical, Dialects.ForTarget("sqlserver")).Sql!, "sqlserver"));
+        Assert.Empty(TargetRules.Apply("SELECT cosh(d) AS v FROM probe", "postgres").Rules);
+        Assert.Empty(TargetRules.Apply("SELECT atan2(d, 1.0) AS v FROM probe", "postgres").Rules);
+        Assert.Empty(TargetRules.Apply("SELECT cbrt(d) AS v FROM probe", "postgres").Rules);
+    }
+
+    [Fact]
+    public void A_native_fidelity_project_keeps_the_rules_an_engine_needs()
+    {
+        var policy = RewriteCatalog_Native("sqlserver");
+        Assert.Contains(TargetRules.HyperbolicFunctionsRule, TargetRules.Apply("SELECT cosh(d) AS v FROM probe", "sqlserver", policy).Rules);     // SQL Server has no COSH: the rule is not optional
+        Assert.Contains("log-base-ten", policy.Disabled);                                                                                              // the one that only keeps the answer equal is
+    }
+
+    private static DbDataBuild.Core.RewritePolicy RewriteCatalog_Native(string target) =>
+        DbDataBuild.Models.RewriteCatalog.Resolve(new DbDataBuild.Models.RewriteSettings("native", [], [], 1), null, [target], "m", null);
 }

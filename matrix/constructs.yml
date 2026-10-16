@@ -384,3 +384,167 @@
   fabric:    { status: unverified, note: "Observed on SQL Server only; no Fabric engine was available to test." }
   postgres:  { status: translated, test: spike/power_ops, note: "As on SQL Server: where DuckDB gives Infinity or NaN PostgreSQL raises an error." }
 
+# ---- Functions an engine does not have (docs/research/function-matrix.md). Each row lists the DuckDB functions that gave "is not a recognized built-in function name" on SQL Server 2022, or that are not in pg_proc on
+# PostgreSQL 17, for every overload; a function the tool writes out from others (FunctionTemplates) is not here. A call that reaches the lint is refused at compile (DDB-301) instead of failing at apply.
+
+- id: fn.missing.statistics
+  detect: [fn:APPROX_TOP_K, fn:ENTROPY, fn:FAVG, fn:FSUM, fn:KAHAN_SUM, fn:SUMKAHAN, fn:KURTOSIS, fn:KURTOSIS_POP, fn:SKEWNESS, fn:MAD, fn:SEM, fn:PRODUCT, fn:HISTOGRAM, fn:STATS, fn:IS_HISTOGRAM_OTHER_BIN]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_statistics, note: "SQL Server 2022 has no function named APPROX_TOP_K, ENTROPY, FAVG, FSUM, KAHAN_SUM, SUMKAHAN, KURTOSIS, KURTOSIS_POP, SKEWNESS, MAD, SEM, PRODUCT, HISTOGRAM, STATS, IS_HISTOGRAM_OTHER_BIN (the engine answers 'is not a recognized built-in function name'). Compute it from SUM, COUNT and the other aggregates in a subquery (or in a DuckDB step before the load)." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_statistics, note: "PostgreSQL 17 has no function named APPROX_TOP_K, ENTROPY, FAVG, FSUM, KAHAN_SUM, SUMKAHAN, KURTOSIS, KURTOSIS_POP, SKEWNESS, MAD, SEM, PRODUCT, HISTOGRAM, STATS, IS_HISTOGRAM_OTHER_BIN (not in pg_proc). Compute it from SUM, COUNT and the other aggregates in a subquery (or in a DuckDB step before the load)." }
+
+- id: fn.missing.statistics.sqlserver
+  detect: [fn:COVAR_POP, fn:COVAR_SAMP, fn:REGR_AVGX, fn:REGR_AVGY, fn:REGR_COUNT, fn:REGR_INTERCEPT, fn:REGR_R2, fn:REGR_SLOPE, fn:REGR_SXX, fn:REGR_SXY, fn:REGR_SYY, node:bitwise_and_agg, fn:BIT_AND, node:bitwise_or_agg, fn:BIT_OR, node:bitwise_xor_agg, fn:BIT_XOR]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_statistics_sqlserver, note: "SQL Server 2022 has no function named COVAR_POP, COVAR_SAMP, REGR_AVGX, REGR_AVGY, REGR_COUNT, REGR_INTERCEPT, REGR_R2, REGR_SLOPE, REGR_SXX, REGR_SXY, REGR_SYY, BIT_AND, BIT_OR, BIT_XOR (the engine answers 'is not a recognized built-in function name'). Compute it from SUM, COUNT and the other aggregates in a subquery (or in a DuckDB step before the load)." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.statistics.postgres
+  detect: [node:approx_count_distinct, fn:APPROX_COUNT_DISTINCT, fn:EQUI_WIDTH_BINS]
+  duckdb: native
+  sqlserver: { status: native }
+  fabric:    { status: native }
+  postgres:  { status: unsupported, test: spike/missing_statistics_postgres, note: "PostgreSQL 17 has no function named APPROX_COUNT_DISTINCT, EQUI_WIDTH_BINS (not in pg_proc). Compute it from SUM, COUNT and the other aggregates in a subquery (or in a DuckDB step before the load)." }
+
+- id: fn.missing.picks
+  detect: [fn:ARG_MAX, fn:ARG_MAX_NULL, fn:ARG_MAX_NULLS_LAST, fn:ARG_MIN, fn:ARG_MIN_NULL, fn:ARG_MIN_NULLS_LAST, fn:ARGMAX, fn:ARGMIN, fn:MAX_BY, fn:MIN_BY, node:first, fn:FIRST, fn:LAST, node:last]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_picks, note: "SQL Server 2022 has no function named ARG_MAX, ARG_MAX_NULL, ARG_MAX_NULLS_LAST, ARG_MIN, ARG_MIN_NULL, ARG_MIN_NULLS_LAST, ARGMAX, ARGMIN, MAX_BY, MIN_BY, FIRST, LAST (the engine answers 'is not a recognized built-in function name'). Rank the rows with row_number() (ORDER BY the value) in a CTE or subquery and take the one at position 1." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_picks, note: "PostgreSQL 17 has no function named ARG_MAX, ARG_MAX_NULL, ARG_MAX_NULLS_LAST, ARG_MIN, ARG_MIN_NULL, ARG_MIN_NULLS_LAST, ARGMAX, ARGMIN, MAX_BY, MIN_BY, FIRST, LAST (not in pg_proc). Rank the rows with row_number() (ORDER BY the value) in a CTE or subquery and take the one at position 1." }
+
+- id: fn.missing.lists
+  detect: [fn:ARRAY_SLICE, fn:ARRAY_VALUE, fn:LIST_ELEMENT, fn:LIST_EXTRACT, fn:LIST_PACK, fn:LIST_SLICE, fn:UNPIVOT_LIST, fn:STRING_SPLIT_REGEX, fn:STR_SPLIT_REGEX, fn:REGEXP_EXTRACT_ALL]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_lists, note: "SQL Server 2022 has no function named ARRAY_SLICE, ARRAY_VALUE, LIST_ELEMENT, LIST_EXTRACT, LIST_PACK, LIST_SLICE, UNPIVOT_LIST, STRING_SPLIT_REGEX, STR_SPLIT_REGEX, REGEXP_EXTRACT_ALL (the engine answers 'is not a recognized built-in function name'). A list, array or row is a type the engines do not have as a value (the matrix row type.list); split text with a join to a numbers table, or keep the pieces in separate columns." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_lists, note: "PostgreSQL 17 has no function named ARRAY_SLICE, ARRAY_VALUE, LIST_ELEMENT, LIST_EXTRACT, LIST_PACK, LIST_SLICE, UNPIVOT_LIST, STRING_SPLIT_REGEX, STR_SPLIT_REGEX, REGEXP_EXTRACT_ALL (not in pg_proc). A list, array or row is a type the engines do not have as a value (the matrix row type.list); split text with a join to a numbers table, or keep the pieces in separate columns." }
+
+- id: fn.missing.lists.sqlserver
+  detect: [fn:LIST, node:array_agg, fn:ARRAY_AGG, fn:ROW, fn:SPLIT, fn:STR_SPLIT, fn:STRING_TO_ARRAY, fn:REGEXP_SPLIT_TO_ARRAY]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_lists_sqlserver, note: "SQL Server 2022 has no function named LIST, ARRAY_AGG, ROW, SPLIT, STR_SPLIT, STRING_TO_ARRAY, REGEXP_SPLIT_TO_ARRAY (the engine answers 'is not a recognized built-in function name'). A list, array or row is a type the engines do not have as a value (the matrix row type.list); split text with a join to a numbers table, or keep the pieces in separate columns." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.encoding
+  detect: [fn:BASE64, fn:TO_BASE64, fn:FROM_BASE64, fn:BIN, fn:TO_BINARY, fn:UNBIN, fn:FROM_BINARY, fn:UNHEX, fn:FROM_HEX, fn:BITSTRING, fn:URL_ENCODE, fn:URL_DECODE, fn:TO_BASE, fn:MD5_NUMBER, fn:SHA1, fn:HASH]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_encoding, note: "SQL Server 2022 has no function named BASE64, TO_BASE64, FROM_BASE64, BIN, TO_BINARY, UNBIN, FROM_BINARY, UNHEX, FROM_HEX, BITSTRING, URL_ENCODE, URL_DECODE, TO_BASE, MD5_NUMBER, SHA1, HASH (the engine answers 'is not a recognized built-in function name'). Binary and text encodings are written differently on each engine (and over UTF-16 on SQL Server); do the conversion in the source or in DuckDB, or write it with the engine's own function in a native query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_encoding, note: "PostgreSQL 17 has no function named BASE64, TO_BASE64, FROM_BASE64, BIN, TO_BINARY, UNBIN, FROM_BINARY, UNHEX, FROM_HEX, BITSTRING, URL_ENCODE, URL_DECODE, TO_BASE, MD5_NUMBER, SHA1, HASH (not in pg_proc). Binary and text encodings are written differently on each engine (and over UTF-16 on SQL Server); do the conversion in the source or in DuckDB, or write it with the engine's own function in a native query." }
+
+- id: fn.missing.encoding.sqlserver
+  detect: [fn:HEX, fn:TO_HEX, fn:ENCODE, fn:DECODE]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_encoding_sqlserver, note: "SQL Server 2022 has no function named HEX, TO_HEX, ENCODE, DECODE (the engine answers 'is not a recognized built-in function name'). Binary and text encodings are written differently on each engine (and over UTF-16 on SQL Server); do the conversion in the source or in DuckDB, or write it with the engine's own function in a native query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.similarity
+  detect: [fn:DAMERAU_LEVENSHTEIN, fn:EDITDIST3, fn:HAMMING, fn:MISMATCHES, fn:JACCARD, fn:JARO_SIMILARITY, fn:JARO_WINKLER_SIMILARITY, fn:LEVENSHTEIN]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_similarity, note: "SQL Server 2022 has no function named DAMERAU_LEVENSHTEIN, EDITDIST3, HAMMING, MISMATCHES, JACCARD, JARO_SIMILARITY, JARO_WINKLER_SIMILARITY, LEVENSHTEIN (the engine answers 'is not a recognized built-in function name'). String distances are not built in to the engines; compute them in DuckDB (a DuckDB step) or in the source." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_similarity, note: "PostgreSQL 17 has no function named DAMERAU_LEVENSHTEIN, EDITDIST3, HAMMING, MISMATCHES, JACCARD, JARO_SIMILARITY, JARO_WINKLER_SIMILARITY, LEVENSHTEIN (not in pg_proc). String distances are not built in to the engines; compute them in DuckDB (a DuckDB step) or in the source." }
+
+- id: fn.missing.text
+  detect: [fn:ORD, fn:STRLEN, fn:STRIP_ACCENTS, fn:NFC_NORMALIZE, fn:PRINTF, fn:REGEXP_ESCAPE, fn:LEFT_GRAPHEME, fn:RIGHT_GRAPHEME, fn:LENGTH_GRAPHEME, fn:SUBSTRING_GRAPHEME, fn:NOT_LIKE_ESCAPE, fn:ILIKE_ESCAPE, fn:NOT_ILIKE_ESCAPE, fn:PARSE_DIRNAME, fn:PARSE_DIRPATH, fn:PARSE_FILENAME, fn:PARSE_PATH, fn:FORMAT_BYTES, fn:FORMATREADABLESIZE, fn:FORMATREADABLEDECIMALSIZE, fn:PARSE_FORMATTED_BYTES]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_text, note: "SQL Server 2022 has no function named ORD, STRLEN, STRIP_ACCENTS, NFC_NORMALIZE, PRINTF, REGEXP_ESCAPE, LEFT_GRAPHEME, RIGHT_GRAPHEME, LENGTH_GRAPHEME, SUBSTRING_GRAPHEME, NOT_LIKE_ESCAPE, ILIKE_ESCAPE, NOT_ILIKE_ESCAPE, PARSE_DIRNAME, PARSE_DIRPATH, PARSE_FILENAME, PARSE_PATH, FORMAT_BYTES, FORMATREADABLESIZE, FORMATREADABLEDECIMALSIZE, PARSE_FORMATTED_BYTES (the engine answers 'is not a recognized built-in function name'). No counterpart on the engines; use the string functions the matrix lists, or prepare the text in the source." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_text, note: "PostgreSQL 17 has no function named ORD, STRLEN, STRIP_ACCENTS, NFC_NORMALIZE, PRINTF, REGEXP_ESCAPE, LEFT_GRAPHEME, RIGHT_GRAPHEME, LENGTH_GRAPHEME, SUBSTRING_GRAPHEME, NOT_LIKE_ESCAPE, ILIKE_ESCAPE, NOT_ILIKE_ESCAPE, PARSE_DIRNAME, PARSE_DIRPATH, PARSE_FILENAME, PARSE_PATH, FORMAT_BYTES, FORMATREADABLESIZE, FORMATREADABLEDECIMALSIZE, PARSE_FORMATTED_BYTES (not in pg_proc). No counterpart on the engines; use the string functions the matrix lists, or prepare the text in the source." }
+
+- id: fn.missing.text.sqlserver
+  detect: [fn:LIKE_ESCAPE, fn:PG_SIZE_PRETTY]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_text_sqlserver, note: "SQL Server 2022 has no function named LIKE_ESCAPE, PG_SIZE_PRETTY (the engine answers 'is not a recognized built-in function name'). No counterpart on the engines; use the string functions the matrix lists, or prepare the text in the source." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.json
+  detect: [fn:JSON_CONTAINS, fn:JSON_MERGE_PATCH, fn:JSON_PRETTY, fn:JSON_SERIALIZE_PLAN, fn:JSON_SERIALIZE_SQL, fn:JSON_STRUCTURE, fn:JSON_TRANSFORM, fn:JSON_TRANSFORM_STRICT, fn:FROM_JSON, fn:FROM_JSON_STRICT]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_json, note: "SQL Server 2022 has no function named JSON_CONTAINS, JSON_MERGE_PATCH, JSON_PRETTY, JSON_SERIALIZE_PLAN, JSON_SERIALIZE_SQL, JSON_STRUCTURE, JSON_TRANSFORM, JSON_TRANSFORM_STRICT, FROM_JSON, FROM_JSON_STRICT (the engine answers 'is not a recognized built-in function name'). The JSON functions other than json_extract_string and json_array_length (matrix rows fn.json_*) have no counterpart; extract the value with json_extract_string, or keep the document apart from the query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_json, note: "PostgreSQL 17 has no function named JSON_CONTAINS, JSON_MERGE_PATCH, JSON_PRETTY, JSON_SERIALIZE_PLAN, JSON_SERIALIZE_SQL, JSON_STRUCTURE, JSON_TRANSFORM, JSON_TRANSFORM_STRICT, FROM_JSON, FROM_JSON_STRICT (not in pg_proc). The JSON functions other than json_extract_string and json_array_length (matrix rows fn.json_*) have no counterpart; extract the value with json_extract_string, or keep the document apart from the query." }
+
+- id: fn.missing.json.sqlserver
+  detect: [fn:JSON_EXISTS]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_json_sqlserver, note: "SQL Server 2022 has no function named JSON_EXISTS (the engine answers 'is not a recognized built-in function name'). The JSON functions other than json_extract_string and json_array_length (matrix rows fn.json_*) have no counterpart; extract the value with json_extract_string, or keep the document apart from the query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.math
+  detect: [fn:EVEN, fn:GAMMA, fn:LGAMMA, fn:NEXTAFTER, fn:SIGNBIT, fn:BAR]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_math, note: "SQL Server 2022 has no function named EVEN, GAMMA, LGAMMA, NEXTAFTER, SIGNBIT, BAR (the engine answers 'is not a recognized built-in function name'). No counterpart on the engines; write it with arithmetic the engines have, or compute it in the source." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_math, note: "PostgreSQL 17 has no function named EVEN, GAMMA, LGAMMA, NEXTAFTER, SIGNBIT, BAR (not in pg_proc). No counterpart on the engines; write it with arithmetic the engines have, or compute it in the source." }
+
+- id: fn.missing.math.sqlserver
+  detect: [fn:GCD, fn:LCM, fn:GREATEST_COMMON_DIVISOR, fn:LEAST_COMMON_MULTIPLE, fn:ISFINITE]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_math_sqlserver, note: "SQL Server 2022 has no function named GCD, LCM, GREATEST_COMMON_DIVISOR, LEAST_COMMON_MULTIPLE, ISFINITE (the engine answers 'is not a recognized built-in function name'). No counterpart on the engines; write it with arithmetic the engines have, or compute it in the source." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.math.postgres
+  detect: [fn:ROUND_EVEN, fn:ROUNDBANKERS]
+  duckdb: native
+  sqlserver: { status: native }
+  fabric:    { status: native }
+  postgres:  { status: unsupported, test: spike/missing_math_postgres, note: "PostgreSQL 17 has no function named ROUND_EVEN, ROUNDBANKERS (not in pg_proc). No counterpart on the engines; write it with arithmetic the engines have, or compute it in the source." }
+
+- id: fn.missing.random
+  detect: [fn:UUIDV7]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_random, note: "SQL Server 2022 has no function named UUIDV7 (the engine answers 'is not a recognized built-in function name'). A random or time-ordered identifier is not reproducible across engines (and a rendered script must be deterministic): generate it in the source or in the engine's own native query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_random, note: "PostgreSQL 17 has no function named UUIDV7 (not in pg_proc). A random or time-ordered identifier is not reproducible across engines (and a rendered script must be deterministic): generate it in the source or in the engine's own native query." }
+
+- id: fn.missing.random.sqlserver
+  detect: [fn:UUIDV4, fn:GEN_RANDOM_UUID, fn:UUID_EXTRACT_VERSION, fn:SETSEED]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_random_sqlserver, note: "SQL Server 2022 has no function named UUIDV4, GEN_RANDOM_UUID, UUID_EXTRACT_VERSION, SETSEED (the engine answers 'is not a recognized built-in function name'). A random or time-ordered identifier is not reproducible across engines (and a rendered script must be deterministic): generate it in the source or in the engine's own native query." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.datetime
+  detect: [fn:CENTURY, fn:DECADE, fn:MILLENNIUM, fn:ERA, node:day_of_month, fn:WEEK, fn:WEEKDAY, node:week_of_year, fn:YEARWEEK, fn:ISOYEAR, fn:JULIAN, node:epoch, fn:EPOCH_NS, fn:EPOCH_US, fn:MICROSECOND, fn:MILLISECOND, fn:NANOSECOND, fn:TIMEZONE_HOUR, fn:TIMEZONE_MINUTE, fn:TIME_BUCKET, fn:STRPTIME, fn:TRY_STRPTIME, fn:MAKE_TIMESTAMP_MS, fn:MAKE_TIMESTAMP_NS, fn:DATE_SUB, fn:DATESUB]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_datetime, note: "SQL Server 2022 has no function named CENTURY, DECADE, MILLENNIUM, ERA, DAYOFMONTH, WEEK, WEEKDAY, WEEKOFYEAR, YEARWEEK, ISOYEAR, JULIAN, EPOCH, EPOCH_NS, EPOCH_US, MICROSECOND, MILLISECOND, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (the engine answers 'is not a recognized built-in function name'). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_datetime, note: "PostgreSQL 17 has no function named CENTURY, DECADE, MILLENNIUM, ERA, DAYOFMONTH, WEEK, WEEKDAY, WEEKOFYEAR, YEARWEEK, ISOYEAR, JULIAN, EPOCH, EPOCH_NS, EPOCH_US, MICROSECOND, MILLISECOND, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (not in pg_proc). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
+
+- id: fn.missing.datetime.sqlserver
+  detect: [node:epoch_ms, fn:TIMEZONE, fn:MAKE_TIMESTAMP, fn:MAKE_TIMESTAMPTZ, fn:TO_TIMESTAMP]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_datetime_sqlserver, note: "SQL Server 2022 has no function named EPOCH_MS, TIMEZONE, MAKE_TIMESTAMP, MAKE_TIMESTAMPTZ, TO_TIMESTAMP (the engine answers 'is not a recognized built-in function name'). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.datetime.postgres
+  detect: [fn:AGO, fn:DAYS_IN_MONTH]
+  duckdb: native
+  sqlserver: { status: native }
+  fabric:    { status: native }
+  postgres:  { status: unsupported, test: spike/missing_datetime_postgres, note: "PostgreSQL 17 has no function named AGO, DAYS_IN_MONTH (not in pg_proc). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
+
+- id: fn.missing.internal
+  detect: [fn:ALIAS, fn:VECTOR_TYPE, fn:IN_SEARCH_PATH]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_internal, note: "SQL Server 2022 has no function named ALIAS, VECTOR_TYPE, IN_SEARCH_PATH (the engine answers 'is not a recognized built-in function name'). A DuckDB internal with no counterpart on the engines." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_internal, note: "PostgreSQL 17 has no function named ALIAS, VECTOR_TYPE, IN_SEARCH_PATH (not in pg_proc). A DuckDB internal with no counterpart on the engines." }
+
+- id: fn.normalized_interval
+  detect: [fn:NORMALIZED_INTERVAL]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing, ordering and testing intervals for equality (a month counts as 30 days). Neither engine has it, and SQL Server has no interval type. Compare the parts instead: date_diff('day', a, b) or date_part on the dates." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing intervals; PostgreSQL has no such function (its interval comparison is the same, but the call is not written for it). Compare the parts instead: date_diff('day', a, b)." }
+

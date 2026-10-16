@@ -505,6 +505,8 @@ public sealed class PlanLowerer
         if (SessionFunctions.Contains(name)) throw new LoweringException($"the session function {name}() (DuckDB answers about its own session, version or transaction; an engine's answer differs)");
         var a = children.Select(c => Expr(c, outs)).ToList();
         var returns = TypeId(e);
+        // add(a, b), subtract, multiply and divide are the operators under another name (the plan keeps the name the query used); neither engine has a function of that name
+        if (a.Count == 2) name = name switch { "add" => "+", "subtract" => "-", "multiply" => "*", "divide" => "//", _ => name };
         // position(needle IN haystack) is `position(haystack, needle)` in the plan, which reads the other way round as written; strpos(haystack, needle) says what it means
         if (name == "position" && a.Count == 2) name = "strpos";
         // SQL Server's SUBSTRING needs a length; DuckDB's two-argument form runs to the end of the string

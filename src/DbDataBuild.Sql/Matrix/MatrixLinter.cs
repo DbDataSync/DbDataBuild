@@ -53,7 +53,7 @@ public sealed class MatrixLinter(SupportMatrix matrix)
             {
                 var rowLoc = LocateRow(row, node, file) ?? loc;
                 foreach (var target in targets)
-                    diags.AddRange(Report(row, target, rowLoc, config));
+                    diags.AddRange(Report(row, target, rowLoc, config, Describe(node)));
             }
 
             if (!matched.Any(r => r.Detect.Any(d => d.Kind is DetectKind.Node or DetectKind.Function)))
@@ -62,6 +62,20 @@ public sealed class MatrixLinter(SupportMatrix matrix)
         }
         return diags;
     }
+
+    /// <summary>Names the call or expression that matched a row, so a message about a row that covers many functions says which one it was: `ACOSH(...)`, `DATE_PART('week', ...)`.</summary>
+    private static string? Describe(AstNode node)
+    {
+        if (node.Type is not ("function" or "aggregate_function")) return null;
+        var name = node.GetString("name")?.ToUpperInvariant();
+        if (name == null) return null;
+        if (node.TryGet("args", out var args) && args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 && LiteralText(args[0]) is { } first) return $"`{name}('{first}', ...)`";
+        return $"`{name}(...)`";
+    }
+
+    private static string? LiteralText(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty("literal", out var l) && l.ValueKind == JsonValueKind.Object && l.TryGetProperty("literal_type", out var t) && t.GetString() == "string" &&
+        l.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static SourceLocation? LocateRow(ConstructRow row, AstNode node, string file)
     {
@@ -79,11 +93,11 @@ public sealed class MatrixLinter(SupportMatrix matrix)
         _ => false,
     };
 
-    private IEnumerable<Diagnostic> Report(ConstructRow row, string target, SourceLocation loc, ProjectConfig config)
+    private IEnumerable<Diagnostic> Report(ConstructRow row, string target, SourceLocation loc, ProjectConfig config, string? what = null)
     {
         if (!row.Targets.TryGetValue(config.EngineOf(target) ?? target, out var entry)) yield break;       // the matrix is per engine; `target` is a connection (or an engine name)
         var note = string.IsNullOrEmpty(entry.Note) ? "" : " " + entry.Note;
-        string Found(string verb) => $"`{row.Id}` is {verb} on {target}.{note}";
+        string Found(string verb) => $"`{row.Id}` is {verb} on {target}{(what == null ? "" : $" ({what})")}.{note}";
         Severity? Policy(string key) => config.Policy.TryGetValue(key, out var sv) ? sv : null;
 
         // A configured engine version settles min_version rows. Below the minimum the construct does not work there.

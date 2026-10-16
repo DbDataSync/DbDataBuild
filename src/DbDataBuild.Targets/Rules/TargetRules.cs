@@ -45,6 +45,7 @@ public static partial class TargetRules
     public const string NowKeepsTheZone = "now-with-zone";
     public const string LogIsBaseTen = "log-base-ten";
     public const string LogWithBase = "log-with-base";
+    public const string HyperbolicFunctionsRule = FunctionTemplates.HyperbolicFunctions;
     public const string IntervalAsDateAdd = "interval-dateadd";
 
     /// <summary>Applies the rules of <paramref name="target"/> to a DuckDB-dialect query. Returns the text unchanged, byte for byte, when no rule fires.</summary>
@@ -73,6 +74,7 @@ public static partial class TargetRules
         (@"\bddb_varchar\b", "VARCHAR2(4000)", "oracle"), (@"\bddb_date_diff\s*\(", "DATE_DIFF(", "bigquery"),
         (@"\bddb_regexp_replace\s*\(", "REGEXP_REPLACE(", "sqlserver"),
         (@"\bddb_sysdatetimeoffset\s*\(", "SYSDATETIMEOFFSET(", "sqlserver"),
+        (@"\bddb_atn2\s*\(", "ATN2(", "sqlserver"), (@"\bddb_atn2\s*\(", "ATN2(", "fabric"),
     ];
 
     /// <summary>Replaces the markers of the rules of <paramref name="target"/> in the transpiled text. Returns the text unchanged when it holds none.</summary>
@@ -99,7 +101,14 @@ public static partial class TargetRules
     internal const int SqlServerWithRegularExpressions = 17;
     private static readonly string[] SqlServerRegularExpressions = [RegexpFullMatch, RegexpExtract, RegexpReplaceFirst];
 
-    private static HashSet<string> RulesFor(string target, int? version = null) => target switch
+    private static HashSet<string> RulesFor(string target, int? version = null)
+    {
+        var rules = BaseRules(target, version);
+        rules.UnionWith(FunctionTemplates.RulesFor(target));
+        return rules;
+    }
+
+    private static HashSet<string> BaseRules(string target, int? version) => target switch
     {
         "sqlserver" => [NowKeepsTheZone, LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks, ..(version >= SqlServerWithRegularExpressions ? SqlServerRegularExpressions : [])],
         "fabric" => [LogIsBaseTen, IntervalAsDateAdd, BitOperators, ShiftLeft, ShiftRight, FactorialTable, LengthKeepsTrailingSpaces, RoundDouble, TryCastParse, DoubleToInt, WeekdayIndependentOfDateFirst, PadToLength, DatePlusDays, ConcatAsPlus, DateDiffWeeks],

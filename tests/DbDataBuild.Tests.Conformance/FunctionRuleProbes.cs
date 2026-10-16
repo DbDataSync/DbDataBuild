@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using DbDataBuild.Targets.Rules;
 using Xunit;
 
 namespace DbDataBuild.Tests.Conformance;
@@ -21,7 +23,14 @@ public class FunctionRuleProbes
     private static readonly string[] SqlServerOnly = ["sqlserver"];
     private static readonly string[] PostgresOnly = ["postgres"];
 
-    private static readonly Case[] Cases =
+    private static Case[] Cases => [.. Explicit, .. FromTable];
+
+    /// <summary>One case per probe of every function written out from others (FunctionTemplates), on the engines that get the template.</summary>
+    private static Case[] FromTable => FunctionTemplates.All
+        .SelectMany(t => t.Probes.Select(p => V($"{t.Rule}:{p}", p, engines: t.Targets.Where(x => x != "fabric").ToArray())))
+        .ToArray();
+
+    private static readonly Case[] Explicit =
     [
         // log(x) is base 10; log(b, x) has a base
         V("log_x", "log(abs(d) + 1)"), V("log_two_args", "log(2, abs(d) + 1)"), V("log_ten_args", "log(10, abs(d) + 1)"), V("log_int_col", "log(abs(i) + 1)"), V("log_decimal", "log(abs(n) + 1)"),
@@ -91,7 +100,7 @@ public class FunctionRuleProbes
                 if (actual.Error == null) problems.Add($"{c.Id}: DuckDB raises ({expected.Error}) and the engine returns [{actual.Rows}]  {rendered.Replace("\n", " ")}");
             }
             else if (actual.Error != null) problems.Add($"{c.Id}: engine error {actual.Error}  {rendered.Replace("\n", " ")}");
-            else if (actual.Rows != expected.Rows) problems.Add($"{c.Id}: duckdb [{expected.Rows}] engine [{actual.Rows}]  {rendered.Replace("\n", " ")}");
+            else if (!SameRows(expected.Rows, actual.Rows)) problems.Add($"{c.Id}: duckdb [{expected.Rows}] engine [{actual.Rows}]  {rendered.Replace("\n", " ")}");
         }
         Assert.True(problems.Count == 0, name + ":\n" + string.Join("\n", problems));
     }
@@ -115,5 +124,25 @@ public class FunctionRuleProbes
             if (rendered != null || refused == null || !refused.Contains(contains, StringComparison.OrdinalIgnoreCase)) problems.AppendLine($"{id}: expected a refusal naming '{contains}', got {refused ?? rendered}");
         }
         Assert.True(problems.Length == 0, problems.ToString());
+    }
+
+    /// <summary>The rows are equal; a number may differ by a relative 1e-11 (the functions that are written out from others do not reproduce the last bits of the C library's).</summary>
+    private static bool SameRows(string expected, string actual)
+    {
+        if (expected == actual) return true;
+        var (a, b) = (expected.Split("; "), actual.Split("; "));
+        if (a.Length != b.Length) return false;
+        for (var r = 0; r < a.Length; r++)
+        {
+            var (x, y) = (a[r].Split('|'), b[r].Split('|'));
+            if (x.Length != y.Length) return false;
+            for (var c = 0; c < x.Length; c++)
+            {
+                if (x[c] == y[c]) continue;
+                if (!double.TryParse(x[c], NumberStyles.Float, CultureInfo.InvariantCulture, out var p) || !double.TryParse(y[c], NumberStyles.Float, CultureInfo.InvariantCulture, out var q)) return false;
+                if (Math.Abs(p - q) > 1e-11 * Math.Max(Math.Abs(p), Math.Abs(q)) + 1e-12) return false;
+            }
+        }
+        return true;
     }
 }

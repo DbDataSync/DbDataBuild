@@ -63,11 +63,37 @@ public class MatrixLinterTests
         ["fn.date_part_calendar"] = "SELECT DATE_PART('week', d) AS x FROM t",
         ["fn.substring_negative"] = "SELECT SUBSTR(s, -2) AS x FROM t",
         ["fn.log"] = "SELECT LOG(a) AS x FROM t",
+        ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",
+        ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",
+        ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",
+        ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(a) AS x FROM t",
         ["op.shift"] = "SELECT a << 2 AS x FROM t",
         ["fn.factorial"] = "SELECT FACTORIAL(a) AS x FROM t",
         ["fn.xor"] = "SELECT XOR(a, b) AS x FROM t",
         ["fn.power"] = "SELECT POWER(a, 2) AS x FROM t",
         ["op.interval_text"] = "SELECT d + CAST('1 d' AS INTERVAL) AS x FROM t",
+        ["fn.missing.statistics"] = "SELECT ENTROPY(a) AS x FROM t",
+        ["fn.missing.statistics.sqlserver"] = "SELECT COVAR_POP(a, b) AS x FROM t",
+        ["fn.missing.statistics.postgres"] = "SELECT APPROX_COUNT_DISTINCT(a) AS x FROM t",
+        ["fn.missing.picks"] = "SELECT ARG_MAX(a, b) AS x FROM t",
+        ["fn.missing.lists"] = "SELECT LIST_SLICE(s, 1, 2) AS x FROM t",
+        ["fn.missing.lists.sqlserver"] = "SELECT STR_SPLIT(s, 'b') AS x FROM t",
+        ["fn.missing.encoding"] = "SELECT HASH(s) AS x FROM t",
+        ["fn.missing.encoding.sqlserver"] = "SELECT HEX(a) AS x FROM t",
+        ["fn.missing.similarity"] = "SELECT LEVENSHTEIN(s, 'abc') AS x FROM t",
+        ["fn.missing.text"] = "SELECT STRIP_ACCENTS(s) AS x FROM t",
+        ["fn.missing.text.sqlserver"] = "SELECT LIKE_ESCAPE(s, 'a%', '\\') AS x FROM t",
+        ["fn.missing.json"] = "SELECT JSON_CONTAINS('{\"a\": 1}', '{\"a\": 1}') AS x FROM t",
+        ["fn.missing.json.sqlserver"] = "SELECT JSON_EXISTS('{\"a\": 1}', '$.a') AS x FROM t",
+        ["fn.missing.math"] = "SELECT EVEN(CAST(a AS DOUBLE)) AS x FROM t",
+        ["fn.missing.math.sqlserver"] = "SELECT GCD(a, b) AS x FROM t",
+        ["fn.missing.math.postgres"] = "SELECT ROUND_EVEN(CAST(a AS DOUBLE), 1) AS x FROM t",
+        ["fn.missing.random"] = "SELECT UUID_EXTRACT_VERSION(UUIDV7()) AS x FROM t",
+        ["fn.missing.random.sqlserver"] = "SELECT UUID_EXTRACT_VERSION(UUIDV4()) AS x FROM t",
+        ["fn.missing.datetime"] = "SELECT CENTURY(d) AS x FROM t",
+        ["fn.missing.datetime.sqlserver"] = "SELECT MAKE_TIMESTAMP(2024, 1, 2, 3, 4, 5.0) AS x FROM t",
+        ["fn.missing.datetime.postgres"] = "SELECT DAYS_IN_MONTH(d) AS x FROM t",
+        ["fn.missing.internal"] = "SELECT ALIAS(a) AS x FROM t",
         ["syntax.lateral"] = "SELECT * FROM t, LATERAL (SELECT u.b FROM u WHERE u.a = t.a) AS l",
     };
 
@@ -90,6 +116,35 @@ public class MatrixLinterTests
                 Assert.True(quiet ? !hit : hit, $"{row.Id} on {target} ({entry.Status}): hit={hit}");
             }
         }
+    }
+
+    [Fact]
+    public void Every_function_a_missing_function_row_lists_is_refused_on_the_engines_that_lack_it()
+    {
+        var checkedCount = 0;
+        foreach (var row in Matrix.Rows.Where(r => r.Id.StartsWith("fn.missing.", StringComparison.Ordinal)))
+            foreach (var detect in row.Detect.Where(d => d.Kind == DetectKind.Function))
+            {
+                var sql = Enumerable.Range(1, 3).Select(n => $"SELECT {detect.Name}({string.Join(", ", "abc".Take(n))}) AS x FROM t")
+                    .FirstOrDefault(q => DbDataBuild.Sql.Polyglot.Parse(q, DbDataBuild.Sql.Dialects.Canonical).Ok);
+                Assert.True(sql != null, $"{row.Id}: {detect.Name} does not parse with one to three arguments");
+                var diags = Lint(sql!);
+                foreach (var (target, entry) in row.Targets.Where(t => t.Value.Status == SupportStatus.Unsupported))
+                    Assert.True(diags.Any(d => d.Code == "DDB-301" && d.Severity == Severity.Error && d.Found.Contains($"`{row.Id}`") && d.Found.Contains(" on " + target)), $"{sql} on {target}: not refused by {row.Id}");
+                checkedCount++;
+            }
+        Assert.True(checkedCount > 150, $"only {checkedCount} functions checked");
+    }
+
+    [Fact]
+    public void A_function_listed_by_two_rows_is_a_mistake()
+    {
+        var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Matrix.Rows)
+            foreach (var d in row.Detect.Where(d => d.Kind == DetectKind.Function))
+                if (seen.TryGetValue(d.Name, out var other) && other != row.Id && !other.StartsWith("fn.regexp", StringComparison.Ordinal) && !row.Id.StartsWith("fn.regexp", StringComparison.Ordinal))
+                    Assert.Fail($"{d.Name} is in both {other} and {row.Id}");
+                else seen[d.Name] = row.Id;
     }
 
     [Fact]
