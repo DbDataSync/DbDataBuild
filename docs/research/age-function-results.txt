@@ -53,6 +53,13 @@ pairs: 1849 date pairs (43 dates, every ordered pair), 3600 timestamp pairs (60 
     id 1857: DuckDB 0, postgres native -0.000001
   t-sql formulation: 5449 of 5449 rows equal DuckDB's, 0 differ
 
+## extract(second FROM age(a, b)), PostgreSQL written trunc(extract(...))
+  duckdb:     5449 rows, type BigInt
+  postgres:   5449 rows, type numeric
+  sql server: 5449 rows, type bigint
+  postgres native: 5449 of 5449 rows equal DuckDB's, 0 differ
+  t-sql formulation: 5449 of 5449 rows equal DuckDB's, 0 differ
+
 ## year(age(a, b))
   duckdb:     5449 rows, type BigInt
   postgres:   5449 rows, type numeric
@@ -97,66 +104,99 @@ pairs: 1849 date pairs (43 dates, every ordered pair), 3600 timestamp pairs (60 
 
 # What the tool sends today (shape as a model writes it)
 ## age(a, b) as a value
+  lowered: SELECT id, age(a, b) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, AGE(a, b) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, AGE(a, b) AS v FROM age_pairs
 ## extract(year FROM age(a, b))
+  lowered: SELECT id, date_part('year', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(YEAR, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(YEAR FROM AGE(a, b)) AS v FROM age_pairs
 ## extract(month FROM age(a, b))
+  lowered: SELECT id, date_part('month', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(MONTH, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(MONTH FROM AGE(a, b)) AS v FROM age_pairs
 ## extract(day FROM age(a, b))
+  lowered: SELECT id, date_part('day', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(DAY, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(DAY FROM AGE(a, b)) AS v FROM age_pairs
 ## extract(hour FROM age(a, b))
+  lowered: SELECT id, date_part('hour', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(HOUR, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(HOUR FROM AGE(a, b)) AS v FROM age_pairs
 ## extract(minute FROM age(a, b))
+  lowered: SELECT id, date_part('minute', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(MINUTE, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(MINUTE FROM AGE(a, b)) AS v FROM age_pairs
 ## extract(second FROM age(a, b))
+  lowered: SELECT id, date_part('second', age(a, b)) AS v
+FROM age_pairs
+  sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
+    text: SELECT id, DATEPART(SECOND, AGE(a, b)) AS v FROM age_pairs
+  postgres: static same; 2400 of 5449 rows differ, e.g. id 1851: DuckDB 0, engine -0.000001
+    text: SELECT id, EXTRACT(SECOND FROM AGE(a, b)) AS v FROM age_pairs
+## extract(second FROM age(a, b)), PostgreSQL written trunc(extract(...))
+  lowered: SELECT id, date_part('second', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(SECOND, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; 2400 of 5449 rows differ, e.g. id 1851: DuckDB 0, engine -0.000001
     text: SELECT id, EXTRACT(SECOND FROM AGE(a, b)) AS v FROM age_pairs
 ## year(age(a, b))
+  lowered: SELECT id, date_part('year', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(YEAR, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(YEAR FROM AGE(a, b)) AS v FROM age_pairs
 ## date_part('month', age(a, b))
+  lowered: SELECT id, date_part('month', age(a, b)) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, DATEPART(MONTH, AGE(a, b)) AS v FROM age_pairs
   postgres: static same; all 5449 rows equal DuckDB's
     text: SELECT id, EXTRACT(MONTH FROM AGE(a, b)) AS v FROM age_pairs
 ## age(a, b) > INTERVAL '1 year'
+  lowered: SELECT id, (normalized_interval(age(a, b)) > normalized_interval(CAST('1 year' AS INTERVAL))) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, CAST(CASE WHEN (NORMALIZED_INTERVAL(AGE(a, b)) > NORMALIZED_INTERVAL(CAST('1 year' AS VARCHAR(MAX)))) THEN 1 WHEN NOT (NORMALIZED_INTERVAL(AGE(a, b)) > NORMALIZED_INTERVAL(CAST('1 year' AS VARCHAR(MAX)))) THEN 0 ELSE NULL END AS BIT) AS v FROM age_pairs
   postgres: static same; engine/tool error: PostgresException: 42883: function normalized_interval(interval) does not exist
     text: SELECT id, (NORMALIZED_INTERVAL(AGE(a, b)) > NORMALIZED_INTERVAL(CAST('1 year' AS INTERVAL))) AS v FROM age_pairs
 ## age(a, b) >= INTERVAL '30 days'
+  lowered: SELECT id, (normalized_interval(age(a, b)) >= normalized_interval(CAST('30 days' AS INTERVAL))) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, CAST(CASE WHEN (NORMALIZED_INTERVAL(AGE(a, b)) >= NORMALIZED_INTERVAL(CAST('30 days' AS VARCHAR(MAX)))) THEN 1 WHEN NOT (NORMALIZED_INTERVAL(AGE(a, b)) >= NORMALIZED_INTERVAL(CAST('30 days' AS VARCHAR(MAX)))) THEN 0 ELSE NULL END AS BIT) AS v FROM age_pairs
   postgres: static same; engine/tool error: PostgresException: 42883: function normalized_interval(interval) does not exist
     text: SELECT id, (NORMALIZED_INTERVAL(AGE(a, b)) >= NORMALIZED_INTERVAL(CAST('30 days' AS INTERVAL))) AS v FROM age_pairs
 ## age(a, b) = INTERVAL '1 month'
+  lowered: SELECT id, (normalized_interval(age(a, b)) = normalized_interval(CAST('1 month' AS INTERVAL))) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, CAST(CASE WHEN (NORMALIZED_INTERVAL(AGE(a, b)) = NORMALIZED_INTERVAL(CAST('1 month' AS VARCHAR(MAX)))) THEN 1 WHEN NOT (NORMALIZED_INTERVAL(AGE(a, b)) = NORMALIZED_INTERVAL(CAST('1 month' AS VARCHAR(MAX)))) THEN 0 ELSE NULL END AS BIT) AS v FROM age_pairs
   postgres: static same; engine/tool error: PostgresException: 42883: function normalized_interval(interval) does not exist
     text: SELECT id, (NORMALIZED_INTERVAL(AGE(a, b)) = NORMALIZED_INTERVAL(CAST('1 month' AS INTERVAL))) AS v FROM age_pairs
 ## age(a, b) < INTERVAL '0 days' (negative direction)
+  lowered: SELECT id, (normalized_interval(age(a, b)) < normalized_interval(CAST('0 days' AS INTERVAL))) AS v
+FROM age_pairs
   sqlserver: static same; engine/tool error: SqlException: 'AGE' is not a recognized built-in function name.
     text: SELECT id, CAST(CASE WHEN (NORMALIZED_INTERVAL(AGE(a, b)) < NORMALIZED_INTERVAL(CAST('0 days' AS VARCHAR(MAX)))) THEN 1 WHEN NOT (NORMALIZED_INTERVAL(AGE(a, b)) < NORMALIZED_INTERVAL(CAST('0 days' AS VARCHAR(MAX)))) THEN 0 ELSE NULL END AS BIT) AS v FROM age_pairs
   postgres: static same; engine/tool error: PostgresException: 42883: function normalized_interval(interval) does not exist
