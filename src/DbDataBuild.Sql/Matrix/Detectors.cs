@@ -38,9 +38,10 @@ public static class Detectors
         ["recursive_cte"] = n => Select(n) && n.TryGet("with", out var w) && w.ValueKind == JsonValueKind.Object && w.TryGetProperty("recursive", out var r) && r.ValueKind == JsonValueKind.True,
         ["lateral_subquery"] = n => n.Type == "subquery" && n.TryGet("lateral", out var l) && l.ValueKind == JsonValueKind.True,
         ["sample"] = n => Select(n) && NonNull(n, "sample"),
-        // date_part('week' | 'epoch' | ...): the parts the engines do not agree on (dow and isodow are rewritten by a target rule)
-        ["date_part_calendar"] = n => n.Type == "function" && string.Equals(n.GetString("name"), "DATE_PART", StringComparison.OrdinalIgnoreCase) &&
-            n.TryGet("args", out var args) && args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 && LiteralValue(args[0]) is "week" or "weekofyear" or "epoch" or "yearweek",
+        // a unit of date_part, date_trunc or date_diff that the tool does not translate (DateUnits), or one that is not a literal; the unit is named in the message
+        ["date_unit_unsupported"] = n => n.Type == "function" && n.GetString("name")?.ToUpperInvariant() is "DATE_PART" or "DATEPART" or "DATE_TRUNC" or "DATETRUNC" or "DATE_DIFF" or "DATEDIFF" &&
+            n.TryGet("args", out var args) && args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 &&
+            (LiteralValue(args[0]) is not { } unit || !(n.GetString("name")!.ToUpperInvariant() switch { "DATE_PART" or "DATEPART" => DateUnits.DatePart, "DATE_TRUNC" or "DATETRUNC" => DateUnits.Truncation, _ => DateUnits.Difference }).Contains(unit)),
         // log(x): base 10 in DuckDB, the natural logarithm in T-SQL (a target rule writes LOG10; this reports it when the rule is turned off)
         ["log_single_argument"] = n => n.Type == "log" && !NonNull(n, "base"),
         // an interval that cannot become DATEADD calls on SQL Server: text the interval reader does not know exactly (a unit written short, a fraction of a day), a cast of anything but a text literal, or a product or quotient

@@ -156,9 +156,12 @@
 - { id: missing_math_postgres, sql: "SELECT ROUND_EVEN(CAST(a AS DOUBLE), 1) AS x FROM t", expect: unsupported }
 - { id: missing_random, sql: "SELECT UUID_EXTRACT_VERSION(UUIDV7()) AS x FROM t", expect: unsupported }
 - { id: missing_random_sqlserver, sql: "SELECT UUID_EXTRACT_VERSION(UUIDV4()) AS x FROM t", expect: unsupported }
-- { id: missing_datetime, sql: "SELECT CENTURY(d) AS x FROM t", expect: unsupported }
-- { id: missing_datetime_sqlserver, sql: "SELECT MAKE_TIMESTAMP(2024, 1, 2, 3, 4, 5.0) AS x FROM t", expect: unsupported }
-- { id: missing_datetime_postgres, sql: "SELECT DAYS_IN_MONTH(d) AS x FROM t", expect: unsupported }
 - { id: missing_internal, sql: "SELECT ALIAS(a) AS x FROM t", expect: unsupported }
 - { id: normalized_interval_fn, sql: "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",                    expect: unsupported }
+- { id: missing_datetime, sql: "SELECT EPOCH_US(ts) AS x FROM t", expect: unsupported }
+- { id: missing_datetime_sqlserver, sql: "SELECT MAKE_TIMESTAMP(2024, 1, 2, 3, 4, 5.0) AS x FROM t", expect: unsupported }
+- { id: missing_datetime_postgres, sql: "SELECT DAYS_IN_MONTH(d) AS x FROM t", expect: unsupported }
+- { id: date_unit_fn,        sql: "SELECT DATE_PART('timezone_hour', ts) AS x FROM t",             expect: unsupported }
+- { id: strftime_fn,         sql: "SELECT STRFTIME(ts, '%A %B %j') AS x FROM t",                   expect: unsupported }
+- { id: format_fn,           sql: "SELECT FORMAT('{}|{}', s, a) AS x FROM t",                      expect: unsupported }
 

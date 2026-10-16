@@ -111,6 +111,7 @@ public sealed class EngineProbe : IDisposable
             return new(Rows(r), null);
         }
         catch (EngineQueryException ex) { return new(string.Empty, ex.Message); }
+        catch (InvalidCastException ex) { return new(string.Empty, "the engine returned a type the probe cannot read: " + FirstLine(ex.Message)); }      // PostgreSQL's interval with months
     }
 
     private static string Rows(ProbeRows result)

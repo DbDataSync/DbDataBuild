@@ -383,6 +383,13 @@ public class FunctionRulesTests
             (4, 0, 0, 0.5, 0.00, '', '2023-12-31', '2023-12-31 12:00:00'), (5, NULL, 3, NULL, NULL, NULL, NULL, NULL), (6, 5, 0, 1.005, 1.25, 'xa', '2024-06-30', '2024-06-30 08:15:30'),
             (7, 2147483647, 1, -0.5, -0.50, 'héllo', '2024-01-31', '2024-01-31 18:45:00'), (8, 10, 3, 10000000000, 12345.67, 'a,b,c', '2024-02-01', '2024-02-01 00:00:01')");
         Run(c, "CREATE MACRO ddb_atn2(y, x) AS atan2(y, x)");                     // the marker the rule writes for ATN2
+        Run(c, "CREATE MACRO ddb_isoweek(x) AS date_part('week', x)");              // DATEPART(ISO_WEEK, x)
+        Run(c, "CREATE MACRO ddb_datepart_millisecond(x) AS date_part('millisecond', x) % 1000");        // T-SQL's DATEPART counts within the second
+        Run(c, "CREATE MACRO ddb_datepart_microsecond(x) AS date_part('microsecond', x) % 1000000");
+        Run(c, "CREATE MACRO ddb_pg_epoch(x) AS epoch(x)");
+        Run(c, "CREATE MACRO ddb_pg_julian(x) AS julian(x)");
+        Run(c, "CREATE MACRO ddb_epoch(x) AS epoch(x)");                             // DATEDIFF_BIG seconds and the microseconds
+        foreach (var unit in new[] { "hour", "minute", "second", "millisecond", "microsecond" }) Run(c, $"CREATE MACRO ddb_datediff_big_{unit}(a, b) AS date_diff('{unit}', a, b)");
         return c;
     }
 
@@ -416,9 +423,9 @@ public class FunctionRulesTests
             foreach (var target in new[] { "sqlserver", "fabric", "postgres" })
             {
                 var r = TargetRules.Apply(sql, target);
-                if (!t.Targets.Contains(target)) { Assert.DoesNotContain(t.Rule, r.Rules); continue; }
+                if (!t.Targets.Contains(target)) { if (t.Unit == null) Assert.DoesNotContain(t.Rule, r.Rules); continue; }
                 Assert.Contains(t.Rule, r.Rules);
-                Assert.DoesNotMatch($@"\b{t.Function}\s*\(", r.Sql.ToLowerInvariant().Replace("starts_with", "").Replace("ends_with(", "(").Replace("ddb_atn2", ""));       // the call is gone (the name is not written again)
+                if (t.Unit == null) Assert.DoesNotMatch($@"\b{t.Function}\s*\(", r.Sql.ToLowerInvariant().Replace("starts_with", "").Replace("ends_with(", "(").Replace("ddb_atn2", ""));       // the call is gone (the name is not written again)
                 Assert.True(SameWithin(expected, Rows(c, r.Sql)), $"{probe} on {target}: DuckDB [{expected}], rewritten [{Rows(c, r.Sql)}]");
                 var text = TargetRules.Finish(Polyglot.TranspileOne(r.Sql, Dialects.Canonical, Dialects.ForTarget(target)).Sql!, target);
                 Assert.DoesNotContain("DDB_", text, StringComparison.OrdinalIgnoreCase);
@@ -502,5 +509,45 @@ public class FunctionRulesTests
         Assert.Equal([TargetRules.TruncDigits], r.Rules);
         Assert.Equal(Rows(c, sql), Rows(c, r.Sql));
         Assert.Empty(TargetRules.Apply(sql, "sqlserver").Rules);                                  // ROUND(x, n, 1) is the engine's own
+    }
+
+    // ---- strftime and format ----
+
+    private static string LoweredText(string sql)
+    {
+        using var c = PlanningConnection.Open(lockDown: false);
+        Run(c, "CREATE TABLE g (ts TIMESTAMP, dt DATE, s VARCHAR, i INTEGER, d DOUBLE, tz TIMESTAMPTZ)");
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = QueryDescriber.PlanStatement(sql);
+        return PlanLowerer.Lower((string)cmd.ExecuteScalar()!).Sql;
+    }
+
+    [Fact]
+    public void Strftime_is_written_out_as_pieces_of_text()
+    {
+        var sql = LoweredText("SELECT strftime(ts, '%Y-%m-%d %A') AS v FROM g");
+        Assert.Contains("right('000' || CAST(date_part('year', ts) AS VARCHAR), 4)", sql);
+        Assert.Contains("WHEN 1 THEN 'Monday'", sql);
+        Assert.StartsWith("SELECT CASE WHEN ts IS NULL THEN NULL", sql);
+        Assert.Contains("CAST(dt AS TIMESTAMP)", LoweredText("SELECT strftime(dt, '%H') AS v FROM g"));
+    }
+
+    [Theory]
+    [InlineData("SELECT strftime(ts, '%U') AS v FROM g", "%U")]
+    [InlineData("SELECT strftime(ts, '%Y %V') AS v FROM g", "%V")]
+    [InlineData("SELECT strftime(tz, '%Y') AS v FROM g", "TIMESTAMP WITH TIME ZONE")]
+    [InlineData("SELECT format('{:05d}', i) AS v FROM g", "{:05d}")]
+    [InlineData("SELECT format('{}', d) AS v FROM g", "DOUBLE")]
+    public void What_has_no_exact_text_is_refused_with_the_specifier_or_type_named(string sql, string named)
+    {
+        var ex = Assert.Throws<LoweringException>(() => LoweredText(sql));
+        Assert.Contains(named, ex.Message);
+    }
+
+    [Fact]
+    public void Format_with_placeholders_is_a_concatenation_of_text()
+    {
+        var sql = LoweredText("SELECT format('{}|{}!', s, i) AS v FROM g");
+        Assert.Contains("(s || '|' || CAST(CAST(i AS BIGINT) AS VARCHAR) || '!')", sql);
     }
 }

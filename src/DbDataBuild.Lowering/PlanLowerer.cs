@@ -45,6 +45,12 @@ public sealed class PlanLowerer
         ["COMPARE_EQUAL"] = "=", ["COMPARE_NOTEQUAL"] = "<>", ["COMPARE_LESSTHAN"] = "<", ["COMPARE_GREATERTHAN"] = ">", ["COMPARE_LESSTHANOREQUALTO"] = "<=",
         ["COMPARE_GREATERTHANOREQUALTO"] = ">=", ["COMPARE_NOT_DISTINCT_FROM"] = "IS NOT DISTINCT FROM", ["COMPARE_DISTINCT_FROM"] = "IS DISTINCT FROM",
     };
+    private static readonly Dictionary<string, string> DatePartAliases = new(StringComparer.Ordinal)
+    {
+        ["era"] = "era", ["decade"] = "decade", ["century"] = "century", ["millennium"] = "millennium", ["isoyear"] = "isoyear", ["yearweek"] = "yearweek", ["julian"] = "julian", ["epoch"] = "epoch",
+        ["microsecond"] = "microsecond", ["millisecond"] = "millisecond", ["weekofyear"] = "week", ["week"] = "week", ["weekday"] = "dow", ["dayofmonth"] = "day", ["dayofweek"] = "dow", ["dayofyear"] = "doy",
+    };
+
     private static readonly HashSet<string> IntegerTypes = ["TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT"];
 
     private Func<string, IReadOnlyList<string>>? grainOf;
@@ -205,6 +211,11 @@ public sealed class PlanLowerer
             return $"DECIMAL({(ti.TryGetProperty("width", out var w) ? w.GetInt32() : 18)}, {(ti.TryGetProperty("scale", out var s) ? s.GetInt32() : 3)})";
         return id;
     }
+
+    /// <summary>The text of a VARCHAR constant of the plan, or null when the expression is not one.</summary>
+    private static string? StringConstant(JsonElement e) =>
+        Str(e, "type") == "VALUE_CONSTANT" && e.GetProperty("value") is var v && !(v.TryGetProperty("is_null", out var n) && n.ValueKind == JsonValueKind.True) && v.GetProperty("type").GetProperty("id").GetString() == "VARCHAR"
+            ? (v.TryGetProperty("value", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : "") : null;
 
     private static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     private static IEnumerable<JsonElement> Arr(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? v.EnumerateArray() : [];
@@ -507,6 +518,30 @@ public sealed class PlanLowerer
         var returns = TypeId(e);
         // add(a, b), subtract, multiply and divide are the operators under another name (the plan keeps the name the query used); neither engine has a function of that name
         if (a.Count == 2) name = name switch { "add" => "+", "subtract" => "-", "multiply" => "*", "divide" => "//", _ => name };
+        // strftime and format are written out as the pieces of their text (TextFormats): no engine's format function uses DuckDB's letters
+        if (name == "strftime" && a.Count == 2)
+        {
+            var formatAt = StringConstant(children[1]) != null ? 1 : StringConstant(children[0]) != null ? 0 : -1;
+            if (formatAt < 0) throw new LoweringException("strftime with a format that is not a literal (the specifiers are translated one by one, so the format has to be known)");
+            var timeAt = 1 - formatAt;
+            var timeType = TypeId(children[timeAt]);
+            if (timeType is not ("DATE" or "TIMESTAMP")) throw new LoweringException($"strftime over {timeType} (only DATE and TIMESTAMP values are formatted exactly)");
+            return TextFormats.Strftime(timeType == "DATE" ? $"CAST({a[timeAt]} AS TIMESTAMP)" : a[timeAt], StringConstant(children[formatAt])!);
+        }
+        if (name == "format" && a.Count >= 1 && StringConstant(children[0]) is { } formatTemplate)
+        {
+            // each argument is cast to text as the engine's own cast writes it; the types whose text is not DuckDB's (a double: 1e+10 for 10000000000.0; a timestamp: seven fraction digits; a decimal: trailing zeros) are refused
+            var pieces = new List<string>();
+            for (var i = 1; i < children.Count; i++)
+            {
+                var t = TypeId(children[i]);
+                if (t is not ("VARCHAR" or "TINYINT" or "SMALLINT" or "INTEGER" or "BIGINT" or "DATE"))
+                    throw new LoweringException($"format with an argument of type {t} (its text differs between DuckDB and the engines; cast it to VARCHAR first, with the digits you want)");
+                pieces.Add(t == "VARCHAR" ? a[i] : $"CAST({a[i]} AS VARCHAR)");
+            }
+            return TextFormats.Format(formatTemplate, pieces);
+        }
+        if (name == "format") throw new LoweringException("format with a template that is not a literal (the placeholders are translated one by one, so the template has to be known)");
         // position(needle IN haystack) is `position(haystack, needle)` in the plan, which reads the other way round as written; strpos(haystack, needle) says what it means
         if (name == "position" && a.Count == 2) name = "strpos";
         // SQL Server's SUBSTRING needs a length; DuckDB's two-argument form runs to the end of the string
@@ -514,6 +549,9 @@ public sealed class PlanLowerer
         // the date parts that are functions in DuckDB are not on every engine; date_part is on all of them
         if (name is "year" or "month" or "day" or "hour" or "minute" or "second" or "quarter" && a.Count == 1) return $"date_part('{name}', {a[0]})";
         if (name is "dayofweek" or "isodow" or "dayofyear" && a.Count == 1) return $"date_part('{(name == "dayofweek" ? "dow" : name == "dayofyear" ? "doy" : name)}', {a[0]})";
+        // the other parts are functions too (plan: julian(x), epoch(x); the query may say era(x), decade(x), weekofyear(x) ...) and a part may be written under another name: one spelling, which the target rules read
+        if (DatePartAliases.TryGetValue(name, out var partName) && a.Count == 1) return $"date_part('{partName}', {a[0]})";
+        if (name is "date_part" or "datepart" && a.Count == 2 && StringConstant(children[0]) is { } writtenPart) return $"date_part('{DatePartAliases.GetValueOrDefault(writtenPart.ToLowerInvariant(), writtenPart.ToLowerInvariant())}', {a[1]})";
         // RULE int-div: `//` on integers truncates toward zero. polyglot cannot read it, and the engines' own integer division is spelled `/`, which in DuckDB's dialect is float division
         if (name == "//" && a.Count == 2)
             return returns is "INTEGER" or "SMALLINT" or "TINYINT" ? $"CAST(trunc(CAST({a[0]} AS DOUBLE) / CAST(NULLIF({a[1]}, 0) AS DOUBLE)) AS {returns})" : throw new LoweringException($"integer division `//` over {returns}");

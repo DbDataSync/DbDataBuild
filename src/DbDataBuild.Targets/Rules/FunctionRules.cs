@@ -44,6 +44,7 @@ public static partial class TargetRules
         foreach (var t in candidates)
         {
             if (!t.Targets.Contains(target) || !rules.Contains(t.Rule) || t.Arity != args.Count) continue;
+            if (t.Unit != null && !string.Equals(args[0]?["literal"]?["value"]?.GetValue<string>(), t.Unit, StringComparison.OrdinalIgnoreCase)) continue;
             fired.Add(t.Rule);
             return Template(t.Template, args.Select((a, i) => ($"__{i}", t.DoubleArguments ? AsDouble(a!) : a!)).ToArray());
         }
@@ -161,17 +162,29 @@ public static partial class TargetRules
 
     // ---- markers that stand for an operator -----------------------------------------------------------------------------------------------------------------
 
-    private static string ExpandOperatorMarkers(string text) => ExpandOperatorMarker(ExpandOperatorMarker(text, IntegerDivisionMarker, "/"), ExclusiveOrMarker, "^");
+    /// <summary>PostgreSQL's EXTRACT(EPOCH FROM x): polyglot reads DuckDB's epoch(x) and julian(x) and writes the functions of those names, which PostgreSQL does not have.</summary>
+    private static string ExpandPostgresMarkers(string text) =>
+        ExpandMarker(ExpandMarker(text, "ddb_pg_epoch", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_julian", a => $"EXTRACT(JULIAN FROM {a[0]})");
 
-    /// <summary>Writes `marker(a, b)` as `((a) op (b))`: the arguments are found by counting parentheses, so nested calls and string literals are safe. Innermost calls first.</summary>
-    private static string ExpandOperatorMarker(string text, string marker, string op)
+    private static string ExpandOperatorMarkers(string text)
+    {
+        text = ExpandOperatorMarker(ExpandOperatorMarker(text, IntegerDivisionMarker, "/"), ExclusiveOrMarker, "^");
+        // the epoch of a timestamp needs the argument twice (the whole seconds and the microseconds); SQL Server's DATEDIFF would overflow past 2038, so DATEDIFF_BIG
+        return ExpandMarker(text, "ddb_epoch", a => $"(DATEDIFF_BIG(SECOND, CAST('1970-01-01' AS DATETIME2), {a[0]}) + DATEPART(MICROSECOND, {a[0]}) / 1000000.0)");
+    }
+
+    private static string ExpandOperatorMarker(string text, string marker, string op) => ExpandMarker(text, marker, a => $"(({a[0]}) {op} ({a[1]}))");
+
+    /// <summary>Replaces `marker(a, b, ...)` by what <paramref name="write"/> makes of the arguments: they are found by counting parentheses, so nested calls and string literals are safe. Innermost calls first.</summary>
+    private static string ExpandMarker(string text, string marker, Func<string[], string> write)
     {
         while (true)
         {
             var at = text.LastIndexOf(marker + "(", StringComparison.OrdinalIgnoreCase);
             if (at < 0) return text;
             var open = at + marker.Length;
-            int depth = 0, split = -1, close = -1;
+            int depth = 0, close = -1;
+            var splits = new List<int>();
             var inString = false;
             for (var i = open; i < text.Length && close < 0; i++)
             {
@@ -182,13 +195,15 @@ public static partial class TargetRules
                     case '\'': inString = true; break;
                     case '(': depth++; break;
                     case ')': depth--; if (depth == 0) close = i; break;
-                    case ',' when depth == 1 && split < 0: split = i; break;
+                    case ',' when depth == 1: splits.Add(i); break;
                 }
             }
-            if (close < 0 || split < 0) return text;                      // not what this wrote: left as it is, and the engine says so
-            var left = text[(open + 1)..split].Trim();
-            var right = text[(split + 1)..close].Trim();
-            text = $"{text[..at]}(({left}) {op} ({right})){text[(close + 1)..]}";
+            if (close < 0) return text;                                      // not what this wrote: left as it is, and the engine says so
+            var arguments = new List<string>();
+            var start = open + 1;
+            foreach (var split in splits) { arguments.Add(text[start..split].Trim()); start = split + 1; }
+            arguments.Add(text[start..close].Trim());
+            text = text[..at] + write([.. arguments]) + text[(close + 1)..];
         }
     }
 }

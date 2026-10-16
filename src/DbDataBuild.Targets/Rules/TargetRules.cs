@@ -75,6 +75,9 @@ public static partial class TargetRules
         (@"\bddb_regexp_replace\s*\(", "REGEXP_REPLACE(", "sqlserver"),
         (@"\bddb_sysdatetimeoffset\s*\(", "SYSDATETIMEOFFSET(", "sqlserver"),
         (@"\bddb_atn2\s*\(", "ATN2(", "sqlserver"), (@"\bddb_atn2\s*\(", "ATN2(", "fabric"),
+        (@"\bddb_datepart_(\w+)\s*\(", "DATEPART($1, ", "sqlserver"), (@"\bddb_datepart_(\w+)\s*\(", "DATEPART($1, ", "fabric"),
+        (@"\bddb_isoweek\s*\(", "DATEPART(ISO_WEEK, ", "sqlserver"), (@"\bddb_isoweek\s*\(", "DATEPART(ISO_WEEK, ", "fabric"),
+        (@"\bddb_datediff_big_(\w+)\s*\(", "DATEDIFF_BIG($1, ", "sqlserver"), (@"\bddb_datediff_big_(\w+)\s*\(", "DATEDIFF_BIG($1, ", "fabric"),
     ];
 
     /// <summary>Replaces the markers of the rules of <paramref name="target"/> in the transpiled text. Returns the text unchanged when it holds none.</summary>
@@ -82,6 +85,7 @@ public static partial class TargetRules
     {
         if (target == "sqlserver") transpiled = TsqlLiterals.Nationalize(transpiled);
         if (target is "sqlserver" or "fabric") transpiled = ExpandOperatorMarkers(transpiled);
+        if (target == "postgres") transpiled = ExpandPostgresMarkers(transpiled);
         foreach (var (marker, spelling, markerTarget) in Markers)
             if (markerTarget == target) transpiled = System.Text.RegularExpressions.Regex.Replace(transpiled, marker, spelling, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         return transpiled;

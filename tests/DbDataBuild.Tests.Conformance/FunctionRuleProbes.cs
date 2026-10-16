@@ -75,6 +75,12 @@ public class FunctionRuleProbes
         V("float_round_neg", "round(CAST(d AS FLOAT), -1)"), V("float_trunc1", "trunc(CAST(d AS FLOAT), 1)"), V("float_trunc0", "trunc(CAST(d AS FLOAT))"), V("float_widened", "CAST(CAST(d AS FLOAT) / CAST(3 AS FLOAT) AS DOUBLE)"),
         V("float_sum", "sum(CAST(d AS FLOAT)) OVER ()"), V("float_avg", "avg(CAST(d AS FLOAT)) OVER ()"), V("float_literal_widened", "CAST(CAST(1.4 AS FLOAT) AS DOUBLE) + d * 0"),
         V("trunc_double1", "trunc(d, 1)"), V("trunc_double2", "trunc(d, 2)"), V("trunc_double0", "trunc(d, 0)"), V("trunc_edge", "trunc(CAST(2.9999999999999996 AS DOUBLE) + d * 0, 1)"), V("trunc_neg", "trunc(-d, 1)"), V("trunc_decimal", "trunc(n, 1)"),
+        // strftime and format are written out as pieces of text
+        V("sf_ymd", "strftime(ts, '%Y-%m-%d')"), V("sf_hms", "strftime(ts, '%H:%M:%S')"), V("sf_names", "strftime(ts, '%A %B %-d, %Y')"), V("sf_short_names", "strftime(ts, '%a %b %d')"), V("sf_doy", "strftime(ts, '%j|%-j')"),
+        V("sf_twelve", "strftime(ts, '%I:%M %p|%-I')"), V("sf_year2", "strftime(ts, '%y-%m')"), V("sf_unpadded", "strftime(ts, '%-d/%-m %-H:%-M:%-S')"), V("sf_micro", "strftime(ts + INTERVAL 123456 MICROSECOND, '%H:%M:%S.%f')"),
+        V("sf_dow", "strftime(ts, '%w %u')"), V("sf_percent", "strftime(ts, '100%% %Y')"), V("sf_date", "strftime(dt, '%Y/%m/%d %H:%M')"), V("sf_literal", "strftime(ts, 'week of it')"), V("sf_arg_order", "strftime('%d.%m.%Y', ts)"),
+        V("sf_quote", "strftime(ts, 'it''s %Y')"), S("sf_midnight_noon", "strftime(TIMESTAMP '2024-03-04 00:02:03', '%I %p') || strftime(TIMESTAMP '2024-03-04 12:02:03', '%I %p')"), S("sf_year_small", "strftime(TIMESTAMP '0099-03-04 01:02:03', '%Y|%y')"),
+        V("fmt_plain", "format('{}|{}', s, i)"), V("fmt_text", "format('x{}y', i)"), V("fmt_date", "format('on {}', dt)"), V("fmt_braces", "format('{{{}}}', i)"), V("fmt_none", "format('constant')"), V("fmt_bigint", "format('{}', CAST(i AS BIGINT) * 1000000000)"),
         V("starts_op", "s ^@ 'a'"), V("starts_op_col", "s ^@ s"), V("starts_op_empty", "s ^@ ''"),
     ];
 
@@ -112,7 +118,12 @@ public class FunctionRuleProbes
     }
 
     /// <summary>Queries the tool must refuse at compile (the lowering or the target step says so before an engine is asked): the id, the SQL and the text the message holds.</summary>
-    private static readonly (string Id, string Sql, string Contains)[] Refusals = [];
+    private static readonly (string Id, string Sql, string Contains)[] Refusals =
+    [
+        ("sf_week_number", "SELECT strftime(ts, '%U') AS v FROM probe", "%U"), ("sf_iso_year", "SELECT strftime(ts, '%G-%V') AS v FROM probe", "%G"), ("sf_zone", "SELECT strftime(ts, '%Z') AS v FROM probe", "%Z"),
+        ("sf_locale", "SELECT strftime(ts, '%c') AS v FROM probe", "%c"),
+        ("fmt_width", "SELECT format('{:05d}', i) AS v FROM probe", "{:05d}"), ("fmt_double", "SELECT format('{}', d) AS v FROM probe", "DOUBLE"), ("fmt_not_literal", "SELECT format(s, i) AS v FROM probe", "not a literal"),
+    ];
 
     [SkippableTheory]
     [InlineData("sqlserver")]

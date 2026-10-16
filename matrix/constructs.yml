@@ -258,13 +258,6 @@
   fabric:    { status: unverified, note: "Observed on SQL Server only; no Fabric engine was available to test." }
   postgres:  { status: unsupported, test: spike/string_agg_fn, note: "polyglot writes LISTAGG for PostgreSQL, which has no such function (string_agg is the PostgreSQL name). A lowered query is rewritten by the target rule string-agg-array (array_to_string(array_agg(x ORDER BY ...), sep): NULLs skipped, NULL for no rows) and no longer reports this; a string_agg without a separator still does." }
 
-- id: fn.date_part_calendar
-  detect: [detector:date_part_calendar]
-  duckdb: native
-  sqlserver: { status: approximated, test: spike/date_part_week, note: "date_part('week') becomes DATEPART(WEEK), which numbers weeks from the first Sunday or the DATEFIRST setting, not ISO weeks as DuckDB does; 'epoch' has no equivalent. (dow and isodow are rewritten by the target rule weekday-datefirst and agree.)" }
-  fabric:    { status: unverified, note: "Observed on SQL Server only; no Fabric engine was available to test." }
-  postgres:  { status: unsupported, test: spike/date_part_week, note: "'epoch' is EXTRACT(epoch FROM x) on PostgreSQL, which polyglot does not produce for date_part; week and the other parts agree." }
-
 - id: fn.substring_negative
   detect: [detector:substring_negative_start]
   duckdb: native
@@ -513,27 +506,6 @@
   fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
   postgres:  { status: native }
 
-- id: fn.missing.datetime
-  detect: [fn:CENTURY, fn:DECADE, fn:MILLENNIUM, fn:ERA, node:day_of_month, fn:WEEK, fn:WEEKDAY, node:week_of_year, fn:YEARWEEK, fn:ISOYEAR, fn:JULIAN, node:epoch, fn:EPOCH_NS, fn:EPOCH_US, fn:MICROSECOND, fn:MILLISECOND, fn:NANOSECOND, fn:TIMEZONE_HOUR, fn:TIMEZONE_MINUTE, fn:TIME_BUCKET, fn:STRPTIME, fn:TRY_STRPTIME, fn:MAKE_TIMESTAMP_MS, fn:MAKE_TIMESTAMP_NS, fn:DATE_SUB, fn:DATESUB]
-  duckdb: native
-  sqlserver: { status: unsupported, test: spike/missing_datetime, note: "SQL Server 2022 has no function named CENTURY, DECADE, MILLENNIUM, ERA, DAYOFMONTH, WEEK, WEEKDAY, WEEKOFYEAR, YEARWEEK, ISOYEAR, JULIAN, EPOCH, EPOCH_NS, EPOCH_US, MICROSECOND, MILLISECOND, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (the engine answers 'is not a recognized built-in function name'). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
-  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
-  postgres:  { status: unsupported, test: spike/missing_datetime, note: "PostgreSQL 17 has no function named CENTURY, DECADE, MILLENNIUM, ERA, DAYOFMONTH, WEEK, WEEKDAY, WEEKOFYEAR, YEARWEEK, ISOYEAR, JULIAN, EPOCH, EPOCH_NS, EPOCH_US, MICROSECOND, MILLISECOND, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (not in pg_proc). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
-
-- id: fn.missing.datetime.sqlserver
-  detect: [node:epoch_ms, fn:TIMEZONE, fn:MAKE_TIMESTAMP, fn:MAKE_TIMESTAMPTZ, fn:TO_TIMESTAMP]
-  duckdb: native
-  sqlserver: { status: unsupported, test: spike/missing_datetime_sqlserver, note: "SQL Server 2022 has no function named EPOCH_MS, TIMEZONE, MAKE_TIMESTAMP, MAKE_TIMESTAMPTZ, TO_TIMESTAMP (the engine answers 'is not a recognized built-in function name'). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
-  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
-  postgres:  { status: native }
-
-- id: fn.missing.datetime.postgres
-  detect: [fn:AGO, fn:DAYS_IN_MONTH]
-  duckdb: native
-  sqlserver: { status: native }
-  fabric:    { status: native }
-  postgres:  { status: unsupported, test: spike/missing_datetime_postgres, note: "PostgreSQL 17 has no function named AGO, DAYS_IN_MONTH (not in pg_proc). Date and time parts and constructors the engines name differently or lack: use date_part with the part names the matrix lists (year, month, day, quarter, dow, isodow, doy, hour, minute, second), date_trunc, date_diff and make_date." }
-
 - id: fn.missing.internal
   detect: [fn:ALIAS, fn:VECTOR_TYPE, fn:IN_SEARCH_PATH]
   duckdb: native
@@ -547,4 +519,46 @@
   sqlserver: { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing, ordering and testing intervals for equality (a month counts as 30 days). Neither engine has it, and SQL Server has no interval type. Compare the parts instead: date_diff('day', a, b) or date_part on the dates." }
   fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
   postgres:  { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing intervals; PostgreSQL has no such function (its interval comparison is the same, but the call is not written for it). Compare the parts instead: date_diff('day', a, b)." }
+
+- id: fn.missing.datetime
+  detect: [fn:EPOCH_NS, fn:EPOCH_US, fn:NANOSECOND, fn:TIMEZONE_HOUR, fn:TIMEZONE_MINUTE, fn:TIME_BUCKET, fn:STRPTIME, fn:TRY_STRPTIME, fn:MAKE_TIMESTAMP_MS, fn:MAKE_TIMESTAMP_NS, fn:DATE_SUB, fn:DATESUB]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_datetime, note: "SQL Server 2022 has no function named EPOCH_NS, EPOCH_US, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (the engine answers 'is not a recognized built-in function name'). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/missing_datetime, note: "PostgreSQL 17 has no function named EPOCH_NS, EPOCH_US, NANOSECOND, TIMEZONE_HOUR, TIMEZONE_MINUTE, TIME_BUCKET, STRPTIME, TRY_STRPTIME, MAKE_TIMESTAMP_MS, MAKE_TIMESTAMP_NS, DATE_SUB, DATESUB (not in pg_proc). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
+
+- id: fn.missing.datetime.sqlserver
+  detect: [node:epoch_ms, fn:TIMEZONE, fn:MAKE_TIMESTAMP, fn:MAKE_TIMESTAMPTZ, fn:TO_TIMESTAMP]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/missing_datetime_sqlserver, note: "SQL Server 2022 has no function named EPOCH_MS, TIMEZONE, MAKE_TIMESTAMP, MAKE_TIMESTAMPTZ, TO_TIMESTAMP (the engine answers 'is not a recognized built-in function name'). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
+  fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
+  postgres:  { status: native }
+
+- id: fn.missing.datetime.postgres
+  detect: [fn:AGO, fn:DAYS_IN_MONTH]
+  duckdb: native
+  sqlserver: { status: native }
+  fabric:    { status: native }
+  postgres:  { status: unsupported, test: spike/missing_datetime_postgres, note: "PostgreSQL 17 has no function named AGO, DAYS_IN_MONTH (not in pg_proc). These date and time functions have no counterpart on the engines; the parts of a date are read with date_part (year, month, day, quarter, week, isoyear, yearweek, dow, isodow, doy, decade, century, millennium, era, julian, epoch, hour, minute, second, millisecond, microsecond), cut with date_trunc and counted with date_diff." }
+
+- id: fn.date_unit
+  detect: detector:date_unit_unsupported
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/date_unit_fn, note: "Only the units the tool translates exactly are accepted by date_part (year month day quarter doy dow isodow week isoyear yearweek decade century millennium era julian epoch hour minute second millisecond microsecond), date_trunc and date_diff (year quarter month week day hour minute second millisecond microsecond decade century millennium); they are rewritten by the target rules date-part-units, date-trunc-units and date-diff-units (table FunctionTemplates, each unit run against DuckDB and both engines). Any other unit, or a unit that is not a literal, is refused: the engines name them differently or count them differently." }
+  fabric:    { status: unverified, note: "The same target rules are applied; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/date_unit_fn, note: "Only the units the tool translates exactly are accepted (see SQL Server); any other, or a unit that is not a literal, is refused." }
+
+- id: fn.strftime
+  detect: [fn:STRFTIME]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/strftime_fn, note: "FORMAT and TO_CHAR do not use DuckDB's letters (%A %B %j come out as A B DDD). A lowered query writes strftime out as the pieces of its text for the specifiers %Y %y %m %d %H %M %S %f %j %I %p %a %A %b %B %w %u %% and the unpadded %-d %-m %-H %-I %-M %-S %-j, and refuses any other specifier (week numbers, zones, locale formats) with its name; only a model that is not lowered reaches this row." }
+  fabric:    { status: unverified, note: "The same lowering; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/strftime_fn, note: "As on SQL Server: TO_CHAR writes %A as %A. A lowered query is rewritten into pieces of text; a model that is not lowered reaches this row." }
+
+- id: fn.format
+  detect: [fn:FORMAT]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/format_fn, note: "DuckDB's format('{}|{}', a, b) takes {} placeholders; T-SQL's FORMAT takes a value and a .NET pattern. A lowered query writes the placeholders {} out as a concatenation of text (arguments of type VARCHAR, integers and DATE) and refuses {:05d} and the other specifications and arguments whose text differs between DuckDB and the engines (DOUBLE); only a model that is not lowered reaches this row." }
+  fabric:    { status: unverified, note: "The same lowering; not run on Fabric." }
+  postgres:  { status: unsupported, test: spike/format_fn, note: "PostgreSQL's format is printf-like (%s): format('{}|{}', a, b) comes back unchanged. A lowered query writes {} out as a concatenation; a model that is not lowered reaches this row." }
 
