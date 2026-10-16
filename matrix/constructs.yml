@@ -518,7 +518,7 @@
   duckdb: native
   sqlserver: { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing, ordering and testing intervals for equality (a month counts as 30 days). Neither engine has it, and SQL Server has no interval type. Compare the parts instead: date_diff('day', a, b) or date_part on the dates." }
   fabric:    { status: unverified, note: "The text is the same as for SQL Server, where the function does not exist; not run on Fabric." }
-  postgres:  { status: unsupported, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing intervals; PostgreSQL has no such function (its interval comparison is the same, but the call is not written for it). Compare the parts instead: date_diff('day', a, b)." }
+  postgres:  { status: translated, test: spike/normalized_interval_fn, note: "normalized_interval(x) is DuckDB's own wrapper for comparing intervals; PostgreSQL has no such function. The target rule normalized-interval writes x: PostgreSQL's interval comparison is the same ordering (a month counts as 30 days; 1600 of 1600 pairs of ages ordered identically)." }
 
 - id: fn.missing.datetime
   detect: [fn:EPOCH_NS, fn:EPOCH_US, fn:NANOSECOND, fn:TIMEZONE_HOUR, fn:TIMEZONE_MINUTE, fn:TIME_BUCKET, fn:STRPTIME, fn:TRY_STRPTIME, fn:MAKE_TIMESTAMP_MS, fn:MAKE_TIMESTAMP_NS, fn:DATE_SUB, fn:DATESUB]
@@ -561,4 +561,11 @@
   sqlserver: { status: unsupported, test: spike/format_fn, note: "DuckDB's format('{}|{}', a, b) takes {} placeholders; T-SQL's FORMAT takes a value and a .NET pattern. A lowered query writes the placeholders {} out as a concatenation of text (arguments of type VARCHAR, integers and DATE) and refuses {:05d} and the other specifications and arguments whose text differs between DuckDB and the engines (DOUBLE); only a model that is not lowered reaches this row." }
   fabric:    { status: unverified, note: "The same lowering; not run on Fabric." }
   postgres:  { status: unsupported, test: spike/format_fn, note: "PostgreSQL's format is printf-like (%s): format('{}|{}', a, b) comes back unchanged. A lowered query writes {} out as a concatenation; a model that is not lowered reaches this row." }
+
+- id: fn.age
+  detect: [fn:AGE]
+  duckdb: native
+  sqlserver: { status: unsupported, test: spike/age_fn, note: "SQL Server has no AGE and no interval type. The target rule age-parts writes date_part(unit, age(a, b)) for year, month, day, hour, minute and second, and the comparison, ordering and equality of an age with an interval or another age, in T-SQL with DuckDB's borrowing rule (proven equal on 5449 pairs). What reaches this row cannot be exact: an age as a value or output column, in arithmetic, with the epoch or a sub-second part, over TIMESTAMP WITH TIME ZONE, or over an operand that holds a subquery or a random value (the expression repeats it). Write date_diff('month', a, b) or compute the parts." }
+  fabric:    { status: unverified, note: "The same target rule is applied; not run on Fabric." }
+  postgres:  { status: native, note: "PostgreSQL's AGE is DuckDB's exactly (5449 of 5449 pairs). The second of an age is the whole second (rule age-second); an age as an output column has no DDL type." }
 

@@ -386,7 +386,9 @@ public class FunctionRulesTests
         Run(c, "CREATE MACRO ddb_isoweek(x) AS date_part('week', x)");              // DATEPART(ISO_WEEK, x)
         Run(c, "CREATE MACRO ddb_datepart_millisecond(x) AS date_part('millisecond', x) % 1000");        // T-SQL's DATEPART counts within the second
         Run(c, "CREATE MACRO ddb_datepart_microsecond(x) AS date_part('microsecond', x) % 1000000");
+        Run(c, "CREATE MACRO ddb_idiv(a, b) AS CAST(trunc(CAST(a AS DOUBLE) / CAST(b AS DOUBLE)) AS BIGINT)");
         Run(c, "CREATE MACRO ddb_pg_epoch(x) AS epoch(x)");
+        Run(c, "CREATE MACRO ddb_pg_epoch_exact(x) AS CAST(epoch_us(x) AS DECIMAL(24, 0)) / 1000000");
         Run(c, "CREATE MACRO ddb_pg_julian(x) AS julian(x)");
         Run(c, "CREATE MACRO ddb_epoch(x) AS epoch(x)");                             // DATEDIFF_BIG seconds and the microseconds
         foreach (var unit in new[] { "hour", "minute", "second", "millisecond", "microsecond" }) Run(c, $"CREATE MACRO ddb_datediff_big_{unit}(a, b) AS date_diff('{unit}', a, b)");
@@ -549,5 +551,73 @@ public class FunctionRulesTests
     {
         var sql = LoweredText("SELECT format('{}|{}!', s, i) AS v FROM g");
         Assert.Contains("(s || '|' || CAST(CAST(i AS BIGINT) AS VARCHAR) || '!')", sql);
+    }
+
+    // ---- age() ----
+
+    public static readonly string[] AgeStamps =
+    [
+        "1900-02-28 00:00:00", "1900-03-01 10:30:45.5", "1999-12-31 23:59:59.999999", "2000-02-28 08:15:30", "2000-02-29 00:00:00.000001", "2000-03-01 12:00:00", "2023-01-31 00:00:00", "2023-02-28 23:59:59.999999",
+        "2023-03-31 10:30:45.5", "2023-04-30 08:15:30", "2023-12-31 12:00:00", "2024-01-30 00:00:00", "2024-01-31 08:15:30", "2024-02-01 00:00:00.000001", "2024-02-28 23:59:59.999999", "2024-02-29 00:00:00", "2024-02-29 10:30:45.5",
+        "2024-03-01 00:00:00", "2024-03-01 12:00:00", "2024-03-30 08:15:30", "2024-03-31 00:00:00", "2024-03-31 23:59:59.999999", "2024-04-30 10:30:45.5", "2024-05-31 12:00:00", "2024-12-31 00:00:00", "2025-01-31 08:15:30",
+        "2025-02-28 00:00:00.000001", "2025-03-01 10:30:45.5", "2025-03-31 23:59:59.999999", "2100-02-28 12:00:00", "2100-03-01 00:00:00",
+    ];
+
+    private static DuckDBConnection AgePairs()
+    {
+        var c = ProbeTable();
+        Run(c, "CREATE TABLE ages (a TIMESTAMP, b TIMESTAMP)");
+        Run(c, "INSERT INTO ages SELECT x.s, y.s FROM (SELECT CAST(unnest AS TIMESTAMP) AS s FROM unnest([" + string.Join(", ", AgeStamps.Select(t => $"'{t}'")) + "])) x CROSS JOIN (SELECT CAST(unnest AS TIMESTAMP) AS s FROM unnest([" + string.Join(", ", AgeStamps.Select(t => $"'{t}'")) + "])) y");
+        return c;
+    }
+
+    public static IEnumerable<object[]> AgeShapes() => new[]
+    {
+        "date_part('year', age(a, b))", "date_part('month', age(a, b))", "date_part('day', age(a, b))", "date_part('hour', age(a, b))", "date_part('minute', age(a, b))", "date_part('second', age(a, b))",
+        "normalized_interval(age(a, b)) > normalized_interval(CAST('1 year' AS INTERVAL))", "normalized_interval(age(a, b)) >= normalized_interval(INTERVAL 30 DAY)",
+        "normalized_interval(age(a, b)) = normalized_interval(INTERVAL 1 MONTH)", "normalized_interval(age(a, b)) < normalized_interval(INTERVAL 0 DAY)",
+        "normalized_interval(age(a, b)) < normalized_interval(age(b, CAST('2024-01-01' AS TIMESTAMP)))", "normalized_interval(age(a, b)) <> normalized_interval(CAST('1 month 2 days 03:04:05' AS INTERVAL))",
+    }.Select(e => new object[] { e });
+
+    [Theory]
+    [MemberData(nameof(AgeShapes))]
+    public void Age_written_out_in_T_SQL_terms_gives_DuckDBs_value_on_every_pair(string expression)
+    {
+        using var c = AgePairs();
+        var sql = $"SELECT a, b, {expression} AS v FROM ages";
+        var r = TargetRules.Apply(sql, "sqlserver");
+        Assert.Contains(TargetRules.AgeParts, r.Rules);
+        Assert.DoesNotContain("age(", r.Sql.ToLowerInvariant().Replace("last_day", ""));
+        Assert.DoesNotContain("normalized_interval", r.Sql);
+        Assert.Equal(Rows(c, sql), Rows(c, r.Sql));
+    }
+
+    [Fact]
+    public void Age_on_PostgreSQL_loses_the_wrapper_and_the_fraction_of_the_second()
+    {
+        using var c = AgePairs();
+        var wrapped = "SELECT a, b, normalized_interval(age(a, b)) > normalized_interval(CAST('1 year' AS INTERVAL)) AS v FROM ages";
+        var r = TargetRules.Apply(wrapped, "postgres");
+        Assert.Equal([TargetRules.NormalizedIntervalStrip], r.Rules);
+        Assert.DoesNotContain("normalized_interval", r.Sql);
+        Assert.Equal(Rows(c, wrapped), Rows(c, r.Sql));
+        var second = TargetRules.Apply("SELECT date_part('second', age(a, b)) AS v FROM ages", "postgres");
+        Assert.Equal([TargetRules.AgeSecond], second.Rules);
+        Assert.Contains("trunc(", second.Sql.ToLowerInvariant());
+    }
+
+    [Theory]
+    [InlineData("SELECT age(a, b) AS v FROM ages")]                                                // a value
+    [InlineData("SELECT date_part('epoch', age(a, b)) AS v FROM ages")]                            // other parts
+    [InlineData("SELECT date_part('millisecond', age(a, b)) AS v FROM ages")]
+    [InlineData("SELECT a + age(a, b) AS v FROM ages")]                                            // arithmetic
+    [InlineData("SELECT date_part('year', age(a, (SELECT max(b) FROM ages))) AS v FROM ages")]     // an operand with a subquery would be repeated
+    [InlineData("SELECT date_part('year', age(random() * a, b)) AS v FROM ages")]
+    public void The_shapes_age_cannot_be_exact_in_are_left_for_the_matrix_to_refuse_on_SQL_Server(string sql)
+    {
+        var r = TargetRules.Apply(sql, "sqlserver");
+        var linter = new DbDataBuild.Sql.Matrix.MatrixLinter(DbDataBuild.Sql.Matrix.MatrixLoader.LoadEmbedded([]));
+        Assert.Contains(linter.Lint(r.Sql, "m.sql", ["sqlserver"]), d => d.Code == "DDB-301" && d.Found.Contains("fn.age"));
+        Assert.DoesNotContain(linter.Lint(TargetRules.Apply(sql, "postgres").Sql, "m.sql", ["postgres"]), d => d.Code == "DDB-301");
     }
 }

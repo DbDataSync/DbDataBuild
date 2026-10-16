@@ -518,6 +518,7 @@ public sealed class PlanLowerer
         var returns = TypeId(e);
         // add(a, b), subtract, multiply and divide are the operators under another name (the plan keeps the name the query used); neither engine has a function of that name
         if (a.Count == 2) name = name switch { "add" => "+", "subtract" => "-", "multiply" => "*", "divide" => "//", _ => name };
+        if (name == "age" && children.Any(c => TypeId(c) == "TIMESTAMP WITH TIME ZONE")) throw new LoweringException("age over TIMESTAMP WITH TIME ZONE values (the result depends on the session time zone of each engine; cast to TIMESTAMP in the zone you mean)");
         // strftime and format are written out as the pieces of their text (TextFormats): no engine's format function uses DuckDB's letters
         if (name == "strftime" && a.Count == 2)
         {

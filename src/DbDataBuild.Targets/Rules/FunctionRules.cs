@@ -32,6 +32,9 @@ public static partial class TargetRules
 
     private static bool IsDoubleCast(JsonNode? n) => (n?["cast"]?["to"]?["data_type"]?.GetValue<string>()) is "double";
 
+    private static bool IsIntervalValued(JsonNode? n) => n is not null &&
+        (n["function"]?["name"]?.GetValue<string>()?.ToLowerInvariant() is "age" || n["interval"] is not null || (n["cast"]?["to"]?["data_type"]?.GetValue<string>()) is "interval" || IsIntervalValued(n["paren"]?["this"]));
+
     private static JsonNode AsDouble(JsonNode n) => n["cast"]?["to"]?["data_type"]?.GetValue<string>() == "double" ? n : Template("CAST(__v AS DOUBLE)", ("__v", n));
 
     private static JsonNode? FromTemplate(string kind, JsonObject body, string target, HashSet<string> rules, SortedSet<string> fired)
@@ -44,6 +47,7 @@ public static partial class TargetRules
         foreach (var t in candidates)
         {
             if (!t.Targets.Contains(target) || !rules.Contains(t.Rule) || t.Arity != args.Count) continue;
+            if (t.Unit != null && args.Count > 1 && IsIntervalValued(args[1])) continue;                  // the part of an age or of an interval, not of a date (PostgreSQL's own EXTRACT reads it)
             if (t.Unit != null && !string.Equals(args[0]?["literal"]?["value"]?.GetValue<string>(), t.Unit, StringComparison.OrdinalIgnoreCase)) continue;
             fired.Add(t.Rule);
             return Template(t.Template, args.Select((a, i) => ($"__{i}", t.DoubleArguments ? AsDouble(a!) : a!)).ToArray());
@@ -53,6 +57,7 @@ public static partial class TargetRules
 
     private static JsonNode? FunctionRewrite(string kind, JsonObject body, string target, HashSet<string> rules, SortedSet<string> fired)
     {
+        if (AgeRewrite(kind, body, rules, fired) is { } aged) return aged;
         if (FromTemplate(kind, body, target, rules, fired) is { } templated) return templated;
         switch (kind)
         {
@@ -164,7 +169,7 @@ public static partial class TargetRules
 
     /// <summary>PostgreSQL's EXTRACT(EPOCH FROM x): polyglot reads DuckDB's epoch(x) and julian(x) and writes the functions of those names, which PostgreSQL does not have.</summary>
     private static string ExpandPostgresMarkers(string text) =>
-        ExpandMarker(ExpandMarker(text, "ddb_pg_epoch", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_julian", a => $"EXTRACT(JULIAN FROM {a[0]})");
+        ExpandMarker(ExpandMarker(ExpandMarker(text, "ddb_pg_epoch_exact", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_epoch", a => $"EXTRACT(EPOCH FROM {a[0]})"), "ddb_pg_julian", a => $"EXTRACT(JULIAN FROM {a[0]})");
 
     private static string ExpandOperatorMarkers(string text)
     {

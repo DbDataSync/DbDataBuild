@@ -164,4 +164,5 @@
 - { id: date_unit_fn,        sql: "SELECT DATE_PART('timezone_hour', ts) AS x FROM t",             expect: unsupported }
 - { id: strftime_fn,         sql: "SELECT STRFTIME(ts, '%A %B %j') AS x FROM t",                   expect: unsupported }
 - { id: format_fn,           sql: "SELECT FORMAT('{}|{}', s, a) AS x FROM t",                      expect: unsupported }
+- { id: age_fn,              sql: "SELECT AGE(ts, d) AS x FROM t",                                  expect: unsupported }
 

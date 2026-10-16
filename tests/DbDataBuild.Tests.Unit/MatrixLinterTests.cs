@@ -64,6 +64,7 @@ public class MatrixLinterTests
         ["fn.date_unit"] = "SELECT DATE_PART('timezone_hour', ts) AS x FROM t",
         ["fn.strftime"] = "SELECT STRFTIME(ts, '%A %B %j') AS x FROM t",
         ["fn.format"] = "SELECT FORMAT('{}|{}', s, a) AS x FROM t",
+        ["fn.age"] = "SELECT AGE(ts, d) AS x FROM t",
         ["fn.log"] = "SELECT LOG(a) AS x FROM t",
         ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",
         ["fn.normalized_interval"] = "SELECT NORMALIZED_INTERVAL(INTERVAL 1 DAY) AS x FROM t",
